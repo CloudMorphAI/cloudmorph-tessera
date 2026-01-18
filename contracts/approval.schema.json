@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Control Center Approval",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "approvalId",
+    "requestId",
+    "status",
+    "requestedBy",
+    "approvedBy",
+    "decisionAt"
+  ],
+  "properties": {
+    "approvalId": {
+      "type": "string",
+      "description": "Unique approval identifier."
+    },
+    "requestId": {
+      "type": "string",
+      "description": "Associated request identifier."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "approved", "denied"],
+      "description": "Current approval status."
+    },
+    "requestedBy": {
+      "type": "string",
+      "description": "User or actor who requested the approval."
+    },
+    "approvedBy": {
+      "type": ["string", "null"],
+      "description": "User or actor who approved/denied the request."
+    },
+    "decisionAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO timestamp when the approval decision was made."
+    },
+    "requestedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO timestamp when the approval was requested."
+    },
+    "notes": {
+      "type": ["string", "null"],
+      "description": "Optional approval notes."
+    }
+  }
+}
