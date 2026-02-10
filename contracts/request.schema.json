@@ -44,7 +44,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["approval_required", "denied", "queued", "running", "completed", "failed", "cancelled"],
+      "enum": ["queued", "running", "completed", "failed", "cancelled", "block"],
       "description": "Current request status."
     },
     "createdAt": {
@@ -56,10 +56,6 @@
       "type": "string",
       "format": "date-time",
       "description": "ISO timestamp when the request was last updated."
-    },
-    "approvalId": {
-      "type": ["string", "null"],
-      "description": "Approval identifier when approval is required."
     },
     "jobId": {
       "type": ["string", "null"],

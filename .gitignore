@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account.json
+*_secret*
+*_credential*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# Build artifacts
+*.tgz
+*.tar.gz
+
+# SDK build output
+sdk-python/dist/
+sdk-python/*.egg-info/
+cloudmorph-mcp/dist/

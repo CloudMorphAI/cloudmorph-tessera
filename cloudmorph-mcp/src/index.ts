@@ -1,6 +1,9 @@
 import express from "express";
+import http from "http";
 import { buildRouter } from "./routes";
 import { healthRouter } from "./health";
+import { createWsHub } from "./ws";
+import { RateLimiter } from "./ratelimit";
 
 const controlCenterUrl = process.env.CONTROL_CENTER_API_URL;
 if (!controlCenterUrl) {
@@ -75,10 +78,34 @@ app.use((req, res, next) => {
   });
   next();
 });
+const rateLimiter = new RateLimiter({
+  requestsPerDay: Number(process.env.MCP_RATE_LIMIT_DAILY || 100),
+  burstPerMinute: Number(process.env.MCP_RATE_LIMIT_BURST || 30),
+  concurrentJobs: Number(process.env.MCP_RATE_LIMIT_CONCURRENT || 1),
+});
+
 app.use(healthRouter());
-app.use(buildRouter({ controlCenterUrl }));
+const wsHub = createWsHub({
+  controlCenterUrl,
+  validateTokens: process.env.MCP_WS_VALIDATE_TOKENS !== "false",
+  log,
+});
+app.use(
+  buildRouter({
+    controlCenterUrl,
+    publishEvent: wsHub.publish,
+    eventSecret: process.env.MCP_EVENT_SECRET || "",
+    waitForEvent: wsHub.waitForEvent,
+    log,
+    rateLimiter,
+  }),
+);
 
 const port = Number(process.env.PORT || 8080);
-app.listen(port, () => {
+const server = http.createServer(app);
+server.on("upgrade", (req, socket, head) => {
+  wsHub.handleUpgrade(req, socket, head);
+});
+server.listen(port, () => {
   console.log(`cloudmorph-mcp listening on ${port}`);
 });

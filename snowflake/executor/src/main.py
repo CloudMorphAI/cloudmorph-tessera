@@ -8,23 +8,6 @@ import time
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
-try:
-    import boto3
-except Exception as exc:
-    print(
-        json.dumps(
-            {
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "level": "error",
-                "severity": "ERROR",
-                "message": "executor.import.failed",
-                "module": "boto3",
-                "error": str(exc),
-            }
-        ),
-        flush=True,
-    )
-    raise
 
 from controlcenter_client import ControlCenterClient, ControlCenterError
 from job_runner import run as run_job
@@ -162,45 +145,9 @@ def _sleep_with_backoff(current: float, jitter: float = 1.0) -> None:
 
 
 def _upload_artifacts(job_id: str, result: Dict[str, Any], logs: Optional[str]) -> list[Dict[str, Any]]:
-    provider = os.getenv("STORAGE_PROVIDER", "aws").lower()
-    artifact_base = os.getenv("ARTIFACT_BASE_PREFIX") or f"controlcentre/jobs/{job_id}"
-    storage_prefix = os.getenv("STORAGE_PREFIX", "").strip("/")
-    base = f"{storage_prefix}/{artifact_base}".strip("/") if storage_prefix else artifact_base
-    refs: list[Dict[str, Any]] = []
-    if provider != "aws":
-        return refs
-    bucket = os.getenv("STORAGE_BUCKET") or os.getenv("STORAGE_LOCATION")
-    region = os.getenv("STORAGE_REGION") or os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
-    if not bucket or not region:
-        raise RuntimeError("storage configuration missing (bucket/region)")
-    s3 = boto3.client("s3", region_name=region)
-    summary_text = str(result.get("summary") or f"Job {result.get('status', 'completed')}")[: 8 * 1024]
-    result_payload = result.get("result", result)
-    keys = {
-        "summary": f"{base}/summary.txt",
-        "result": f"{base}/result.json",
-        "logs": f"{base}/logs.jsonl",
-    }
-    errors: list[str] = []
-    try:
-        s3.put_object(Bucket=bucket, Key=keys["summary"], Body=summary_text.encode("utf-8"), ContentType="text/plain")
-        refs.append({"kind": "summary", "uri": f"s3://{bucket}/{keys['summary']}"})
-    except Exception as exc:  # pragma: no cover - safety net
-        errors.append(f"summary:{exc}")
-    try:
-        s3.put_object(Bucket=bucket, Key=keys["result"], Body=json.dumps(result_payload).encode("utf-8"), ContentType="application/json")
-        refs.append({"kind": "result", "uri": f"s3://{bucket}/{keys['result']}"})
-    except Exception as exc:  # pragma: no cover - safety net
-        errors.append(f"result:{exc}")
-    if logs:
-        try:
-            s3.put_object(Bucket=bucket, Key=keys["logs"], Body=str(logs).encode("utf-8"), ContentType="application/json")
-            refs.append({"kind": "logs", "uri": f"s3://{bucket}/{keys['logs']}"})
-        except Exception as exc:  # pragma: no cover - safety net
-            errors.append(f"logs:{exc}")
-    if errors:
-        raise RuntimeError("; ".join(errors))
-    return refs
+    """Databricks executor: artifacts are sent inline via the complete API.
+    No cloud storage upload needed; return empty refs."""
+    return []
 
 
 def _output_meta(

@@ -10,8 +10,7 @@
     "executorTarget",
     "payload",
     "createdAt",
-    "updatedAt",
-    "artifacts"
+    "updatedAt"
   ],
   "properties": {
     "jobId": {
