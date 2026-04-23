@@ -1,0 +1,32 @@
+# gitleaks configuration for CloudMorph Control Centre
+# Inherits the default ruleset and adds project-specific allowlists.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project-specific allowlist for fixtures and obvious test tokens"
+
+regexes = [
+    '''cm_test_[a-zA-Z0-9_]{16,64}''',
+    '''dapi[_]?test[_]?[a-zA-Z0-9]{16,40}''',
+    '''AKIATEST[A-Z0-9]{12}''',
+]
+
+paths = [
+    '''docs/.*\.md''',
+    '''status/.*\.md''',
+    '''.*README\.md''',
+    '''.*CONTRIBUTING\.md''',
+    '''contracts/.*\.schema\.json''',
+    '''cloudmorph-mcp/\.env\.example''',
+    '''tests/.*\.py''',
+    '''cloudmorph-common-py/tests/.*''',
+]
+
+stopwords = [
+    "EXAMPLE",
+    "PLACEHOLDER",
+    "your_token_here",
+    "REPLACE_ME",
+]

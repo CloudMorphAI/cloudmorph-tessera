@@ -1,0 +1,98 @@
+# Workspace-level pyproject — dev tools only.
+# Per-package configs live in cloudmorph-common-py/pyproject.toml and sdk-python/pyproject.toml.
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+extend-exclude = [
+    "**/__pycache__",
+    "**/*.egg-info",
+    "**/dist",
+    "**/build",
+    "cloudmorph-common-py/cloudmorph_common/contracts",  # generated
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "N",
+    "S",
+    "ASYNC",
+    "C4",
+    "ISC",
+    "PIE",
+    "RET",
+    "SIM",
+    "TID",
+    "TCH",
+]
+ignore = [
+    "E501",
+    "S101",
+    "S311",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106", "S301"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unreachable = true
+disallow_any_unimported = true
+exclude = [
+    "cloudmorph-common-py/cloudmorph_common/contracts/.*",
+    "build/",
+    "dist/",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+]
+testpaths = [
+    "tests",
+    "cloudmorph-common-py/tests",
+    "sdk-python/tests",
+]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "adversarial: adversarial security fixtures",
+    "slow: slow tests (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "cloudmorph-common-py/cloudmorph_common",
+    "sdk-python/cloudmorph",
+    "aws/executor/src",
+    "azure/executor/src",
+    "gcp/executor/src",
+    "databricks/executor/src",
+    "snowflake/executor/src",
+]
+omit = [
+    "*/contracts/*",
+    "*/__init__.py",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
+fail_under = 60
