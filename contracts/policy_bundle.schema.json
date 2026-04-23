@@ -1,0 +1,59 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/policy-bundle.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Policy Bundle Manifest",
+  "description": "Envelope describing a signed policy bundle tarball. The Rego sources, compiled WASM, and data documents live alongside this manifest in the tarball.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundleId",
+    "version",
+    "tenantId",
+    "contentHash",
+    "signature",
+    "signedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "bundleId": { "type": "string" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Bundle semantic version. Each promotion = patch bump; rule additions = minor; outcome changes = major."
+    },
+    "tenantId": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "displayName": { "type": "string" },
+        "description": { "type": "string" },
+        "authoredBy": { "type": "string" },
+        "ruleCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "contentHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the bundle tarball contents (excluding the signature file)."
+    },
+    "signature": {
+      "type": "string",
+      "description": "HMAC-SHA256 over canonicalJson({bundleId, version, contentHash}) using the customer's bundle-signing key."
+    },
+    "signedAt": { "type": "string", "format": "date-time" },
+    "compatibleSchemaVersions": {
+      "type": "object",
+      "description": "Map of contract name → required schema version. Enforced at bundle load.",
+      "additionalProperties": { "type": "string" }
+    },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

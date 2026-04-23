@@ -1,0 +1,56 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/session.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Session",
+  "description": "Bag of state for one agent session: bound intents, decisions, tags. Created by cloudmorph_session_start (or implicitly on first request); ended by cloudmorph_session_end (or expiry).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sessionId", "tenantId", "status", "startedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^ses_[a-zA-Z0-9_]{16,40}$"
+    },
+    "tenantId": { "type": "string" },
+    "agentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "vendor": { "type": "string" }
+      }
+    },
+    "intentIds": {
+      "type": "array",
+      "description": "All intents declared in this session (active + expired + revoked).",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "decisionIds": {
+      "type": "array",
+      "description": "All decisions made for this session.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "ended", "expired", "abandoned"]
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "endedAt": { "type": "string", "format": "date-time" },
+    "tags": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "maxLength": 200 }
+    },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

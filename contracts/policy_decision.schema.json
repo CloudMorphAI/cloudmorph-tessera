@@ -1,0 +1,135 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/policy-decision.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Policy Decision",
+  "description": "Output of the policy engine. Returned by cloudmorph_explain_decision. Persisted in the audit log.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "tenantId",
+    "requestId",
+    "outcome",
+    "policyBundleId",
+    "policyBundleVersion",
+    "evalTimeMs",
+    "decidedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "decisionId": {
+      "type": "string",
+      "pattern": "^dec_[a-zA-Z0-9_]{16,40}$"
+    },
+    "tenantId": { "type": "string" },
+    "requestId": { "type": "string" },
+    "intentId": { "type": "string" },
+    "sessionId": { "type": "string" },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "approve",
+        "mutate",
+        "redact",
+        "throttle",
+        "audit_only"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 1024,
+      "description": "Human-readable reason. Customer-visible."
+    },
+    "matchedRules": {
+      "type": "array",
+      "description": "Every rule that fired during evaluation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ruleId", "outcome"],
+        "properties": {
+          "ruleId": { "type": "string" },
+          "outcome": { "type": "string" },
+          "weight": { "type": "number" }
+        }
+      }
+    },
+    "evaluationTrace": {
+      "type": "array",
+      "description": "Deterministic step-by-step trace of policy evaluation. Surfaced by cloudmorph_explain_decision for debugging + compliance.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "mutatedArguments": {
+      "type": "object",
+      "description": "When outcome=mutate, the modified args the executor / downstream MCP should use.",
+      "additionalProperties": true
+    },
+    "redactionFields": {
+      "type": "array",
+      "description": "When outcome=redact, JSON Pointer (RFC 6901) paths to redact in the response.",
+      "items": { "type": "string" }
+    },
+    "throttleDelayMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "When outcome=throttle, milliseconds to delay before forwarding."
+    },
+    "approvalRequest": {
+      "type": "object",
+      "description": "When outcome=approve, the approval request shape (refs Approval contract).",
+      "additionalProperties": true
+    },
+    "policyBundleId": { "type": "string" },
+    "policyBundleVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "evalTimeMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock evaluation time in milliseconds."
+    },
+    "cacheHit": {
+      "type": "boolean",
+      "description": "True if served from decision cache."
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Auxiliary signals the policy engine used (intent score, cost estimate, etc.).",
+      "additionalProperties": true,
+      "properties": {
+        "intentMatchScore": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": ["match", "ambiguous", "mismatch"]
+            },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "stage": {
+              "type": "string",
+              "enum": ["lexical", "semantic", "llm_judge", "no_intent_declared"]
+            },
+            "reason": { "type": "string" }
+          }
+        },
+        "costEstimateUsd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "decidedAt": { "type": "string", "format": "date-time" },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

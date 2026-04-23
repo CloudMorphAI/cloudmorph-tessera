@@ -1,0 +1,151 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/intent-declaration.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Intent Declaration",
+  "description": "Agent's stated goal + structured verbs, declared before tool execution. Bound to a session with TTL. Referenced by subsequent ToolCallRequest objects.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "intentId",
+    "sessionId",
+    "tenantId",
+    "agentName",
+    "agentVersion",
+    "statedGoal",
+    "structuredVerbs",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$",
+      "description": "Schema semantic version (vMAJOR.MINOR)."
+    },
+    "intentId": {
+      "type": "string",
+      "pattern": "^int_[a-zA-Z0-9_]{16,40}$",
+      "description": "Unique intent identifier."
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^ses_[a-zA-Z0-9_]{16,40}$",
+      "description": "Session this intent is bound to."
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "agentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Free-form name the agent identifies itself by."
+    },
+    "agentVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "agentVendor": {
+      "type": "string",
+      "enum": ["anthropic", "openai", "cursor", "cohere", "mistral", "custom", "other"],
+      "description": "Optional vendor identifier; informs intent extraction heuristics in adapters."
+    },
+    "statedGoal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "Free-form natural-language goal. Used for explanation surfaces and LLM-judge fallback."
+    },
+    "statedSteps": {
+      "type": "array",
+      "description": "Optional step plan the agent declared.",
+      "items": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "maxItems": 50
+    },
+    "structuredVerbs": {
+      "type": "array",
+      "description": "Strict verb taxonomy from the intent vocabulary. Used for deterministic mismatch detection.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "read.list",
+          "read.describe",
+          "read.get",
+          "read.search",
+          "read.aggregate",
+          "analyze",
+          "summarize",
+          "compare",
+          "write.create",
+          "write.update",
+          "write.delete",
+          "execute.run",
+          "execute.deploy",
+          "notify.send",
+          "notify.publish",
+          "escalate.approve",
+          "escalate.deny",
+          "audit.log",
+          "audit.export",
+          "simulate",
+          "dry_run"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Optional declarative bounds the agent commits to.",
+      "additionalProperties": false,
+      "properties": {
+        "maxCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maxRowsRead": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scopeTargets": {
+          "type": "array",
+          "description": "Allowed target identifiers (e.g., specific account IDs).",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "scopeRegions": {
+          "type": "array",
+          "description": "Allowed region codes (cloud-specific).",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ttlSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600,
+      "default": 300,
+      "description": "How long this intent remains valid for matching. Default 5 min."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Forward-compat extension field. Reserved for future minor-bump additions; consumers must accept unknown contents."
+    }
+  }
+}

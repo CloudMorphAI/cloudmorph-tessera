@@ -1,0 +1,90 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/audit-event.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Audit Event",
+  "description": "One entry in the tamper-evident audit chain. Emitted by AuditEmitter; written to one or more sinks (stdout, S3, S3-customer-owned, Kafka, ClickHouse). Verifier walks the chain and asserts no gap.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "tenantId",
+    "eventType",
+    "payload",
+    "occurredAt",
+    "eventHash"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[a-zA-Z0-9_]{16,40}$"
+    },
+    "prevEventHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the previous event for the same tenantId. Empty string for the first event."
+    },
+    "eventHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "sha256(canonicalJson({...event with eventHash and signature blanked})). Computed at emission time."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Optional Ed25519 signature, base64-encoded. Only present for tenants opting into per-event signing."
+    },
+    "tenantId": { "type": "string" },
+    "sessionId": { "type": "string" },
+    "actorId": {
+      "type": "string",
+      "description": "ID of the actor (agent token holder or human approver) responsible for this event."
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "intent.declared",
+        "intent.revoked",
+        "intent.expired",
+        "intent.referenced",
+        "intent.mismatch_detected",
+        "decision.made",
+        "request.received",
+        "request.allowed",
+        "request.denied",
+        "request.mutated",
+        "request.approved",
+        "request.redacted",
+        "request.throttled",
+        "approval.requested",
+        "approval.granted",
+        "approval.rejected",
+        "approval.expired",
+        "session.started",
+        "session.ended",
+        "policy.bundle.loaded",
+        "policy.bundle.reload.failed",
+        "policy.engine.fail_open_active",
+        "executor.job.claimed",
+        "executor.job.heartbeat",
+        "executor.job.completed",
+        "executor.job.failed",
+        "audit.sink.failure",
+        "audit.buffer.overflow"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-type-specific payload. Schema varies; consumers must tolerate forward-compat fields.",
+      "additionalProperties": true
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

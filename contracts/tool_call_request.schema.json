@@ -1,0 +1,51 @@
+{
+  "$id": "https://contracts.cloudmorph.io/v0.1/tool-call-request.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tool Call Request",
+  "description": "Normalized representation of an MCP tools/call (or proxy wrapper). The policy engine evaluates this object.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "action", "arguments", "tenantId", "receivedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+$"
+    },
+    "action": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$",
+      "description": "Action name. Pattern requires at least one dot — e.g., aws.s3.list_buckets, databricks.sql.execute_query, mcp.proxy.<downstreamUrl>.<downstreamAction>."
+    },
+    "arguments": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Action-specific arguments. Validated against per-action schemas at the MCP boundary (post-MVP)."
+    },
+    "targets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Optional target identifiers (e.g., AWS account IDs)."
+    },
+    "tenantId": { "type": "string" },
+    "sessionId": { "type": "string" },
+    "intentId": {
+      "type": "string",
+      "description": "Optional reference to a previously-declared intent."
+    },
+    "runtimeContext": {
+      "$ref": "runtime-context.schema.json#"
+    },
+    "originatingTransport": {
+      "type": "string",
+      "enum": ["http", "ws", "stdio", "sse", "proxy"]
+    },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "x_meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
