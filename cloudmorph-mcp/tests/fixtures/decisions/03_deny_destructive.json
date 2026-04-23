@@ -1,0 +1,12 @@
+{
+  "name": "deny_destructive",
+  "description": "S3 delete_bucket is in the destructive denylist.",
+  "input": {
+    "toolCall": {"action": "aws.s3.delete_bucket", "arguments": {"bucket": "test"}},
+    "tenantSettings": {"locked": false}
+  },
+  "expected": {
+    "outcome": "deny",
+    "reason": "destructive_action_denied"
+  }
+}
