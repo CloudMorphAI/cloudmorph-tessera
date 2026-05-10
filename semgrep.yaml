@@ -1,0 +1,42 @@
+# semgrep.yaml — Tessera proxy security rules
+# Run: semgrep --config=semgrep.yaml --error tessera/
+
+rules:
+  # Rule 1: Disallow yaml.load() without SafeLoader.
+  # Existing code uses yaml.safe_load() exclusively; this rule will not fire.
+  - id: tessera-no-yaml-load-unsafe
+    pattern: yaml.load($X, ...)
+    message: "Use yaml.safe_load() instead of yaml.load() to prevent arbitrary code execution via unsafe YAML deserialisation"
+    languages: [python]
+    severity: ERROR
+    fix: yaml.safe_load($X)
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - https://pyyaml.org/wiki/PyYAMLDocumentation
+
+  # Rule 2: Disallow subprocess.run with shell=True.
+  # Existing proxy code does not call subprocess.run at all; this rule will not fire.
+  - id: tessera-no-shell-true
+    pattern: subprocess.run(..., shell=True, ...)
+    message: "subprocess.run with shell=True is prohibited in proxy code — pass a list of args instead"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+
+  # Rule 3: Disallow httpx calls with follow_redirects=True passed as a variable.
+  # Existing code constructs httpx.AsyncClient without follow_redirects; this rule will not fire.
+  - id: tessera-no-httpx-follow-redirects-variable
+    patterns:
+      - pattern: httpx.$METHOD(..., follow_redirects=$VAR, ...)
+      - pattern-not: httpx.$METHOD(..., follow_redirects=False, ...)
+      - pattern-not: httpx.$METHOD(..., follow_redirects=True, ...)
+    message: "httpx.$METHOD with a variable follow_redirects must use an explicit allow-list URL — avoid open redirect"
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-601: URL Redirection to Untrusted Site"
