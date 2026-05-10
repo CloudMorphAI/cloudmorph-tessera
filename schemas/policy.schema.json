@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tessera Policy",
+  "type": "object",
+  "required": ["id", "name", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9-]{1,64}$"},
+    "name": {"type": "string", "maxLength": 100},
+    "description": {"type": "string"},
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "upstream": {"type": "string"},
+        "tool": {"type": "string"},
+        "tool_pattern": {"type": "string"},
+        "require_intent": {"type": "boolean"}
+      }
+    },
+    "when": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/condition"}
+    },
+    "action": {"type": "string", "enum": ["allow", "block", "log_only", "require_approval"]},
+    "reason": {"type": "string"},
+    "priority": {"type": "integer"}
+  },
+  "definitions": {
+    "condition": {
+      "type": "object",
+      "required": ["condition"],
+      "properties": {
+        "condition": {"type": "string"},
+        "arg": {"type": "string"},
+        "value": {},
+        "values": {"type": "array"},
+        "pattern": {"type": "string"},
+        "bytes": {"type": "integer"},
+        "regions": {"type": "array", "items": {"type": "string"}},
+        "start": {"type": "string"},
+        "end": {"type": "string"},
+        "tz": {"type": "string"},
+        "key": {"type": "string"},
+        "conditions": {"type": "array", "items": {"$ref": "#/definitions/condition"}}
+      }
+    }
+  }
+}
