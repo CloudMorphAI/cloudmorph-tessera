@@ -1,0 +1,13 @@
+"""AuditSink Protocol — the interface every sink must implement."""
+from __future__ import annotations
+from typing import Any, Iterator, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class AuditSink(Protocol):
+    name: str
+
+    def emit(self, event: dict[str, Any]) -> None: ...
+    def close(self) -> None: ...
+    def head_hash(self, scope: str) -> str: ...
+    def iter_events(self, scope: str | None = None) -> Iterator[dict[str, Any]]: ...
