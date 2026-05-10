@@ -1,0 +1,41 @@
+id: slack-mcp-protection
+name: Slack MCP Protection
+description: Block Slack MCP message operations to public channels containing sensitive content.
+  Prevents AI agents from posting PII, secrets, or API keys to public Slack channels.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: tool_name_in
+    values:
+      - "mcp__slack__chat_postMessage"
+      - "mcp__slack__chat_update"
+      - "mcp__slack__conversations_setTopic"
+  - condition: arg_in_set
+    arg: channel
+    values:
+      - "#general"
+      - "#announcements"
+      - "#engineering"
+      - "#all-hands"
+      - "general"
+      - "announcements"
+      - "engineering"
+      - "all-hands"
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: text
+        pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      - condition: arg_matches_regex
+        arg: text
+        pattern: "\\b4[0-9]{12}(?:[0-9]{3})?\\b"
+      - condition: arg_matches_regex
+        arg: text
+        pattern: "(?i)(api_key|apikey|secret|password|token)\\s*[:=]\\s*[a-z0-9_\\-]{8,}"
+      - condition: arg_matches_regex
+        arg: text
+        pattern: "-----BEGIN (?:RSA )?PRIVATE KEY-----"
+action: block
+reason: "Slack message to public channel contains sensitive content"
+priority: 90

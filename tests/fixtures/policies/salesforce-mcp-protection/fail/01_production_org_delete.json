@@ -1,0 +1,13 @@
+{
+  "policy_id": "salesforce-mcp-protection",
+  "context": {
+    "tool_call": {
+      "name": "mcp__salesforce__delete_record",
+      "arguments": {"org_id": "00D000000000001", "record_id": "001000000000001"}
+    },
+    "intent": null,
+    "upstream": "salesforce",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "require_approval"
+}

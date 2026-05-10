@@ -1,0 +1,13 @@
+{
+  "policy_id": "slack-mcp-protection",
+  "context": {
+    "tool_call": {
+      "name": "mcp__slack__chat_postMessage",
+      "arguments": {"channel": "#announcements", "text": "New integration ready: api_key=abc123xyz please rotate after use"}
+    },
+    "intent": null,
+    "upstream": "slack",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "block"
+}

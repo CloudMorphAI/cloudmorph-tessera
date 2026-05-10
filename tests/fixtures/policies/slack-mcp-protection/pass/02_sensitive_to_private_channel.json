@@ -1,0 +1,13 @@
+{
+  "policy_id": "slack-mcp-protection",
+  "context": {
+    "tool_call": {
+      "name": "mcp__slack__chat_postMessage",
+      "arguments": {"channel": "#private-eng", "text": "SSN on file: 123-45-6789"}
+    },
+    "intent": null,
+    "upstream": "slack",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

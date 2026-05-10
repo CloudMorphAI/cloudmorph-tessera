@@ -1,0 +1,25 @@
+id: salesforce-mcp-protection
+name: Salesforce MCP Protection
+description: Block Salesforce MCP delete and update operations on production org IDs.
+  Org IDs below are templates — replace with actual production org IDs.
+  See https://help.salesforce.com/s/articleView?id=000385587 for org ID format.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: tool_name_in
+    values:
+      - "mcp__salesforce__delete_record"
+      - "mcp__salesforce__delete_contact"
+      - "mcp__salesforce__delete_account"
+      - "mcp__salesforce__update_record"
+      - "mcp__salesforce__update_contact"
+      - "mcp__salesforce__update_account"
+  - condition: arg_in_set
+    arg: org_id
+    values:
+      - "00D000000000001"  # TEMPLATE: replace with actual production org ID
+      - "00D000000000002"  # TEMPLATE: add more as needed
+action: require_approval
+reason: "Salesforce production org operation requires approval"
+priority: 85
