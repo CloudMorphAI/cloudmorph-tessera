@@ -1,0 +1,52 @@
+# tessera.example.yaml — annotated reference config
+# Copy to tessera.yaml and edit before starting Tessera.
+# All fields shown with their defaults. Required sections marked.
+
+listen:
+  host: 0.0.0.0   # Bind interface; override with TESSERA_BIND_HOST
+  port: 8080       # Bind port; override with TESSERA_BIND_PORT
+
+auth:
+  type: bearer     # Only supported authenticator in v0.1
+
+audit:
+  sink: sqlite                          # sqlite (default) | stdout
+  path: /var/lib/tessera/audit.db       # Override with TESSERA_AUDIT_PATH
+  also_stdout: false                    # Mirror events to stdout in addition to primary sink
+
+policies:
+  dir: /etc/tessera/policies            # Override with TESSERA_POLICY_DIR
+  reload: watch                         # watch | sighup | none
+  mode: log_only                        # enforcement | log_only | observation
+                                        # log_only = always forward, tag would_block/would_allow
+                                        # enforcement = block decisions are honored
+                                        # observation = engine skipped entirely
+  default_action: block                 # Action when no policy matches (enforcement mode)
+
+intent:
+  meta_key: tessera_intent              # Key inside _meta to read intent from
+  required: false                       # true = block all calls without intent (strict mode)
+
+metrics:
+  enabled: false                        # Prometheus /metrics endpoint; default OFF
+  bearer_token_env: TESSERA_METRICS_TOKEN  # Optional dedicated read-only token env var
+
+deployment_id: default                  # Audit scope used in dev mode (no token auth)
+
+# REQUIRED: configure at least one upstream
+upstreams:
+  - name: aws
+    url: https://mcp.aws.example.com    # Your actual MCP server URL
+    timeout_seconds: 30
+    credentials:
+      header: Authorization
+      value: "Bearer ${AWS_MCP_TOKEN}"  # ${VAR} resolved from environment at startup
+  - name: github
+    url: https://mcp.github.example.com
+    timeout_seconds: 10
+    credentials:
+      header: Authorization
+      value: "Bearer ${GITHUB_MCP_TOKEN}"
+
+runtime:
+  lockdown: false   # Set to true + SIGHUP to block ALL traffic immediately (kill switch)

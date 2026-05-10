@@ -1,0 +1,26 @@
+# tokens.example.yaml — multi-token bearer auth configuration
+# Mount as /etc/tessera/tokens.yaml and set TESSERA_BEARER_TOKENS_FILE=/etc/tessera/tokens.yaml
+#
+# Token format rules:
+#   name:  [a-z0-9_-]{1,64} — unique identifier
+#   token: opaque string, >= 16 chars, no whitespace
+#   scope: [a-z0-9_-]{1,64} — audit chain stream; defaults to name if omitted
+#
+# Multiple tokens may share a scope (their audit events merge into one chain).
+
+tokens:
+  - name: alice
+    token: tk_alice_REPLACE_ME_32chars_min
+    scope: alice            # audit events keyed by scope
+
+  - name: bob
+    token: tk_bob_REPLACE_ME_32chars_min
+    # scope defaults to "bob"
+
+  - name: ci
+    token: tk_ci_REPLACE_ME_32chars_min
+    scope: ci-shared        # multiple tokens can share a scope
+
+  - name: readonly
+    token: tk_ro_REPLACE_ME_32chars_min
+    scope: readonly
