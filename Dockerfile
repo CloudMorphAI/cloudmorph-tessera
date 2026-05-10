@@ -3,8 +3,9 @@ WORKDIR /build
 COPY pyproject.toml README.md ./
 RUN mkdir tessera && touch tessera/__init__.py
 COPY tessera/ ./tessera/
-RUN pip install --target=/install --no-cache-dir . && \
-    pip install --target=/install --no-cache-dir "tzdata>=2024.0"
+RUN python -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir . && \
+    /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
 FROM python:3.12-slim
 LABEL org.opencontainers.image.source="https://github.com/cloudmorph-ai/cloudmorph-tessera"
@@ -17,10 +18,12 @@ RUN groupadd -g 10001 tessera && \
     mkdir -p /etc/tessera/policies /var/lib/tessera && \
     chown -R tessera:tessera /etc/tessera /var/lib/tessera
 
-COPY --from=builder /install /usr/local/lib/python3.12/site-packages
+COPY --from=builder /venv /venv
 COPY policies/             /etc/tessera/policies-default/
 COPY tessera.example.yaml  /etc/tessera/tessera.example.yaml
 COPY tokens.example.yaml   /etc/tessera/tokens.example.yaml
+
+ENV PATH="/venv/bin:$PATH"
 
 USER tessera
 EXPOSE 8080

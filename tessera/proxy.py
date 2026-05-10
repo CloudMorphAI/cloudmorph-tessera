@@ -350,14 +350,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         _METRICS[f"decisions_total{{action={decision.action.value},mode={mode.value}}}"] += 1
 
         if mode == PoliciesMode.log_only:
-            # Always forward upstream
+            # Always forward upstream (even on upstream error — return with headers)
             upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
-            if isinstance(upstream_response, JSONResponse):
-                return upstream_response
 
             # Map decision to would_* header value
             if decision.policy_id is None:
-                # No policy matched
                 tessera_decision_header = "no_match"
             elif decision.action == Action.block:
                 tessera_decision_header = "would_block"
@@ -380,20 +377,26 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     "decision_error": decision.decision_error,
                 },
             )
-            _inject_audit_id(upstream_response, audit_event["eventId"])
             _METRICS["requests_total{outcome=log_only_forwarded}"] += 1
 
-            headers: dict[str, str] = {
+            log_only_headers: dict[str, str] = {
                 "X-Tessera-Mode": "log_only",
                 "X-Tessera-Decision": tessera_decision_header,
             }
             if tessera_decision_header == "would_block":
                 if decision.policy_id:
-                    headers["X-Tessera-Policy-Id"] = decision.policy_id
+                    log_only_headers["X-Tessera-Policy-Id"] = decision.policy_id
                 if decision.reason:
-                    headers["X-Tessera-Reason"] = decision.reason
+                    log_only_headers["X-Tessera-Reason"] = decision.reason
 
-            return JSONResponse(upstream_response, headers=headers)
+            if isinstance(upstream_response, JSONResponse):
+                # Upstream failed — return the error response with X-Tessera headers
+                for k, v in log_only_headers.items():
+                    upstream_response.headers[k] = v
+                return upstream_response
+
+            _inject_audit_id(upstream_response, audit_event["eventId"])
+            return JSONResponse(upstream_response, headers=log_only_headers)
 
         # enforcement mode
         if decision.action in (Action.allow, Action.log_only):
