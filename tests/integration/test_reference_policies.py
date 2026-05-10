@@ -1,4 +1,5 @@
 """Integration test: load each reference policy, run paired fixtures, assert engine output."""
+
 from __future__ import annotations
 
 import json
@@ -6,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.engine import PolicyEngine
+from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action
 
 POLICIES_DIR = Path(__file__).parent.parent.parent / "policies"

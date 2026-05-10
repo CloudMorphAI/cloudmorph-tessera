@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -33,11 +34,11 @@ def _regex_fields_in_policy(policy: Policy) -> list[str]:
     return patterns
 
 
-def _iter_conditions(conditions: list) -> list:
+def _iter_conditions(conditions: list[Any]) -> list[Any]:
     """Flatten nested conditions (AnyOf/NoneOf) into a single iterable."""
     from tessera.policy.schema import AnyOf, NoneOf
 
-    result = []
+    result: list[Any] = []
     for cond in conditions:
         result.append(cond)
         if isinstance(cond, (AnyOf, NoneOf)):
@@ -51,11 +52,11 @@ class FilesystemPolicyLoader:
     def __init__(self, policy_dir: str | Path, reload_mode: str = "none") -> None:
         self._dir = Path(policy_dir)
         self._reload_mode = reload_mode
-        self._policies: dict[str, Policy] = {}   # str(path) -> Policy
-        self._errors: dict[str, str] = {}        # str(path) -> error message
-        self._action_verbs: dict = {}            # merged user mappings
+        self._policies: dict[str, Policy] = {}  # str(path) -> Policy
+        self._errors: dict[str, str] = {}  # str(path) -> error message
+        self._action_verbs: dict[str, Any] = {}  # merged user mappings
         self._callbacks: list[Callable[[list[Policy]], None]] = []
-        self._observer = None                    # watchdog Observer (if any)
+        self._observer: Any = None  # watchdog Observer (if any)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -85,9 +86,7 @@ class FilesystemPolicyLoader:
                     self._action_verbs = merge_mappings(ACTION_VERBS, user)
                 except Exception as exc:
                     msg = f"failed to load _action_verbs.yaml: {exc}"
-                    logger.error(
-                        "event=action_verbs_load_failed path=%s error=%s", path, exc
-                    )
+                    logger.error("event=action_verbs_load_failed path=%s error=%s", path, exc)
                     if is_startup:
                         raise PolicyError(msg, path=str(path)) from exc
                 continue
@@ -100,7 +99,6 @@ class FilesystemPolicyLoader:
             self._load_file(path, is_startup=is_startup)
 
         # Drop policies whose files no longer exist on disk
-        removed = set(self._policies.keys()) - seen_paths - set(self._errors.keys())
         for gone_path in list(self._policies.keys()):
             if gone_path not in seen_paths:
                 logger.info("event=policy_removed path=%s", gone_path)
@@ -114,14 +112,15 @@ class FilesystemPolicyLoader:
         seen_ids: dict[str, str] = {}
         for path_str, policy in self._policies.items():
             if policy.id in seen_ids:
-                msg = (
-                    f"duplicate policy id {policy.id!r}: "
-                    f"found in {seen_ids[policy.id]!r} and {path_str!r}"
-                )
+                msg = f"duplicate policy id {policy.id!r}: found in {seen_ids[policy.id]!r} and {path_str!r}"
                 if is_startup:
                     raise PolicyError(msg)
-                logger.error("event=policy_duplicate_id policy_id=%s paths=%s,%s",
-                             policy.id, seen_ids[policy.id], path_str)
+                logger.error(
+                    "event=policy_duplicate_id policy_id=%s paths=%s,%s",
+                    policy.id,
+                    seen_ids[policy.id],
+                    path_str,
+                )
             else:
                 seen_ids[policy.id] = path_str
 
@@ -139,12 +138,11 @@ class FilesystemPolicyLoader:
             return
 
         try:
-            from watchdog.events import FileSystemEventHandler, FileSystemEvent
+            from watchdog.events import FileSystemEvent, FileSystemEventHandler
             from watchdog.observers.polling import PollingObserver
         except ImportError:
             logger.warning(
-                "event=watchdog_unavailable "
-                "message='watchdog not installed; file-watch reload disabled'"
+                "event=watchdog_unavailable message='watchdog not installed; file-watch reload disabled'"
             )
             return
 
@@ -155,7 +153,7 @@ class FilesystemPolicyLoader:
                 if event.is_directory:
                     return
                 src = getattr(event, "src_path", "")
-                if not (src.endswith(".yaml") or src.endswith(".yml")):
+                if not src.endswith((".yaml", ".yml")):
                     return
                 logger.info("event=policy_file_changed path=%s", src)
                 try:
@@ -181,7 +179,7 @@ class FilesystemPolicyLoader:
             self._observer.join()
             self._observer = None
 
-    def state(self) -> dict:
+    def state(self) -> dict[str, Any]:
         """Return {loaded: int, errored: [{path: str, error: str}]}."""
         return {
             "loaded": len(self._policies),

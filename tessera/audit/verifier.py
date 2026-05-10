@@ -1,4 +1,5 @@
 """Chain-walk integrity verifier for tessera audit verify CLI command."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -30,10 +31,8 @@ def verify_chain(sink: AuditSink, scope: str) -> dict[str, Any]:
     first_event_at: str | None = None
     last_event_at: str | None = None
     prev_event: dict[str, Any] | None = None
-    seq = 0
 
-    for event in sink.iter_events(scope):
-        seq += 1
+    for seq, event in enumerate(sink.iter_events(scope), start=1):
         events_checked += 1
         occurred_at = event.get("occurredAt")
 

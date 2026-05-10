@@ -1,16 +1,17 @@
 """Intent extraction from MCP _meta field."""
+
 from __future__ import annotations
 
 from tessera.errors import PolicyError
 
 
 def extract_intent(
-    meta: dict | None,
+    meta: dict[str, object] | None,
     *,
     meta_key: str = "tessera_intent",
     intent_required: bool = False,
     known_verbs: frozenset[str] | None = None,
-) -> dict | None:
+) -> dict[str, object] | None:
     """Extract and validate intent from MCP _meta dict.
 
     Returns the intent dict or None if not present.

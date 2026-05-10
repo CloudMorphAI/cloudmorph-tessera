@@ -1,4 +1,5 @@
 """Unit tests for tessera.intent.extract_intent."""
+
 from __future__ import annotations
 
 import pytest

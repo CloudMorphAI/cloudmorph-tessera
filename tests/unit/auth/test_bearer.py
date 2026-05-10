@@ -1,4 +1,5 @@
 """Unit tests for tessera.auth.bearer."""
+
 from __future__ import annotations
 
 import timeit
@@ -9,7 +10,6 @@ import pytest
 
 from tessera.auth.bearer import BearerTokenAuthenticator, Token, build_token_list
 from tessera.errors import ConfigError, UnauthorizedError
-
 
 # ---------------------------------------------------------------------------
 # build_token_list — inline format
@@ -58,9 +58,7 @@ def test_build_token_list_inline_token_too_short_raises(monkeypatch: pytest.Monk
 def test_build_token_list_file_format(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     token_file = tmp_path / "tokens.yaml"
     token_file.write_text(
-        "tokens:\n"
-        "  - name: alice\n"
-        "    token: tk_alice_longerthan16chars\n",
+        "tokens:\n  - name: alice\n    token: tk_alice_longerthan16chars\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("TESSERA_BEARER_TOKENS", raising=False)
@@ -76,10 +74,7 @@ def test_build_token_list_file_format(monkeypatch: pytest.MonkeyPatch, tmp_path:
 def test_build_token_list_file_custom_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     token_file = tmp_path / "tokens.yaml"
     token_file.write_text(
-        "tokens:\n"
-        "  - name: alice\n"
-        "    token: tk_alice_longerthan16chars\n"
-        "    scope: team-alpha\n",
+        "tokens:\n  - name: alice\n    token: tk_alice_longerthan16chars\n    scope: team-alpha\n",
         encoding="utf-8",
     )
     monkeypatch.delenv("TESSERA_BEARER_TOKENS", raising=False)
@@ -89,9 +84,7 @@ def test_build_token_list_file_custom_scope(monkeypatch: pytest.MonkeyPatch, tmp
     assert result[0].scope == "team-alpha"
 
 
-def test_build_token_list_file_duplicate_names_raise(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_build_token_list_file_duplicate_names_raise(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     token_file = tmp_path / "tokens.yaml"
     token_file.write_text(
         "tokens:\n"

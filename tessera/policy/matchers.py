@@ -1,11 +1,10 @@
 """Upstream and tool name matching."""
+
 from __future__ import annotations
 
 import fnmatch
 
-import regex as re
-
-from tessera.errors import PolicyError
+import regex as re  # type: ignore[import-untyped]
 
 
 def match_upstream(policy_upstream: str, request_upstream: str) -> bool:

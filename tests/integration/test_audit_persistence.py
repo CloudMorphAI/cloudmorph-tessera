@@ -1,9 +1,8 @@
 """Integration test: hash chain head restored on sink restart."""
+
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
@@ -24,8 +23,8 @@ def test_restart_restores_chain_head(tmp_path: Path) -> None:
     chain1 = HashChain()
     emitter1 = AuditEmitter(tenant_id=scope, sinks=[sink1], hash_chain=chain1)
 
-    evt1 = emitter1.emit("decision", payload={"run": 1, "seq": 1})
-    evt2 = emitter1.emit("decision", payload={"run": 1, "seq": 2})
+    emitter1.emit("decision", payload={"run": 1, "seq": 1})
+    emitter1.emit("decision", payload={"run": 1, "seq": 2})
     evt3 = emitter1.emit("decision", payload={"run": 1, "seq": 3})
 
     last_hash_run1 = evt3["eventHash"]
@@ -60,19 +59,17 @@ def test_restart_restores_chain_head(tmp_path: Path) -> None:
     sink2.close()
 
     # --- Verify full chain by walking events ---
-    from tessera.audit.chain import HashChain as _HC
-
     sink3 = SqliteSink(path=db_path)
     all_events = list(sink3.iter_events(scope))
     assert len(all_events) == 5
 
     # Verify each event's hash is self-consistent
     for evt in all_events:
-        assert _HC.verify_event_hash(evt), f"event hash mismatch for {evt['eventId']}"
+        assert HashChain.verify_event_hash(evt), f"event hash mismatch for {evt['eventId']}"
 
     # Verify chain linkage
     for i in range(1, len(all_events)):
-        assert _HC.verify_pair(all_events[i - 1], all_events[i]), (
+        assert HashChain.verify_pair(all_events[i - 1], all_events[i]), (
             f"chain broken between events {i - 1} and {i}"
         )
 

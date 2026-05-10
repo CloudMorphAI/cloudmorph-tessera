@@ -100,10 +100,16 @@ ignore = [
     "E501",
     "S101",
     "S311",
+    "TC001",   # app import into TYPE_CHECKING — we use from __future__ import annotations
+    "TC003",   # stdlib import into TYPE_CHECKING — deferred by annotations
+    "SIM105",  # contextlib.suppress — explicit try/except is more readable for error callbacks
+    "S110",    # try-except-pass — legitimate in sink fan-out and close() methods
+    "S112",    # try-except-continue — legitimate in policy reload loop
+    "UP042",   # StrEnum — keep str+Enum for broader compatibility
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S105", "S106", "S301"]
+"tests/**/*.py" = ["S101", "S104", "S105", "S106", "S108", "S301", "S311"]
 
 [tool.mypy]
 python_version = "3.12"

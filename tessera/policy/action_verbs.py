@@ -11,8 +11,10 @@ in any executor has a mapping here. New actions without a mapping fail CI.
 """
 
 from __future__ import annotations
-import yaml
+
 from pathlib import Path
+
+import yaml
 
 # All known intent verbs. Mirrors the structuredVerbs enum in
 # contracts/intent_declaration.schema.json.
@@ -173,9 +175,7 @@ def load_user_mappings(path: Path) -> dict[str, frozenset[str]]:
     result: dict[str, frozenset[str]] = {}
     for tool_name, verb_list in raw_mappings.items():
         if not isinstance(verb_list, list):
-            raise ValueError(
-                f"Verb list for '{tool_name}' must be a list, got {type(verb_list).__name__}"
-            )
+            raise ValueError(f"Verb list for '{tool_name}' must be a list, got {type(verb_list).__name__}")
         unknown = set(verb_list) - KNOWN_VERBS
         if unknown:
             raise ValueError(f"Unknown intent verb(s) for '{tool_name}': {unknown}")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import textwrap
-import time
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ import pytest
 from tessera.errors import PolicyError
 from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action, Policy
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -65,9 +63,9 @@ def test_load_sort_order(tmp_path: Path) -> None:
     loader = FilesystemPolicyLoader(tmp_path)
     policies = loader.load_all()
     assert len(policies) == 3
-    assert policies[0].id == "bbb-policy"   # highest priority
-    assert policies[1].id == "aaa-policy"   # priority 5, id < ccc
-    assert policies[2].id == "ccc-policy"   # priority 5, id > aaa
+    assert policies[0].id == "bbb-policy"  # highest priority
+    assert policies[1].id == "aaa-policy"  # priority 5, id < ccc
+    assert policies[2].id == "ccc-policy"  # priority 5, id > aaa
 
 
 # ── Underscore files ──────────────────────────────────────────────────────────

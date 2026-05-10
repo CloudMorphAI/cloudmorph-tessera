@@ -1,4 +1,5 @@
 """Mock MCP server for proxy integration tests."""
+
 from __future__ import annotations
 
 import asyncio

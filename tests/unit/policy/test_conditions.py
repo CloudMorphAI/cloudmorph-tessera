@@ -1,7 +1,8 @@
 """Unit tests for tessera.policy.conditions."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -9,7 +10,6 @@ import pytest
 from tessera.policy.conditions import (
     clear_decision_errors,
     evaluate_condition,
-    evaluate_conditions,
     get_decision_errors,
 )
 from tessera.policy.schema import (
@@ -30,7 +30,6 @@ from tessera.policy.schema import (
     TimeOfDayOutside,
     ToolNameIn,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -128,12 +127,8 @@ def test_arg_matches_regex_missing_arg() -> None:
 def test_arg_matches_regex_wildcard_arg() -> None:
     """arg="*": True if any argument value matches the pattern."""
     cond = ArgMatchesRegex(condition="arg_matches_regex", arg="*", pattern=r"^prod-")
-    assert evaluate_condition(
-        cond, _ctx(arguments={"bucket": "prod-data", "region": "us-east-1"})
-    ) is True
-    assert evaluate_condition(
-        cond, _ctx(arguments={"bucket": "dev-data", "region": "us-east-1"})
-    ) is False
+    assert evaluate_condition(cond, _ctx(arguments={"bucket": "prod-data", "region": "us-east-1"})) is True
+    assert evaluate_condition(cond, _ctx(arguments={"bucket": "dev-data", "region": "us-east-1"})) is False
 
 
 # ── ArgInSet ──────────────────────────────────────────────────────────────────
@@ -152,12 +147,8 @@ def test_arg_in_set_no_match() -> None:
 def test_arg_in_set_wildcard() -> None:
     """arg="*": True if any argument value is in the set."""
     cond = ArgInSet(condition="arg_in_set", arg="*", values=["prod", "staging"])
-    assert evaluate_condition(
-        cond, _ctx(arguments={"env": "prod", "region": "us-east-1"})
-    ) is True
-    assert evaluate_condition(
-        cond, _ctx(arguments={"env": "dev", "region": "us-east-1"})
-    ) is False
+    assert evaluate_condition(cond, _ctx(arguments={"env": "prod", "region": "us-east-1"})) is True
+    assert evaluate_condition(cond, _ctx(arguments={"env": "dev", "region": "us-east-1"})) is False
 
 
 # ── ArgContainsPattern (alias of arg_matches_regex) ───────────────────────────

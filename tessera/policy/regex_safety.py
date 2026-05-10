@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-import regex
+import regex  # type: ignore[import-untyped]
 
 from tessera.errors import PolicyError
 
@@ -12,8 +12,8 @@ from tessera.errors import PolicyError
 _CORPUS = [
     "a" * 10,
     "ab" * 50,
-    "abc123_-." * 111,          # ~999 chars
-    "xyzABC123!@#" * 833,       # ~9996 chars
+    "abc123_-." * 111,  # ~999 chars
+    "xyzABC123!@#" * 833,  # ~9996 chars
     "hello world test " * 5882 + "X",  # ~99995 chars
 ]
 

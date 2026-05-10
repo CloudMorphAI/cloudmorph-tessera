@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-
-import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -24,7 +21,13 @@ _simple_value = st.one_of(
 )
 
 _event_strategy = st.fixed_dictionaries(
-    {"tenantId": st.text(min_size=1, max_size=40, alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters="-_"))},
+    {
+        "tenantId": st.text(
+            min_size=1,
+            max_size=40,
+            alphabet=st.characters(whitelist_categories=("Lu", "Ll", "Nd"), whitelist_characters="-_"),
+        )
+    },
     optional={"payload": st.dictionaries(st.text(min_size=1, max_size=10), _simple_value, max_size=5)},
 )
 
@@ -47,7 +50,7 @@ def test_stamped_chain_always_verifies(events: list[dict]) -> None:
     for ev in stamped_events:
         assert HashChain.verify_event_hash(ev), "verify_event_hash failed on stamped event"
 
-    for prev, nxt in zip(stamped_events, stamped_events[1:]):
+    for prev, nxt in zip(stamped_events, stamped_events[1:], strict=False):
         if prev["tenantId"] == nxt["tenantId"]:
             # Only consecutive same-scope events must link
             assert HashChain.verify_pair(prev, nxt), "verify_pair failed on consecutive same-scope events"
@@ -109,7 +112,7 @@ def test_adjacent_swap_breaks_verify_pair(events: list[dict]) -> None:
 def test_canonical_json_deterministic(keys: list[str], values: list[object]) -> None:
     """Same key-value pairs in any order produce identical canonical bytes."""
     # Pad or truncate values to match keys length
-    pairs = list(zip(keys, (values * len(keys))[: len(keys)]))
+    pairs = list(zip(keys, (values * len(keys))[: len(keys)], strict=False))
 
     d_forward = dict(pairs)
     d_reverse = dict(reversed(pairs))

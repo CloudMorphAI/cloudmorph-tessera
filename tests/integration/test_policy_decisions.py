@@ -1,4 +1,5 @@
 """Test ported _keep decision fixtures against the policy engine directly."""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +17,7 @@ DECISIONS_DIR = Path(__file__).parent.parent / "fixtures" / "decisions"
 # Fixtures 01, 04, 05 expect "allow" — we create an allow-read policy.
 # Fixtures 02, 03 expect "block" — default block + specific block policy.
 # Fixture 06 expects "block" due to lockdown=true.
+
 
 def _build_fixture_engine() -> PolicyEngine:
     """Build a PolicyEngine that supports the decision fixtures."""
@@ -43,10 +45,7 @@ def _build_fixture_engine() -> PolicyEngine:
 
 
 def _load_fixtures() -> list[tuple[str, dict]]:
-    return [
-        (f.stem, json.loads(f.read_text(encoding="utf-8")))
-        for f in sorted(DECISIONS_DIR.glob("*.json"))
-    ]
+    return [(f.stem, json.loads(f.read_text(encoding="utf-8"))) for f in sorted(DECISIONS_DIR.glob("*.json"))]
 
 
 @pytest.mark.parametrize("name,fixture", _load_fixtures())

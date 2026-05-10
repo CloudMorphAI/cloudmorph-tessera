@@ -8,7 +8,6 @@ import pytest
 
 from tessera.audit.canonical_json import canonical_json, canonical_json_str
 
-
 # ---------------------------------------------------------------------------
 # Primitive value tests
 # ---------------------------------------------------------------------------
@@ -63,7 +62,7 @@ def test_string() -> None:
     assert canonical_json("hello") == b'"hello"'
     assert canonical_json("") == b'""'
     # Unicode preserved without escape
-    assert canonical_json("café") == '"café"'.encode("utf-8")
+    assert canonical_json("café") == '"café"'.encode()
 
 
 # ---------------------------------------------------------------------------

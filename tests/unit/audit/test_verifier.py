@@ -1,17 +1,14 @@
 """Unit tests for tessera.audit.verifier.verify_chain."""
+
 from __future__ import annotations
 
 import json
 import sqlite3
 from pathlib import Path
 
-import pytest
-
-from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
 from tessera.audit.sinks.sqlite import SqliteSink
 from tessera.audit.verifier import verify_chain
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,9 +97,7 @@ def test_verify_chain_break_detected(tmp_path: Path) -> None:
         # Corrupt the prev_event_hash stored in payload_json for seq=2
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT event_id, payload_json FROM audit_events WHERE seq = 2"
-        ).fetchone()
+        row = conn.execute("SELECT event_id, payload_json FROM audit_events WHERE seq = 2").fetchone()
         payload = json.loads(row["payload_json"])
         payload["prevEventHash"] = "aa" * 32
         conn.execute(
@@ -152,9 +147,7 @@ def test_verify_reports_first_failure_and_stops(tmp_path: Path) -> None:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         for seq in (1, 2, 3):
-            row = conn.execute(
-                "SELECT payload_json FROM audit_events WHERE seq = ?", (seq,)
-            ).fetchone()
+            row = conn.execute("SELECT payload_json FROM audit_events WHERE seq = ?", (seq,)).fetchone()
             payload = json.loads(row["payload_json"])
             payload["eventHash"] = "ba" * (16 + seq)  # unique per seq to avoid issues
             conn.execute(

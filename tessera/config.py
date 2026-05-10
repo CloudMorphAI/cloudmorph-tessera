@@ -25,7 +25,7 @@ _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 class ListenConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # noqa: S104
     port: int = 8080
 
 
@@ -69,7 +69,7 @@ class MetricsConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = False
-    bearer_token_env: str = "TESSERA_METRICS_TOKEN"
+    bearer_token_env: str = "TESSERA_METRICS_TOKEN"  # noqa: S105
 
 
 class CredentialsConfig(BaseModel):
@@ -177,9 +177,7 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
                 data["listen"] = {}
             data["listen"]["port"] = int(v)
         except ValueError:
-            raise ConfigError(
-                f"TESSERA_BIND_PORT must be an integer, got {v!r}"
-            ) from None
+            raise ConfigError(f"TESSERA_BIND_PORT must be an integer, got {v!r}") from None
 
     return data
 
@@ -234,10 +232,7 @@ def load_config(path: str | Path | None = None) -> TesseraConfig:
     # Interpolate ${VAR} in upstreams[].credentials.value
     upstreams_raw = raw.get("upstreams") or []
     if isinstance(upstreams_raw, list):
-        raw["upstreams"] = [
-            _interpolate_credentials(u) if isinstance(u, dict) else u
-            for u in upstreams_raw
-        ]
+        raw["upstreams"] = [_interpolate_credentials(u) if isinstance(u, dict) else u for u in upstreams_raw]
 
     _apply_env_overrides(raw)
 

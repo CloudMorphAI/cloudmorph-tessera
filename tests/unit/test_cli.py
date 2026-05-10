@@ -6,7 +6,6 @@ import json
 import textwrap
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from tessera.cli import app
@@ -68,9 +67,7 @@ def test_policy_lint_json_output_valid(tmp_path: Path) -> None:
         priority: 0
     """)
     (tmp_path / "test-allow.yaml").write_text(policy, encoding="utf-8")
-    result = runner.invoke(
-        app, ["policy", "lint", "--policy-dir", str(tmp_path), "--json"]
-    )
+    result = runner.invoke(app, ["policy", "lint", "--policy-dir", str(tmp_path), "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["ok"] is True
@@ -80,12 +77,8 @@ def test_policy_lint_json_output_valid(tmp_path: Path) -> None:
 def test_policy_lint_json_output_invalid(tmp_path: Path) -> None:
     """--json flag produces parseable error output on failure."""
     bad = tmp_path / "bad.yaml"
-    bad.write_text(
-        "id: test\nname: Test\naction: not_a_valid_action\n", encoding="utf-8"
-    )
-    result = runner.invoke(
-        app, ["policy", "lint", "--policy-dir", str(tmp_path), "--json"]
-    )
+    bad.write_text("id: test\nname: Test\naction: not_a_valid_action\n", encoding="utf-8")
+    result = runner.invoke(app, ["policy", "lint", "--policy-dir", str(tmp_path), "--json"])
     assert result.exit_code == 2
     data = json.loads(result.output)
     assert data["ok"] is False
@@ -123,9 +116,7 @@ def test_audit_verify_empty_db_json(tmp_path: Path) -> None:
     sink = SqliteSink(db_path)
     sink.close()
 
-    result = runner.invoke(
-        app, ["audit", "verify", "--audit-path", str(db_path), "--json"]
-    )
+    result = runner.invoke(app, ["audit", "verify", "--audit-path", str(db_path), "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert isinstance(data, list)
@@ -140,9 +131,7 @@ def test_audit_verify_all_flag_empty_db(tmp_path: Path) -> None:
     sink = SqliteSink(db_path)
     sink.close()
 
-    result = runner.invoke(
-        app, ["audit", "verify", "--audit-path", str(db_path), "--all"]
-    )
+    result = runner.invoke(app, ["audit", "verify", "--audit-path", str(db_path), "--all"])
     assert result.exit_code == 0
 
 

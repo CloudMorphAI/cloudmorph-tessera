@@ -1,13 +1,13 @@
 """Integration tests: full proxy round-trip using httpx.ASGITransport (no real HTTP)."""
+
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from tessera.config import (
@@ -20,7 +20,7 @@ from tessera.config import (
     TesseraConfig,
     UpstreamConfig,
 )
-from tessera.proxy import create_app, _METRICS
+from tessera.proxy import create_app
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,6 @@ def _build_client_with_transport(config: TesseraConfig, transport: httpx.MockTra
 
 
 # Use a context manager approach for the client
-import contextlib
 
 
 @contextlib.contextmanager
@@ -271,7 +270,7 @@ def test_multi_token_scope_in_audit(tmp_path: Path) -> None:
     policy_dir = tmp_path / "policies"
     policy_dir.mkdir()
     (policy_dir / "allow-all.yaml").write_text(
-        "id: allow-all\nname: Allow all\nmatch:\n  upstream: \"*\"\n  tool: \"*\"\naction: allow\n",
+        'id: allow-all\nname: Allow all\nmatch:\n  upstream: "*"\n  tool: "*"\naction: allow\n',
         encoding="utf-8",
     )
 
@@ -293,7 +292,6 @@ def test_multi_token_scope_in_audit(tmp_path: Path) -> None:
     )
 
     # Set environment for two tokens
-    import os
     original_env = os.environ.get("TESSERA_BEARER_TOKENS")
     os.environ["TESSERA_BEARER_TOKENS"] = (
         "alice:tk_test_alice_xxxxxxxxxxxxxxxxxx,bob:tk_test_bob_yyyyyyyyyyyyyyyyyy"
@@ -344,7 +342,9 @@ def test_multi_token_scope_in_audit(tmp_path: Path) -> None:
 
 def test_pass_through_methods(test_config: TesseraConfig) -> None:
     """tools/list and initialize are forwarded without policy evaluation."""
-    with _proxy_client(test_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {"tools": []}})) as (client, app):
+    with _proxy_client(
+        test_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {"tools": []}})
+    ) as (client, app):
         for method in ("tools/list", "initialize"):
             resp = client.post(
                 "/mcp/mock",

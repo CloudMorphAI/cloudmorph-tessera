@@ -1,10 +1,8 @@
 """Unit tests for tessera.policy.matchers."""
+
 from __future__ import annotations
 
-import pytest
-
-from tessera.policy.matchers import match_upstream, match_tool
-
+from tessera.policy.matchers import match_tool, match_upstream
 
 # ── match_upstream ────────────────────────────────────────────────────────────
 

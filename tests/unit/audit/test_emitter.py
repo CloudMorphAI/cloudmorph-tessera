@@ -1,4 +1,5 @@
 """Unit tests for tessera.audit.emitter.AuditEmitter."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,9 +7,7 @@ from typing import Any
 import pytest
 
 from tessera.audit.emitter import AuditEmitter
-from tessera.audit.chain import HashChain
 from tessera.errors import AuditSinkError
-
 
 # ---------------------------------------------------------------------------
 # Fake sink for isolation

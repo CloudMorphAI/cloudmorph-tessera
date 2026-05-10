@@ -1,4 +1,5 @@
 """Tests for SqliteSink."""
+
 from __future__ import annotations
 
 import threading
@@ -10,10 +11,10 @@ import pytest
 from tessera.audit.sinks.sqlite import SqliteSink
 from tessera.errors import AuditSinkError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_event(
     event_id: str,
@@ -37,12 +38,11 @@ def _make_event(
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_schema_created(tmp_path: Path) -> None:
     db_path = tmp_path / "audit.db"
     sink = SqliteSink(path=db_path)
-    cur = sink._conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_events'"
-    )
+    cur = sink._conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_events'")
     assert cur.fetchone() is not None
     sink.close()
 
@@ -61,9 +61,7 @@ def test_emit_seq_increments_per_scope(tmp_path: Path) -> None:
     sink = SqliteSink(path=tmp_path / "audit.db")
     for i in range(1, 4):
         sink.emit(_make_event(f"evt-{i}", scope="s1", event_hash=f"h{i}"))
-    rows = sink._conn.execute(
-        "SELECT seq FROM audit_events WHERE scope='s1' ORDER BY seq"
-    ).fetchall()
+    rows = sink._conn.execute("SELECT seq FROM audit_events WHERE scope='s1' ORDER BY seq").fetchall()
     assert [r["seq"] for r in rows] == [1, 2, 3]
     sink.close()
 
@@ -93,9 +91,7 @@ def test_concurrent_emits_no_collision(tmp_path: Path) -> None:
     t2.join()
 
     assert not errors
-    rows = sink._conn.execute(
-        "SELECT seq FROM audit_events WHERE scope='shared'"
-    ).fetchall()
+    rows = sink._conn.execute("SELECT seq FROM audit_events WHERE scope='shared'").fetchall()
     assert len(rows) == 40
     seqs = {r["seq"] for r in rows}
     assert len(seqs) == 40  # all unique

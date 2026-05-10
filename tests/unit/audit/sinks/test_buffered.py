@@ -1,12 +1,11 @@
 """Tests for BufferedSink."""
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from tessera.audit.sinks.buffered import BufferedSink
 

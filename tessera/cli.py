@@ -37,6 +37,7 @@ def serve(
 ) -> None:
     """Start the Tessera proxy server."""
     import uvicorn
+
     from tessera.config import load_config
     from tessera.proxy import create_app
 
@@ -55,7 +56,7 @@ def serve(
             cfg.listen.port = int(port_str)
         except ValueError:
             typer.echo(f"Invalid --bind port: {port_str!r}", err=True)
-            raise typer.Exit(2)
+            raise typer.Exit(2) from None
     if log_level:
         cfg.log_level = log_level
 
@@ -114,9 +115,7 @@ def audit_verify(
         if all_scopes:
             # Query distinct scopes from the DB
             conn = sqlite3.connect(audit_path)
-            rows = conn.execute(
-                "SELECT DISTINCT scope FROM audit_events"
-            ).fetchall()
+            rows = conn.execute("SELECT DISTINCT scope FROM audit_events").fetchall()
             conn.close()
             scopes = [row[0] for row in rows] if rows else ["default"]
         elif scope:
@@ -133,14 +132,11 @@ def audit_verify(
     else:
         for r in results:
             status = "ok" if r["ok"] else "FAILED"
-            typer.echo(
-                f"scope={r['scope']}  events={r['events_checked']}  status={status}"
-            )
+            typer.echo(f"scope={r['scope']}  events={r['events_checked']}  status={status}")
             if not r["ok"] and r["first_failure"]:
                 f = r["first_failure"]
                 typer.echo(
-                    f"  first_failure: seq={f['seq']} event_id={f['event_id']}"
-                    f" kind={f['kind']}",
+                    f"  first_failure: seq={f['seq']} event_id={f['event_id']} kind={f['kind']}",
                     err=True,
                 )
 
@@ -235,9 +231,7 @@ def policy_test(
     else:
         for r in results:
             mark = "PASS" if r["passed"] else "FAIL"
-            typer.echo(
-                f"[{mark}] {r['fixture']}  expected={r['expected']}  actual={r['actual']}"
-            )
+            typer.echo(f"[{mark}] {r['fixture']}  expected={r['expected']}  actual={r['actual']}")
 
     if any_fail:
         raise typer.Exit(1)
@@ -259,7 +253,7 @@ def policy_lint(
     loader = FilesystemPolicyLoader(policy_dir)
 
     try:
-        policies = loader.load_all("default")
+        loader.load_all("default")
     except PolicyError as exc:
         if json_output:
             typer.echo(json.dumps({"ok": False, "errors": [str(exc)]}))
@@ -272,20 +266,14 @@ def policy_lint(
 
     if errors:
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"ok": False, "loaded": state["loaded"], "errors": errors}
-                )
-            )
+            typer.echo(json.dumps({"ok": False, "loaded": state["loaded"], "errors": errors}))
         else:
             for e in errors:
                 typer.echo(f"ERROR: {e['path']}: {e['error']}", err=True)
         raise typer.Exit(2)
 
     if json_output:
-        typer.echo(
-            json.dumps({"ok": True, "loaded": state["loaded"], "errors": []})
-        )
+        typer.echo(json.dumps({"ok": True, "loaded": state["loaded"], "errors": []}))
     else:
         typer.echo(f"OK — {state['loaded']} policy file(s) loaded, 0 errors.")
 
@@ -398,9 +386,7 @@ def init(
         typer.echo(f"Skipping existing directory: {policies_dir}/")
 
     if skipped:
-        typer.echo(
-            f"\n{len(skipped)} file(s) skipped. Re-run with --force to overwrite."
-        )
+        typer.echo(f"\n{len(skipped)} file(s) skipped. Re-run with --force to overwrite.")
 
 
 if __name__ == "__main__":

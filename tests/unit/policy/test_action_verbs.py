@@ -41,9 +41,7 @@ def test_mcp_proxy_prefix_no_longer_special_cased() -> None:
 def test_load_user_mappings_basic(tmp_path: pytest.TempPathFactory) -> None:
     yaml_file = tmp_path / "mappings.yaml"
     yaml_file.write_text(
-        "mappings:\n"
-        "  my.custom.tool: [read.list, analyze]\n"
-        "  another.tool: [write.create]\n",
+        "mappings:\n  my.custom.tool: [read.list, analyze]\n  another.tool: [write.create]\n",
         encoding="utf-8",
     )
     result = load_user_mappings(yaml_file)
@@ -56,8 +54,7 @@ def test_load_user_mappings_basic(tmp_path: pytest.TempPathFactory) -> None:
 def test_load_user_mappings_rejects_unknown_verbs(tmp_path: pytest.TempPathFactory) -> None:
     yaml_file = tmp_path / "bad_verbs.yaml"
     yaml_file.write_text(
-        "mappings:\n"
-        "  my.tool: [unknown.verb]\n",
+        "mappings:\n  my.tool: [unknown.verb]\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="Unknown intent verb"):
@@ -67,8 +64,7 @@ def test_load_user_mappings_rejects_unknown_verbs(tmp_path: pytest.TempPathFacto
 def test_load_user_mappings_missing_mappings_key_raises(tmp_path: pytest.TempPathFactory) -> None:
     yaml_file = tmp_path / "no_mappings.yaml"
     yaml_file.write_text(
-        "tools:\n"
-        "  my.tool: [read.list]\n",
+        "tools:\n  my.tool: [read.list]\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="mappings"):

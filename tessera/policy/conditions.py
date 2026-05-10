@@ -1,4 +1,5 @@
 """Condition evaluators — one function per condition type."""
+
 from __future__ import annotations
 
 import json
@@ -7,12 +8,11 @@ from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# Patchable in tests: replace with a lambda returning a fixed datetime
-_now_fn = datetime.now
+import regex  # type: ignore[import-untyped]
 
-import regex
-
+from tessera.policy.action_verbs import verbs_for
 from tessera.policy.schema import (
+    ActionClassIn,
     AnyOf,
     ArgContainsPattern,
     ArgEquals,
@@ -21,9 +21,7 @@ from tessera.policy.schema import (
     ArgLessThan,
     ArgMatchesRegex,
     ArgSizeGreaterThan,
-    ActionClassIn,
     ConditionType,
-    Decision,
     IntentClassIn,
     IntentPurposeMatches,
     MetaFieldEquals,
@@ -32,7 +30,9 @@ from tessera.policy.schema import (
     TimeOfDayOutside,
     ToolNameIn,
 )
-from tessera.policy.action_verbs import verbs_for, KNOWN_VERBS
+
+# Patchable in tests: replace with a lambda returning a fixed datetime
+_now_fn = datetime.now
 
 _REGEX_TIMEOUT = 0.1  # 100ms
 
@@ -112,7 +112,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
         found, val = _get_arg(arguments, cond.arg)
         if not found:
             return False
-        return val == cond.value
+        return bool(val == cond.value)
 
     if isinstance(cond, ArgGreaterThan):
         if cond.arg == "*":
@@ -150,10 +150,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
 
     if isinstance(cond, ArgMatchesRegex):
         if cond.arg == "*":
-            return any(
-                _match_regex(cond.pattern, str(v), policy_id)
-                for v in arguments.values()
-            )
+            return any(_match_regex(cond.pattern, str(v), policy_id) for v in arguments.values())
         found, val = _get_arg(arguments, cond.arg)
         if not found:
             return False
@@ -170,10 +167,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
     if isinstance(cond, ArgContainsPattern):
         # Alias of arg_matches_regex
         if cond.arg == "*":
-            return any(
-                _match_regex(cond.pattern, str(v), policy_id)
-                for v in arguments.values()
-            )
+            return any(_match_regex(cond.pattern, str(v), policy_id) for v in arguments.values())
         found, val = _get_arg(arguments, cond.arg)
         if not found:
             return False
@@ -181,9 +175,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
 
     if isinstance(cond, ArgSizeGreaterThan):
         if cond.arg == "*":
-            return any(
-                len(json.dumps(v)) > cond.bytes for v in arguments.values()
-            )
+            return any(len(json.dumps(v)) > cond.bytes for v in arguments.values())
         found, val = _get_arg(arguments, cond.arg)
         if not found:
             return False
@@ -214,10 +206,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
 
     if isinstance(cond, RegionIn):
         if cond.arg == "*":
-            return any(
-                any(str(v).startswith(r) for r in cond.regions)
-                for v in arguments.values()
-            )
+            return any(any(str(v).startswith(r) for r in cond.regions) for v in arguments.values())
         found, val = _get_arg(arguments, cond.arg)
         if not found:
             return False
@@ -236,9 +225,8 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
         if start <= end:
             # Normal range: outside means before start OR after end
             return not (start <= now <= end)
-        else:
-            # Wraps midnight: inside means >= start OR <= end
-            return not (now >= start or now <= end)
+        # Wraps midnight: inside means >= start OR <= end
+        return not (now >= start or now <= end)
 
     if isinstance(cond, MetaFieldEquals):
         meta = tool_call.get("_meta")
@@ -247,7 +235,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
         found, val = _dot_path_get(meta, cond.key)
         if not found:
             return False
-        return val == cond.value
+        return bool(val == cond.value)
 
     if isinstance(cond, AnyOf):
         return any(evaluate_condition(c, context) for c in cond.conditions)
@@ -256,7 +244,7 @@ def evaluate_condition(cond: ConditionType, context: dict[str, Any]) -> bool:
         return not any(evaluate_condition(c, context) for c in cond.conditions)
 
     # Unknown condition type — fail-closed
-    return False
+    return False  # type: ignore[unreachable]
 
 
 def evaluate_conditions(conds: list[ConditionType], context: dict[str, Any]) -> bool:

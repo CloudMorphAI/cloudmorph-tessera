@@ -65,7 +65,9 @@ class BufferedSink:
         self._start_retry_loop()
 
     def _start_retry_loop(self) -> None:
-        self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True, name="audit-buffered-retry")
+        self._retry_thread = threading.Thread(
+            target=self._retry_loop, daemon=True, name="audit-buffered-retry"
+        )
         self._retry_thread.start()
 
     def _retry_loop(self) -> None:

@@ -1,4 +1,5 @@
 """Tessera MCP proxy — FastAPI application."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +7,7 @@ import logging
 import os
 import uuid
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -14,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
+from tessera.audit.sinks.base import AuditSink
 from tessera.audit.sinks.sqlite import SqliteSink
 from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
@@ -51,9 +53,7 @@ def _jsonrpc_error(
     error: dict[str, Any] = {"code": code, "message": message}
     if reason is not None:
         error["data"] = {"reason": reason}
-    return JSONResponse(
-        {"jsonrpc": "2.0", "id": request_id, "error": error}
-    )
+    return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": error})
 
 
 def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
@@ -95,7 +95,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         app.state.hash_chain = HashChain()
 
         # Emitter map: scope → AuditEmitter (created on demand)
-        app.state.emitter_map: dict[str, AuditEmitter] = {}
+        app.state.emitter_map = {}
 
         # Policy loader
         loader = FilesystemPolicyLoader(
@@ -115,7 +115,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Watch for policy changes if configured
         if cfg.policies.reload == "watch":
-            def _on_reload(updated_policies: list) -> None:
+
+            def _on_reload(updated_policies: list[Any]) -> None:
                 new_engine = PolicyEngine(updated_policies, default_action=default_action)
                 app.state.engine = new_engine
                 logger.info("event=policy_reloaded count=%d", len(updated_policies))
@@ -123,7 +124,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             loader.watch("default", _on_reload)
 
         # HTTP clients per upstream
-        app.state.http_clients: dict[str, httpx.AsyncClient] = {}
+        app.state.http_clients = {}
         for upstream in cfg.upstreams:
             headers: dict[str, str] = {}
             if upstream.credentials:
@@ -179,9 +180,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         loader = getattr(app.state, "loader", None)
         if loader is None or loader.state()["loaded"] == 0:
-            return JSONResponse(
-                {"status": "not_ready", "reason": "no_policies_loaded"}, status_code=503
-            )
+            return JSONResponse({"status": "not_ready", "reason": "no_policies_loaded"}, status_code=503)
 
         # Quick reachability check on at least one upstream
         http_clients: dict[str, httpx.AsyncClient] = getattr(app.state, "http_clients", {})
@@ -189,7 +188,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             # No upstreams configured — still ready (valid for tests)
             return JSONResponse({"status": "ok"})
 
-        for upstream_name, client in http_clients.items():
+        for _upstream_name, client in http_clients.items():
             try:
                 await asyncio.wait_for(
                     client.get("/healthz"),
@@ -199,15 +198,12 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             except Exception:  # noqa: BLE001
                 continue
 
-        return JSONResponse(
-            {"status": "not_ready", "reason": "no_upstream_reachable"}, status_code=503
-        )
+        return JSONResponse({"status": "not_ready", "reason": "no_upstream_reachable"}, status_code=503)
 
     @app.post("/mcp/{upstream_name}")
     async def proxy(upstream_name: str, request: Request) -> Response:
         cfg: TesseraConfig = app.state.config
         request_id = str(uuid.uuid4())
-        body_raw: bytes = b""
 
         # Step 1 — Authenticate
         try:
@@ -218,7 +214,6 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Step 2 — Parse JSON-RPC body
         try:
-            body_raw = await request.body()
             body = await request.json()
         except Exception:
             _METRICS["requests_total{outcome=parse_error}"] += 1
@@ -240,11 +235,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Step 4 — Extract params
         params = body.get("params", {})
         tool_name: str = params.get("name", "")
-        arguments: dict = params.get("arguments", {}) or {}
-        meta: dict | None = params.get("_meta")
+        arguments: dict[str, Any] = params.get("arguments", {}) or {}
+        meta: dict[str, Any] | None = params.get("_meta")
 
         # Step 5 — Extract intent
-        intent: dict | None = None
+        intent: dict[str, Any] | None = None
         try:
             intent = extract_intent(
                 meta,
@@ -327,9 +322,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.observation:
             # Skip engine — always forward
-            upstream_response = await _forward_upstream(
-                app.state, upstream_name, body, jsonrpc_id
-            )
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -358,9 +351,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.log_only:
             # Always forward upstream
-            upstream_response = await _forward_upstream(
-                app.state, upstream_name, body, jsonrpc_id
-            )
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -406,9 +397,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # enforcement mode
         if decision.action in (Action.allow, Action.log_only):
-            upstream_response = await _forward_upstream(
-                app.state, upstream_name, body, jsonrpc_id
-            )
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -432,7 +421,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             _METRICS["requests_total{outcome=allow}"] += 1
             return JSONResponse(upstream_response)
 
-        elif decision.action == Action.block:
+        if decision.action == Action.block:
             audit_event = _emit(
                 app.state,
                 auth_ctx.scope,
@@ -450,7 +439,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 },
             )
             _METRICS["requests_total{outcome=block}"] += 1
-            resp_body: dict[str, Any] = {
+            resp_body = {
                 "jsonrpc": "2.0",
                 "id": jsonrpc_id,
                 "error": {
@@ -462,7 +451,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             _inject_audit_id(resp_body, audit_event["eventId"])
             return JSONResponse(resp_body)
 
-        elif decision.action == Action.require_approval:
+        if decision.action == Action.require_approval:
             reason_str = f"approval_required: {decision.reason or ''}"
             audit_event = _emit(
                 app.state,
@@ -503,7 +492,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
     @app.get("/metrics")
     async def metrics_endpoint(request: Request) -> Response:
         # Resolve current config (may differ if app.state populated on startup)
-        current_cfg: TesseraConfig = getattr(app.state, "config", cfg_for_metrics)
+        current_cfg: TesseraConfig | None = getattr(app.state, "config", cfg_for_metrics)
         if current_cfg is None or not current_cfg.metrics.enabled:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
 
@@ -520,6 +509,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Check dedicated metrics token first
         import secrets as _secrets
+
         metrics_token = os.environ.get(current_cfg.metrics.bearer_token_env)
         if metrics_token:
             if _secrets.compare_digest(metrics_token, incoming_token):
@@ -527,9 +517,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
         # Fall back to main token list
-        authenticator: BearerTokenAuthenticator = getattr(
-            app.state, "authenticator", None
-        )
+        authenticator: BearerTokenAuthenticator | None = getattr(app.state, "authenticator", None)
         if authenticator is not None:
             for candidate in authenticator._tokens:
                 if _secrets.compare_digest(candidate.token, incoming_token):
@@ -560,10 +548,11 @@ def _get_or_create_emitter(state: Any, scope: str) -> AuditEmitter:
         except ValueError:
             logger.warning("event=bad_chain_head scope=%s head=%r", scope, head)
 
-    sinks = [sink]
+    sinks: list[AuditSink] = [sink]
     cfg: TesseraConfig = state.config
     if cfg.audit.also_stdout:
         from tessera.audit.sinks.stdout import StdoutSink
+
         sinks.append(StdoutSink())
 
     emitter = AuditEmitter(
@@ -598,14 +587,16 @@ async def _forward_upstream(
     client = http_clients.get(upstream_name)
     if client is None:
         _METRICS["requests_total{outcome=unknown_upstream}"] += 1
-        return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}")
+        return _jsonrpc_error(
+            jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
+        )
 
     try:
         response = await client.post("/", json=body)
         if response.status_code >= 500:
             _METRICS["requests_total{outcome=upstream_5xx}"] += 1
             return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
-        return response.json()
+        return cast("dict[str, Any]", response.json())
     except httpx.TimeoutException:
         _METRICS["requests_total{outcome=upstream_timeout}"] += 1
         return _jsonrpc_error(jsonrpc_id, -32000, "Upstream timeout")

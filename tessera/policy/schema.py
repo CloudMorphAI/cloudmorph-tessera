@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -24,7 +24,7 @@ class MatchSpec(BaseModel):
     require_intent: bool = False
 
     @model_validator(mode="after")
-    def tool_and_tool_pattern_exclusive(self) -> "MatchSpec":
+    def tool_and_tool_pattern_exclusive(self) -> MatchSpec:
         if self.tool is not None and self.tool_pattern is not None:
             raise ValueError("match.tool and match.tool_pattern are mutually exclusive")
         return self
@@ -120,35 +120,33 @@ class MetaFieldEquals(BaseCondition):
 
 class AnyOf(BaseCondition):
     condition: Literal["any_of"]
-    conditions: list["ConditionType"]
+    conditions: list[ConditionType]
 
 
 class NoneOf(BaseCondition):
     condition: Literal["none_of"]
-    conditions: list["ConditionType"]
+    conditions: list[ConditionType]
 
 
 # ── Discriminated union ──────────────────────────────────────────────────────
 
 ConditionType = Annotated[
-    Union[
-        ArgEquals,
-        ArgGreaterThan,
-        ArgLessThan,
-        ArgMatchesRegex,
-        ArgInSet,
-        ArgContainsPattern,
-        ArgSizeGreaterThan,
-        ToolNameIn,
-        ActionClassIn,
-        IntentClassIn,
-        IntentPurposeMatches,
-        RegionIn,
-        TimeOfDayOutside,
-        MetaFieldEquals,
-        AnyOf,
-        NoneOf,
-    ],
+    ArgEquals
+    | ArgGreaterThan
+    | ArgLessThan
+    | ArgMatchesRegex
+    | ArgInSet
+    | ArgContainsPattern
+    | ArgSizeGreaterThan
+    | ToolNameIn
+    | ActionClassIn
+    | IntentClassIn
+    | IntentPurposeMatches
+    | RegionIn
+    | TimeOfDayOutside
+    | MetaFieldEquals
+    | AnyOf
+    | NoneOf,
     Field(discriminator="condition"),
 ]
 
@@ -176,6 +174,7 @@ class Policy(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         import re
+
         if not re.match(r"^[a-z0-9-]{1,64}$", v):
             raise ValueError(f"policy id must match [a-z0-9-]{{1,64}}: {v!r}")
         return v

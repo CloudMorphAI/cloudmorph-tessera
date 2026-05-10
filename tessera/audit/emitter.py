@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from tessera.audit.chain import HashChain
@@ -64,7 +64,7 @@ class AuditEmitter:
 
     @staticmethod
     def _now_iso() -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     def emit(
         self,

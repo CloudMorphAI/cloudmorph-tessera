@@ -1,12 +1,9 @@
 """Shared pytest fixtures for Tessera integration tests."""
+
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
-from typing import Generator
 
-import httpx
 import pytest
 
 from tessera.config import (

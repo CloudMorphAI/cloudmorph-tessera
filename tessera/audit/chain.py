@@ -78,7 +78,7 @@ class HashChain:
     @staticmethod
     def verify_pair(prev_event: dict[str, Any], next_event: dict[str, Any]) -> bool:
         """Check that next_event.prevEventHash == prev_event.eventHash."""
-        return next_event.get("prevEventHash", "") == prev_event.get("eventHash", "")
+        return bool(next_event.get("prevEventHash", "") == prev_event.get("eventHash", ""))
 
     @staticmethod
     def verify_event_hash(event: dict[str, Any]) -> bool:
@@ -88,4 +88,4 @@ class HashChain:
             return False
         digest_input = {**event, "eventHash": "", "signature": ""}
         recomputed = hashlib.sha256(canonical_json(digest_input)).hexdigest()
-        return stored == recomputed
+        return bool(stored == recomputed)

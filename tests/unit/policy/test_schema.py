@@ -19,7 +19,6 @@ from tessera.policy.schema import (
     Decision,
     IntentClassIn,
     IntentPurposeMatches,
-    MatchSpec,
     MetaFieldEquals,
     NoneOf,
     Policy,
@@ -27,7 +26,6 @@ from tessera.policy.schema import (
     TimeOfDayOutside,
     ToolNameIn,
 )
-
 
 # ── Action enum ──────────────────────────────────────────────────────────────
 
@@ -117,9 +115,7 @@ def test_policy_tool_and_tool_pattern_exclusive() -> None:
 
 
 def _make_policy(condition: dict) -> Policy:
-    return Policy.model_validate(
-        {"id": "test", "name": "t", "action": "allow", "when": [condition]}
-    )
+    return Policy.model_validate({"id": "test", "name": "t", "action": "allow", "when": [condition]})
 
 
 def test_condition_arg_equals() -> None:
@@ -209,25 +205,29 @@ def test_condition_meta_field_equals() -> None:
 
 
 def test_condition_any_of() -> None:
-    p = _make_policy({
-        "condition": "any_of",
-        "conditions": [
-            {"condition": "arg_equals", "arg": "env", "value": "prod"},
-            {"condition": "tool_name_in", "values": ["dangerous_tool"]},
-        ],
-    })
+    p = _make_policy(
+        {
+            "condition": "any_of",
+            "conditions": [
+                {"condition": "arg_equals", "arg": "env", "value": "prod"},
+                {"condition": "tool_name_in", "values": ["dangerous_tool"]},
+            ],
+        }
+    )
     cond = p.when[0]
     assert isinstance(cond, AnyOf)
     assert len(cond.conditions) == 2
 
 
 def test_condition_none_of() -> None:
-    p = _make_policy({
-        "condition": "none_of",
-        "conditions": [
-            {"condition": "arg_equals", "arg": "env", "value": "dev"},
-        ],
-    })
+    p = _make_policy(
+        {
+            "condition": "none_of",
+            "conditions": [
+                {"condition": "arg_equals", "arg": "env", "value": "dev"},
+            ],
+        }
+    )
     cond = p.when[0]
     assert isinstance(cond, NoneOf)
     assert len(cond.conditions) == 1

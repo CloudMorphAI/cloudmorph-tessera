@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 
 class StdoutSink:

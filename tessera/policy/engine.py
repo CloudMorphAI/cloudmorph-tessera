@@ -1,13 +1,16 @@
 """PolicyEngine — evaluate policies against a request context."""
+
 from __future__ import annotations
 
-from tessera.policy.schema import Action, Decision, Policy
-from tessera.policy.matchers import match_upstream, match_tool
+from typing import Any
+
 from tessera.policy.conditions import (
     clear_decision_errors,
     evaluate_conditions,
     get_decision_errors,
 )
+from tessera.policy.matchers import match_tool, match_upstream
+from tessera.policy.schema import Action, Decision, Policy
 
 
 class PolicyEngine:
@@ -19,7 +22,7 @@ class PolicyEngine:
         self._policies = policies  # already sorted by loader
         self._default_action = default_action
 
-    def evaluate(self, context: dict) -> Decision:
+    def evaluate(self, context: dict[str, Any]) -> Decision:
         """Evaluate sorted policy list. First-match-wins. Mode-agnostic.
 
         context: same shape as conditions.evaluate_condition expects, plus:

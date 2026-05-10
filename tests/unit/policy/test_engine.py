@@ -1,11 +1,9 @@
 """Unit tests for tessera.policy.engine."""
+
 from __future__ import annotations
 
-import pytest
-
 from tessera.policy.engine import PolicyEngine
-from tessera.policy.schema import Action, Decision, MatchSpec, Policy
-
+from tessera.policy.schema import Action, MatchSpec, Policy
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

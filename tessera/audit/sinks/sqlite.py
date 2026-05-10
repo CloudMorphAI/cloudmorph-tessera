@@ -1,11 +1,13 @@
 """SQLite audit sink — default persistence layer."""
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from tessera.audit.sinks.base import AuditSink  # noqa: F401 (for isinstance checks)
 from tessera.errors import AuditSinkError
@@ -43,17 +45,11 @@ INSERT INTO audit_events
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
-_HEAD_HASH = (
-    "SELECT event_hash FROM audit_events WHERE scope=? ORDER BY seq DESC LIMIT 1"
-)
+_HEAD_HASH = "SELECT event_hash FROM audit_events WHERE scope=? ORDER BY seq DESC LIMIT 1"
 
-_ITER_ALL = (
-    "SELECT payload_json FROM audit_events ORDER BY scope, seq"
-)
+_ITER_ALL = "SELECT payload_json FROM audit_events ORDER BY scope, seq"
 
-_ITER_SCOPED = (
-    "SELECT payload_json FROM audit_events WHERE scope=? ORDER BY scope, seq"
-)
+_ITER_SCOPED = "SELECT payload_json FROM audit_events WHERE scope=? ORDER BY scope, seq"
 
 
 class SqliteSink:
@@ -86,24 +82,23 @@ class SqliteSink:
         payload_json = json.dumps(event)
 
         try:
-            with self._lock:
-                with self._conn:
-                    row = self._conn.execute(_SEQ_QUERY, (scope,)).fetchone()
-                    seq = row[0]
-                    self._conn.execute(
-                        _INSERT,
-                        (
-                            event_id,
-                            scope,
-                            seq,
-                            event_type,
-                            occurred_at,
-                            payload_json,
-                            prev_event_hash,
-                            event_hash,
-                            schema_version,
-                        ),
-                    )
+            with self._lock, self._conn:
+                row = self._conn.execute(_SEQ_QUERY, (scope,)).fetchone()
+                seq = row[0]
+                self._conn.execute(
+                    _INSERT,
+                    (
+                        event_id,
+                        scope,
+                        seq,
+                        event_type,
+                        occurred_at,
+                        payload_json,
+                        prev_event_hash,
+                        event_hash,
+                        schema_version,
+                    ),
+                )
         except sqlite3.Error as exc:
             raise AuditSinkError(str(exc)) from exc
 

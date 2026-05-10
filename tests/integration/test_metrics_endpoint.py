@@ -1,10 +1,10 @@
 """Integration tests for the /metrics endpoint."""
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from tessera.config import (
@@ -15,7 +15,6 @@ from tessera.config import (
     PoliciesMode,
     RuntimeConfig,
     TesseraConfig,
-    UpstreamConfig,
 )
 from tessera.proxy import create_app
 
@@ -29,7 +28,7 @@ def _make_config(tmp_path: Path, metrics_enabled: bool) -> TesseraConfig:
     policy_dir = tmp_path / "policies"
     policy_dir.mkdir(exist_ok=True)
     (policy_dir / "allow-all.yaml").write_text(
-        "id: allow-all\nname: Allow all\nmatch:\n  upstream: \"*\"\n  tool: \"*\"\naction: allow\n",
+        'id: allow-all\nname: Allow all\nmatch:\n  upstream: "*"\n  tool: "*"\naction: allow\n',
         encoding="utf-8",
     )
     return TesseraConfig(
