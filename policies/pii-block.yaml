@@ -1,0 +1,18 @@
+id: pii-block
+name: PII Block
+description: Block tool calls with arguments matching PII patterns (SSN, credit card numbers).
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: "*"
+        pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      - condition: arg_matches_regex
+        arg: "*"
+        pattern: "\\b4[0-9]{12}(?:[0-9]{3})?\\b"
+action: block
+reason: "Request contains PII data patterns"
+priority: 100

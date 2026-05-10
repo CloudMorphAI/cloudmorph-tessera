@@ -1,0 +1,13 @@
+{
+  "policy_id": "read-only-mode",
+  "context": {
+    "tool_call": {
+      "name": "aws.s3.list_buckets",
+      "arguments": {}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

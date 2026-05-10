@@ -1,0 +1,13 @@
+{
+  "policy_id": "cost-cap",
+  "context": {
+    "tool_call": {
+      "name": "llm_complete",
+      "arguments": {"max_tokens": 200000}
+    },
+    "intent": null,
+    "upstream": "openai",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "block"
+}

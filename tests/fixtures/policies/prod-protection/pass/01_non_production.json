@@ -1,0 +1,13 @@
+{
+  "policy_id": "prod-protection",
+  "context": {
+    "tool_call": {
+      "name": "aws.s3.list_buckets",
+      "arguments": {"environment": "staging"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

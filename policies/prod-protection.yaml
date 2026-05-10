@@ -1,0 +1,23 @@
+id: prod-protection
+name: Production Protection
+description: Block destructive write operations when targeting production resources.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: action_class_in
+    values: ["write.delete", "execute.deploy"]
+  - condition: any_of
+    conditions:
+      - condition: arg_equals
+        arg: environment
+        value: "production"
+      - condition: arg_equals
+        arg: environment
+        value: "prod"
+      - condition: arg_matches_regex
+        arg: resource_name
+        pattern: ".*-prod$"
+action: block
+reason: "Destructive action blocked in production environment"
+priority: 90
