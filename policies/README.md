@@ -1,6 +1,6 @@
 # Tessera Reference Policies
 
-These 7 policies ship with Tessera as a mode-agnostic starting library. Copy the ones you need into your deployment's `policies/` directory and tune thresholds to match your requirements.
+These 9 policies ship with Tessera as a mode-agnostic starting library. Copy the ones you need into your deployment's `policies/` directory and tune thresholds to match your requirements.
 
 ## Policies
 
@@ -13,6 +13,8 @@ These 7 policies ship with Tessera as a mode-agnostic starting library. Copy the
 | `write-action-approval.yaml` | `write-action-approval` | 70 | require_approval | Require human approval for all write.create / write.update / write.delete operations |
 | `read-only-mode.yaml` | `read-only-mode` | 60 | block | Block any operation that is not a read (read.list / read.describe / read.get / read.search / read.aggregate) |
 | `secret-leak-block.yaml` | `secret-leak-block` | 95 | block | Block calls where any argument contains AWS access keys, OpenAI/Anthropic keys, or GitHub tokens |
+| `owasp-mcp-prompt-injection.yaml` | `owasp-mcp-prompt-injection` | 95 | block | Block calls where any argument contains prompt-injection phrases, heredoc markers, base64 payload smuggling, or the Cursor+Jira _meta field injection vector |
+| `owasp-mcp-tool-poisoning.yaml` | `owasp-mcp-tool-poisoning` | 110 | block | Block calls to tools whose name matches known impostor namespaces or typo-squatting patterns (git_hub, github_official, sl4ck, g0thub, jra, etc.) |
 
 ## Usage
 
@@ -27,3 +29,4 @@ The `action_class_in` condition relies on the built-in verb registry in `tessera
 - **data-residency-eu**: add further `region_in` conditions to cover additional EU region prefix patterns (e.g., `"europe-west"` for GCP).
 - **pii-block**: add `arg_matches_regex` conditions for additional PII patterns (email, phone, passport numbers).
 - **secret-leak-block**: extend the `any_of` block with additional secret patterns for your specific tool ecosystem.
+- **owasp-mcp-tool-poisoning**: extend `tool_pattern` alternation with additional lookalike namespace fragments matching your threat model (e.g. add `jira_v\d`, `confluence_official` as new impostor variants emerge).
