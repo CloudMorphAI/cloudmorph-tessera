@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -387,6 +388,169 @@ def init(
 
     if skipped:
         typer.echo(f"\n{len(skipped)} file(s) skipped. Re-run with --force to overwrite.")
+
+
+# ---------------------------------------------------------------------------
+# install-cursor-hooks
+# ---------------------------------------------------------------------------
+
+
+@app.command("install-cursor-hooks")
+def install_cursor_hooks(
+    cursor_config_dir: str = typer.Option(
+        None,
+        "--cursor-config-dir",
+        help="Override autodetect of Cursor config directory.",
+    ),
+    tessera_url: str = typer.Option(
+        "http://localhost:8080",
+        "--tessera-url",
+        help="Tessera proxy URL.",
+    ),
+    token: str = typer.Option(
+        "",
+        "--token",
+        envvar="TESSERA_BEARER_TOKEN",
+        help="Bearer token for Tessera. Reads TESSERA_BEARER_TOKEN if not provided.",
+    ),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove Tessera hooks."),
+    upgrade: bool = typer.Option(False, "--upgrade", help="Overwrite existing hook file."),
+) -> None:
+    """Install (or uninstall) Tessera's Cursor Hooks integration."""
+    import shutil
+
+    # Detect config dir
+    if cursor_config_dir:
+        config_dir = Path(cursor_config_dir)
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        config_dir = Path(appdata) / "Cursor" / "hooks"
+    else:
+        config_dir = Path.home() / ".cursor" / "hooks"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_dest = config_dir / "tessera_hook.py"
+    hooks_json_path = config_dir / "hooks.json"
+
+    # Uninstall path
+    if uninstall:
+        if hook_dest.exists():
+            hook_dest.unlink()
+            typer.echo(f"Removed {hook_dest}")
+        if hooks_json_path.exists():
+            data = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+            hooks = data.get("hooks", [])
+            hooks = [h for h in hooks if h.get("command") != str(hook_dest)]
+            data["hooks"] = hooks
+            hooks_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            typer.echo(f"Removed tessera entry from {hooks_json_path}")
+        typer.echo("Tessera Cursor Hooks uninstalled.")
+        return
+
+    # Copy hook script
+    hook_src = Path(__file__).parent / "integrations" / "cursor_hooks.py"
+    if not hook_src.exists():
+        typer.echo(f"Hook script not found: {hook_src}", err=True)
+        raise typer.Exit(1)
+
+    if hook_dest.exists() and not upgrade:
+        typer.echo(f"Hook already exists at {hook_dest}. Use --upgrade to overwrite.")
+    else:
+        shutil.copy2(hook_src, hook_dest)
+        typer.echo(f"Installed hook script at {hook_dest}")
+
+    # Write/merge hooks.json
+    env: dict[str, str] = {"TESSERA_URL": tessera_url}
+    if token:
+        env["TESSERA_BEARER_TOKEN"] = token
+
+    tessera_hook_entry = {
+        "command": str(hook_dest),
+        "events": ["beforeMCPExecution", "afterMCPExecution"],
+        "env": env,
+    }
+
+    if hooks_json_path.exists():
+        existing = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+        hooks_list = existing.get("hooks", [])
+        # Remove existing tessera entry to avoid duplicates
+        hooks_list = [h for h in hooks_list if h.get("command") != str(hook_dest)]
+        hooks_list.append(tessera_hook_entry)
+        existing["hooks"] = hooks_list
+        hooks_json_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    else:
+        hooks_json_path.write_text(
+            json.dumps({"hooks": [tessera_hook_entry]}, indent=2),
+            encoding="utf-8",
+        )
+
+    typer.echo(f"Updated {hooks_json_path}")
+    typer.echo(f"Tessera Cursor Hooks installed. URL: {tessera_url}")
+
+
+# ---------------------------------------------------------------------------
+# install-claude-code
+# ---------------------------------------------------------------------------
+
+
+@app.command("install-claude-code")
+def install_claude_code(
+    tessera_url: str = typer.Option(
+        "http://localhost:8080",
+        "--tessera-url",
+        help="Tessera proxy URL.",
+    ),
+    token: str = typer.Option(
+        "",
+        "--token",
+        envvar="TESSERA_BEARER_TOKEN",
+        help="Bearer token for Tessera.",
+    ),
+    upstream_name: str = typer.Option(
+        "github",
+        "--upstream-name",
+        help="MCP upstream name to configure in Claude Code.",
+    ),
+    claude_config_path: str = typer.Option(
+        None,
+        "--claude-config",
+        help="Override path to ~/.claude.json",
+    ),
+) -> None:
+    """Configure Claude Code to use Tessera as MCP proxy via ~/.claude.json."""
+    # Detect config file
+    if claude_config_path:
+        config_file = Path(claude_config_path)
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        config_file = Path(appdata) / "Claude" / "claude.json"
+    else:
+        config_file = Path.home() / ".claude.json"
+
+    # Load or create config
+    if config_file.exists():
+        config: dict[str, Any] = json.loads(config_file.read_text(encoding="utf-8"))
+    else:
+        config = {}
+
+    mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    mcp_servers[upstream_name] = {
+        "url": f"{tessera_url}/mcp/{upstream_name}",
+        **({"headers": headers} if headers else {}),
+    }
+
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    typer.echo(f"Updated {config_file}")
+    typer.echo(f"Claude Code → Tessera proxy configured for upstream '{upstream_name}'")
+    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
 
 
 if __name__ == "__main__":
