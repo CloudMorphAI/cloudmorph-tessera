@@ -2,64 +2,76 @@
 
 ## Reporting a vulnerability
 
-If you discover a security vulnerability in CloudMorph Control Centre, **please do not file a public GitHub issue.**
+If you discover a security vulnerability in Tessera, **please do not file a public GitHub issue.**
 
 Instead, email **security@cloudmorph.io** with:
+
 - A description of the issue
-- Steps to reproduce (or proof-of-concept)
-- The version / commit SHA where you observed it
-- Your name (for credit, optional)
+- Steps to reproduce (or a proof-of-concept)
+- The Tessera version or commit SHA where you observed it
+- Your name and a contact address (optional — for credit and follow-up)
 
-## Our commitment
+## Contact and PGP
 
-- We will acknowledge receipt within **72 hours** (per GDPR breach-notification SLA where applicable).
-- We will keep you updated on our investigation.
-- We will publicly disclose the issue **only after a fix is available**, with credit to you (unless you prefer to remain anonymous).
-- We support coordinated disclosure with industry partners.
+```
+Email:  security@cloudmorph.io
+PGP:    https://cloudmorph.io/.well-known/pgp
+```
+
+If you cannot use PGP, encrypted email via S/MIME or age is available on request.
+
+## Disclosure timeline
+
+| Day | Event |
+|---|---|
+| 0 | Report received |
+| ≤ 7 | Acknowledgement sent to reporter |
+| ≤ 90 | Fix released and coordinated public disclosure |
+
+We will keep you informed throughout the investigation. If a fix requires longer than 90 days, we will communicate the revised timeline before day 90. For active exploitation we may compress the timeline with your agreement.
+
+We will credit you in the release notes and CHANGELOG unless you prefer to remain anonymous.
+
+## Safe harbor
+
+We consider security research conducted under this policy to be authorised. We will not pursue legal action against researchers who:
+
+- Report findings through the private channel above rather than publicly.
+- Avoid accessing, modifying, or deleting data belonging to others.
+- Do not degrade the availability of Tessera or any system that depends on it.
+- Limit testing to their own Tessera deployments or a dedicated test environment.
 
 ## Scope
 
-In scope:
-- The MCP server (`cloudmorph-mcp/`)
-- The Python SDK (`sdk-python/`)
-- The five executors (`aws/`, `azure/`, `gcp/`, `databricks/`, `snowflake/`)
-- The hosted SaaS at `mcp.cloudmorph.io` (when live)
-- The bundle distribution at `bundles.cloudmorph.io` (when live)
+### In scope (Tessera is responsible)
 
-Out of scope:
-- Vulnerabilities in upstream dependencies (report to those projects); we'll patch as fixes land.
-- Compromise of customer-supplied cloud credentials (an IAM problem, not ours).
-- Issues in the customer's policy bundle (they author it; we sandbox via OPA WASM).
-- Social-engineering attacks on CloudMorph staff.
+| Surface | Examples |
+|---|---|
+| The proxy (`tessera/proxy.py`) | Auth bypass; injection via malformed JSON-RPC; forwarding to the wrong upstream |
+| The policy engine (`tessera/policy/`) | Logic flaws that produce incorrect allow or block decisions regardless of policy content |
+| The audit chain (`tessera/audit/`) | Chain bypass; cross-scope event leakage; hash collision acceptance |
+| The OSS Docker image | Container breakout; privilege escalation via uid 10001; sensitive data baked into the image |
 
-## What's especially welcome
+### Out of scope (not Tessera's responsibility)
 
-- Cross-tenant leakage (decision cache, audit log, session store).
-- Audit hash chain bypass.
-- Policy bundle signature forgery.
-- Intent spoofing techniques our matcher misses.
-- Authn/authz bypass.
-- TOCTOU in approval flows.
-- Container escape from the executor sandbox (expect the bar here is low; report regardless).
+| Surface | Reason |
+|---|---|
+| User-authored policies | Their logic is the operator's responsibility; Tessera executes what is written |
+| Upstream MCP servers | They sit behind Tessera and are not operated by us |
+| Customer-supplied bearer tokens | Token strength, rotation schedule, and secret storage are the operator's responsibility |
+| Dependencies with their own CVE programmes | Report to the dependency maintainer directly; we patch as fixes land |
+| Social engineering of CloudMorph staff | Out of scope for this programme |
 
-We track an [adversarial test fixture suite](status/cross/08_tests_audit.md) — we'd love to learn from anything that's not yet captured.
+## Especially welcome reports
+
+We are particularly interested in:
+
+- **Cross-scope audit log leakage** — one token reading or polluting another token scope's audit events via `iter_events`, `audit verify`, or the hash chain.
+- **Audit chain bypass** — writing events to the SQLite sink without correctly updating `prev_event_hash`, or accepting a chain event that fails hash verification.
+- **Auth bypass** — reaching a `/mcp/*` endpoint without a valid bearer token, or bypassing `secrets.compare_digest` timing protections.
+- **Regex DoS bypassing the load-time corpus test** — a pattern accepted by `regex_safety.py` at startup that still causes the 100 ms runtime timeout to fire reliably in production traffic.
+- **Policy logic flaws** — conditions in `tessera/policy/conditions.py` that always return `true` or always return `false` regardless of input, or that evaluate against the wrong field.
 
 ## Hall of fame
 
-Will be added once we have first reports. We intend to credit researchers prominently.
-
-## PGP
-
-```
-Email:    security@cloudmorph.io
-Key:      (publish PGP key on first stable release; until then, encrypted email via age or s/mime on request)
-```
-
-## Coordinated disclosure timeline
-
-- Day 0: Report received → acknowledged within 72h.
-- Day 0–14: Investigation + fix development.
-- Day 14–30: Fix released; CVE assigned if applicable.
-- Day 30+: Public disclosure with credit (or sooner if mutually agreed).
-
-For active exploitation, we may compress the timeline aggressively.
+Will be populated once we receive first reports. We intend to credit researchers prominently here and in release notes.
