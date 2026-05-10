@@ -172,6 +172,10 @@ Deferred from v0.1; detail and rationale in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
+## Handbook
+
+Read [the Tessera handbook](handbook/README.md) — how we build, our roadmap, team, funding, and security commitment.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run `pip install -e ".[dev]"` and `pre-commit install` to get started.
