@@ -2,9 +2,12 @@
 
 **The open-source MCP firewall for AI agents**
 
+**See Tessera block a destructive Cursor action in 60 seconds → [cursor-hooks recipe](recipes/cursor-hooks.md)**
+
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.12-blue.svg)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fcloudmorph--ai%2Ftessera-blue.svg)](https://ghcr.io/cloudmorph-ai/tessera)
+[![Docker Pulls](https://img.shields.io/docker/pulls/cloudmorphai/tessera?label=Docker+Pulls)](https://ghcr.io/cloudmorph-ai/tessera)
 
 ---
 
@@ -87,7 +90,7 @@ Every inbound `POST /mcp/{upstream}` is:
 2. Evaluated — policy engine walks the sorted policy set (first-match-wins) and returns `allow`, `block`, `log_only`, or `require_approval`.
 3. Audited — the decision (and response, if forwarded) is written to the hash-chain.
 
-In `enforcement` mode a `block` decision returns HTTP 403 to the agent and does not touch the upstream. In `log_only` mode the upstream is always called and the decision is returned in response headers (`X-Tessera-Decision`, `X-Tessera-Policy-Id`, `X-Tessera-Reason`).
+In `enforcement` mode a `block` decision returns a JSON-RPC error (code `-32603`) over HTTP 200 to the agent and does not touch the upstream. In `log_only` mode the upstream is always called and the decision is returned in response headers (`X-Tessera-Decision`, `X-Tessera-Policy-Id`, `X-Tessera-Reason`).
 
 Full component breakdown: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
