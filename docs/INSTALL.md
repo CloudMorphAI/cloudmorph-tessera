@@ -510,3 +510,27 @@ tessera.example.com {
 - [ ] The `/metrics` endpoint is disabled by default (`metrics.enabled: false`). Enable it only if you have a Prometheus scraper and can protect the endpoint.
 - [ ] When enabling metrics, set `TESSERA_METRICS_TOKEN` to a dedicated read-only token separate from the main bearer token. This limits exposure if the metrics token is ever leaked.
 - [ ] Configure your reverse proxy to restrict `/metrics` to internal network addresses only, even if a metrics token is set.
+
+---
+
+## Verifying signed images
+
+Tessera's Docker images are signed with Sigstore (keyless OIDC) via cosign.
+Verify before pulling:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/cloudmorph-ai/cloudmorph-tessera/.github/workflows/release.yml' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/cloudmorph-ai/tessera:0.1.0
+```
+
+---
+
+## Inspecting the SBOM
+
+```bash
+cosign download attestation \
+  ghcr.io/cloudmorph-ai/tessera:0.1.0 \
+  | jq '.payload | @base64d | fromjson'
+```
