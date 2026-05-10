@@ -1,0 +1,13 @@
+{
+  "policy_id": "github-mcp-protection",
+  "context": {
+    "tool_call": {
+      "name": "mcp__github__create_issue",
+      "arguments": {"repo": "my-project", "title": "Fix login bug"}
+    },
+    "intent": null,
+    "upstream": "github",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}
