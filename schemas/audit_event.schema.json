@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TesseraAuditEvent",
+  "description": "Schema for Tessera audit log events (v0.1). Events are hash-chained; validate eventHash before trusting content.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "tenantId",
+    "eventType",
+    "occurredAt",
+    "prevEventHash",
+    "eventHash",
+    "payload"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["v0.1"]
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[A-Za-z0-9_]{1,50}$"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "eventType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "prevEventHash": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64}|)$"
+    },
+    "eventHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "actorId": {
+      "type": "string"
+    }
+  }
+}

@@ -18,6 +18,8 @@ The emitter:
 
 from __future__ import annotations
 
+import logging
+import os
 import secrets
 import threading
 from datetime import UTC, datetime
@@ -107,7 +109,25 @@ class AuditEmitter:
                     # Log structurally via on_sink_failure already; swallow.
                     pass
 
+        if os.environ.get("TESSERA_DEBUG"):
+            self._validate_schema(stamped)
+
         return stamped
+
+    def _validate_schema(self, event: dict[str, Any]) -> None:
+        """Validate event against audit_event.schema.json. Logs a warning on failure; never raises."""
+        try:
+            import json
+            from pathlib import Path
+
+            import jsonschema  # type: ignore[import-untyped]
+
+            schema_path = Path(__file__).parent.parent.parent / "schemas" / "audit_event.schema.json"
+            if schema_path.exists():
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                jsonschema.validate(event, schema)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning("audit_event schema validation failed: %s", exc)
 
     def close(self) -> None:
         """Close all sinks; idempotent."""
