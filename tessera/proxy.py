@@ -12,6 +12,7 @@ from typing import Any, cast
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
@@ -21,11 +22,34 @@ from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
+from tessera.policy.action_verbs import verbs_for
 from tessera.policy.engine import PolicyEngine
 from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action
 
 logger = logging.getLogger(__name__)
+
+
+# ── Intent endpoint models ────────────────────────────────────────────────────
+
+
+class IntentRequest(BaseModel):
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    command: str = ""
+    conversation_id: str = ""
+    generation_id: str = ""
+    workspace_roots: list[str] = Field(default_factory=list)
+
+
+class IntentMeta(BaseModel):
+    verbs: list[str]
+    purpose: str
+
+
+class IntentResponseMeta(BaseModel):
+    tessera_intent: IntentMeta
+
 
 # ── Metrics counters ─────────────────────────────────────────────────────────
 # Simple in-memory counters (no prometheus_client dependency).
@@ -199,6 +223,58 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 continue
 
         return JSONResponse({"status": "not_ready", "reason": "no_upstream_reachable"}, status_code=503)
+
+    @app.post("/intent")
+    async def intent(request: Request) -> JSONResponse:
+        # Step 1 — Authenticate (same pattern as /mcp)
+        try:
+            auth_ctx = app.state.authenticator.authenticate(request)
+        except UnauthorizedError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+
+        # Step 2 — Parse body
+        try:
+            body = await request.json()
+            req = IntentRequest.model_validate(body)
+        except Exception:
+            return JSONResponse({"error": "invalid_request"}, status_code=422)
+
+        # Step 3 — Derive verbs deterministically from action_verbs registry
+        verbs = sorted(verbs_for(req.tool_name))  # sorted for determinism
+
+        # Step 4 — Derive purpose deterministically (no LLM)
+        purpose_parts = []
+        if req.command:
+            purpose_parts.append(req.command)
+        if req.tool_input:
+            for k, v in sorted(req.tool_input.items()):
+                if isinstance(v, str) and v:
+                    purpose_parts.append(f"{k}={v}")
+        purpose = "; ".join(purpose_parts) if purpose_parts else f"tool:{req.tool_name}"
+
+        # Step 5 — Audit event
+        _emit(
+            app.state,
+            auth_ctx.scope,
+            "intent_derivation",
+            {
+                "tool_name": req.tool_name,
+                "verbs": verbs,
+                "purpose": purpose,
+                "principal_id": auth_ctx.principal_id,
+            },
+        )
+
+        # Step 6 — Return response
+        response_body: dict[str, Any] = {
+            "_meta": {
+                "tessera_intent": {
+                    "verbs": verbs,
+                    "purpose": purpose,
+                }
+            }
+        }
+        return JSONResponse(response_body)
 
     @app.post("/mcp/{upstream_name}")
     async def proxy(upstream_name: str, request: Request) -> Response:
