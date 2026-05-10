@@ -35,6 +35,11 @@ deployment_id: default                  # Audit scope used in dev mode (no token
 
 # REQUIRED: configure at least one upstream
 upstreams:
+  # Mock upstream for local docker-compose evaluation (docker-compose.example.yaml)
+  - name: mock
+    url: http://mock-upstream:8081
+    timeout_seconds: 10
+  # Real MCP server examples (comment out what you don't need):
   - name: aws
     url: https://mcp.aws.example.com    # Your actual MCP server URL
     timeout_seconds: 30

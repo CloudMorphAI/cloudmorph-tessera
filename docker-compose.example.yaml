@@ -1,0 +1,61 @@
+# docker-compose.example.yaml — Tessera + mock upstream for local evaluation
+# Usage:
+#   docker compose -f docker-compose.example.yaml up
+# Then POST to http://localhost:8080/mcp/mock with Authorization: Bearer <token>
+
+services:
+  tessera:
+    image: tessera-test:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./tessera.example.yaml:/etc/tessera/tessera.yaml:ro
+      - ./policies:/etc/tessera/policies:ro
+      - tessera_audit:/var/lib/tessera
+    environment:
+      TESSERA_BEARER_TOKEN: "tk_demo_REPLACE_ME_minimum_16_chars"
+      TESSERA_LOG_LEVEL: "INFO"
+    depends_on:
+      - mock-upstream
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mock-upstream:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./tests/fixtures/upstream:/app
+    command: >
+      python -c "
+      import json, sys
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+
+      class Handler(BaseHTTPRequestHandler):
+          def log_message(self, *a): pass
+          def do_POST(self):
+              length = int(self.headers.get('Content-Length', 0))
+              body = json.loads(self.rfile.read(length))
+              resp = {'jsonrpc': '2.0', 'id': body.get('id', 1),
+                      'result': {'content': [{'type': 'text', 'text': 'mock response ok'}]}}
+              data = json.dumps(resp).encode()
+              self.send_response(200)
+              self.send_header('Content-Type', 'application/json')
+              self.send_header('Content-Length', str(len(data)))
+              self.end_headers()
+              self.wfile.write(data)
+
+      print('Mock MCP server running on :8081', flush=True)
+      HTTPServer(('0.0.0.0', 8081), Handler).serve_forever()
+      "
+    ports:
+      - "8081:8081"
+
+volumes:
+  tessera_audit:
