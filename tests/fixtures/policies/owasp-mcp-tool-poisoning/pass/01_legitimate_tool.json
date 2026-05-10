@@ -1,0 +1,17 @@
+{
+  "policy_id": "owasp-mcp-tool-poisoning",
+  "context": {
+    "tool_call": {
+      "name": "mcp__github__create_issue",
+      "arguments": {
+        "repo": "cloudmorph/tessera",
+        "title": "Add rate limiting",
+        "body": "We should add per-tenant rate limiting to the API gateway."
+      }
+    },
+    "intent": null,
+    "upstream": "github",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}
