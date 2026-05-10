@@ -1,0 +1,12 @@
+{
+  "name": "block_lockdown_active",
+  "description": "Lockdown kill switch active — blocks all calls regardless of policy, even allowlisted tools.",
+  "input": {
+    "tool_call": {"name": "aws_s3_list_buckets", "arguments": {}},
+    "runtime": {"lockdown": true},
+    "intent": null
+  },
+  "expected": {
+    "outcome": "block"
+  }
+}

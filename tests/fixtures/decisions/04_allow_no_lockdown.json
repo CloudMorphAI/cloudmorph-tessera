@@ -1,0 +1,12 @@
+{
+  "name": "allow_no_lockdown",
+  "description": "When lockdown is false, a matching allow policy permits the call.",
+  "input": {
+    "tool_call": {"name": "aws_s3_list_buckets", "arguments": {}},
+    "runtime": {"lockdown": false},
+    "intent": null
+  },
+  "expected": {
+    "outcome": "allow"
+  }
+}

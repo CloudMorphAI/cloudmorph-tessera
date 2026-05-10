@@ -1,0 +1,7 @@
+tokens:
+  - name: alice
+    token: tk_test_alice_xxxxxxxxxxxxxxxxxx
+    scope: alice
+  - name: bob
+    token: tk_test_bob_yyyyyyyyyyyyyyyyyy
+    scope: bob

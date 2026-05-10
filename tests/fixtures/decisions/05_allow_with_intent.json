@@ -1,0 +1,15 @@
+{
+  "name": "allow_with_intent",
+  "description": "Read intent + read tool = allow (intent is present but engine is mode-agnostic; no lockdown).",
+  "input": {
+    "tool_call": {"name": "aws_s3_list_buckets", "arguments": {}},
+    "runtime": {"lockdown": false},
+    "intent": {
+      "verbs": ["read.list", "read.describe"],
+      "purpose": "Inventory S3 buckets for the cost-attribution report."
+    }
+  },
+  "expected": {
+    "outcome": "allow"
+  }
+}

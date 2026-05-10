@@ -1,0 +1,12 @@
+{
+  "name": "block_destructive",
+  "description": "Destructive tool (delete_bucket) is blocked by an explicit block policy.",
+  "input": {
+    "tool_call": {"name": "aws_s3_delete_bucket", "arguments": {"bucket": "test"}},
+    "runtime": {"lockdown": false},
+    "intent": null
+  },
+  "expected": {
+    "outcome": "block"
+  }
+}

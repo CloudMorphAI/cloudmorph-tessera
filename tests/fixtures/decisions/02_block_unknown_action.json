@@ -1,0 +1,12 @@
+{
+  "name": "block_unknown_action",
+  "description": "Unknown tool name falls through to default block (no matching policy).",
+  "input": {
+    "tool_call": {"name": "unknown_action", "arguments": {}},
+    "runtime": {"lockdown": false},
+    "intent": null
+  },
+  "expected": {
+    "outcome": "block"
+  }
+}

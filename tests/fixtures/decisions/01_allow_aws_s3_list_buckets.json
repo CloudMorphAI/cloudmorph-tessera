@@ -1,0 +1,12 @@
+{
+  "name": "allow_aws_s3_list_buckets",
+  "description": "AWS S3 list_buckets is in the readonly allowlist; allow expected.",
+  "input": {
+    "tool_call": {"name": "aws_s3_list_buckets", "arguments": {}},
+    "runtime": {"lockdown": false},
+    "intent": null
+  },
+  "expected": {
+    "outcome": "allow"
+  }
+}
