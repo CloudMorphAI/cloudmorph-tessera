@@ -1,0 +1,12 @@
+id: prod-protection-demo
+name: Production Protection Demo
+description: Block S3 delete operations in the demo environment.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: action_class_in
+    values: ["write.delete"]
+action: block
+reason: "Destructive operation blocked by demo policy"
+priority: 90

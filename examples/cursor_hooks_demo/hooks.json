@@ -1,0 +1,11 @@
+{
+  "hooks": [
+    {
+      "command": "tessera_hook.py",
+      "events": ["beforeMCPExecution", "afterMCPExecution"],
+      "env": {
+        "TESSERA_URL": "http://localhost:8080"
+      }
+    }
+  ]
+}

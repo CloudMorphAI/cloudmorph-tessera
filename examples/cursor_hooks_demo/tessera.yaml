@@ -1,0 +1,11 @@
+deployment_id: cursor-demo
+policies:
+  dir: ./policies
+  mode: enforcement
+  default_action: allow
+upstreams:
+  - name: mock
+    url: http://localhost:9999
+audit:
+  path: /tmp/tessera-demo-audit.db
+  also_stdout: true
