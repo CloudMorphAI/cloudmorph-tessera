@@ -1,21 +1,30 @@
 # Security Policy
 
+Tessera follows a **90-day coordinated disclosure** policy derived from the
+[OSSF vulnerability disclosure guide](https://github.com/ossf/oss-vulnerability-guide/blob/main/templates/).
+
 ## Reporting a vulnerability
 
 If you discover a security vulnerability in Tessera, **please do not file a public GitHub issue.**
 
-Instead, email **security@cloudmorph.io** with:
+Instead, email **security@cloudmorph.ai** with:
 
 - A description of the issue
 - Steps to reproduce (or a proof-of-concept)
 - The Tessera version or commit SHA where you observed it
 - Your name and a contact address (optional — for credit and follow-up)
 
+We acknowledge all reports within **72 hours** of receipt.
+
 ## Contact and PGP
 
 ```
-Email:  security@cloudmorph.io
-PGP:    https://cloudmorph.io/.well-known/pgp
+Email:  security@cloudmorph.ai
+PGP:    (key block placeholder — full key at https://cloudmorph.ai/.well-known/pgp)
+
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+[PGP key will be published at launch]
+-----END PGP PUBLIC KEY BLOCK-----
 ```
 
 If you cannot use PGP, encrypted email via S/MIME or age is available on request.
@@ -25,16 +34,26 @@ If you cannot use PGP, encrypted email via S/MIME or age is available on request
 | Day | Event |
 |---|---|
 | 0 | Report received |
-| ≤ 7 | Acknowledgement sent to reporter |
+| ≤ 3 | Initial acknowledgement within 72 hours |
+| ≤ 7 | Triage complete; severity assigned; reporter notified |
 | ≤ 90 | Fix released and coordinated public disclosure |
 
-We will keep you informed throughout the investigation. If a fix requires longer than 90 days, we will communicate the revised timeline before day 90. For active exploitation we may compress the timeline with your agreement.
+We will keep you informed throughout the investigation. If a fix requires longer than the
+90-day window, we will communicate the revised timeline before day 90 with your agreement.
+For active exploitation in the wild we may compress the timeline with your consent.
 
 We will credit you in the release notes and CHANGELOG unless you prefer to remain anonymous.
 
+## Bug bounty
+
+There is **no public bug-bounty programme** at this stage of the project. We rely on the
+goodwill of the security community and commit to full public credit for all accepted reports.
+A paid programme may follow in a later release (v0.4+).
+
 ## Safe harbor
 
-We consider security research conducted under this policy to be authorised. We will not pursue legal action against researchers who:
+We consider security research conducted under this policy to be authorised. We will not pursue
+legal action against researchers who:
 
 - Report findings through the private channel above rather than publicly.
 - Avoid accessing, modifying, or deleting data belonging to others.
@@ -74,4 +93,5 @@ We are particularly interested in:
 
 ## Hall of fame
 
-Will be populated once we receive first reports. We intend to credit researchers prominently here and in release notes.
+Will be populated once we receive first reports. We intend to credit researchers prominently
+here and in release notes.
