@@ -1,0 +1,13 @@
+{
+  "policy_id": "postgres-mcp-protection",
+  "context": {
+    "tool_call": {
+      "name": "mcp__postgres__query",
+      "arguments": {"query": "SELECT * FROM users WHERE id = 1"}
+    },
+    "intent": null,
+    "upstream": "postgres",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

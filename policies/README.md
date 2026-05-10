@@ -19,6 +19,7 @@ These 11 policies ship with Tessera as a mode-agnostic starting library. Copy th
 | `jira-mcp-protection.yaml` | `jira-mcp-protection` | 92 | block | Block Jira MCP operations on prod/security tickets and guard against the August 2025 Cursor+Jira 0-Click _meta smuggling attack pattern |
 | `slack-mcp-protection.yaml` | `slack-mcp-protection` | 90 | block | Block Slack MCP message operations to public channels (#general, #announcements, #engineering, #all-hands) containing PII, secrets, or API keys |
 | `salesforce-mcp-protection.yaml` | `salesforce-mcp-protection` | 85 | require_approval | Require approval for Salesforce MCP delete/update operations targeting production org IDs |
+| `postgres-mcp-protection.yaml` | `postgres-mcp-protection` | 96 | block | Block Postgres MCP DROP, TRUNCATE, and ALTER DDL operations on critical tables (prod_*, users, customers, payment_methods, sessions) |
 
 ## Usage
 
@@ -38,3 +39,4 @@ The `action_class_in` condition relies on the built-in verb registry in `tessera
 - **jira-mcp-protection**: extend the `issue_key` / `summary` alternation with additional project key prefixes that are sensitive in your org (e.g. `infra`, `soc`); tighten the numeric bound `{1,10}` if your project keys use a stricter format.
 - **slack-mcp-protection**: extend the `channel` set with additional public channel names used in your workspace; add further `arg_matches_regex` conditions under the `any_of` block for additional secret patterns (e.g. database connection strings, JWT tokens).
 - **salesforce-mcp-protection**: replace the template org IDs (`00D000000000001`, `00D000000000002`) with your actual production Salesforce org IDs; extend the `tool_name_in` list with any additional destructive Salesforce MCP tools in your environment.
+- **postgres-mcp-protection**: extend the critical table alternation to cover additional table names in your schema; if your Postgres MCP server uses an arg name other than `query` or `sql`, add a third `arg_matches_regex` condition under the `any_of` block.
