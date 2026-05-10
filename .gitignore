@@ -1,22 +1,61 @@
-# Dependencies
-node_modules/
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .eggs/
 *.egg-info/
 dist/
 build/
+.Python
+*.whl
 
-# Environment and secrets
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# Environment and secrets — NEVER commit these
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
 credentials.json
 service-account.json
 *_secret*
 *_credential*
+# Explicit private key catch
+*private_key*
+*privatekey*
+
+# Audit log (SQLite default storage — contains tool_call decisions)
+*.db
+*.sqlite
+*.sqlite3
+tessera.db
+audit.db
+
+# OPA / Rego build artifacts
+bundle.tar.gz
+*.wasm
+.opa/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Test & coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # IDE
 .idea/
@@ -33,7 +72,5 @@ Thumbs.db
 *.tgz
 *.tar.gz
 
-# SDK build output
-sdk-python/dist/
-sdk-python/*.egg-info/
-cloudmorph-mcp/dist/
+# Node (removed — Python-only repo; keep entry to prevent accidental re-introduction)
+node_modules/

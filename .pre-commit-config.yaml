@@ -1,4 +1,4 @@
-# Pre-commit hooks for CloudMorph Control Centre.
+# Pre-commit hooks for Tessera.
 # Install: `pip install pre-commit && pre-commit install`
 
 repos:
@@ -29,30 +29,12 @@ repos:
     rev: v1.13.0
     hooks:
       - id: mypy
-        files: ^(cloudmorph-common-py|sdk-python)/
+        files: ^tessera/
         args: [--strict, --ignore-missing-imports]
         additional_dependencies:
           - pydantic>=2.0
-          - types-requests
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2
     hooks:
       - id: gitleaks
-
-  - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.30.0
-    hooks:
-      - id: check-jsonschema
-        name: validate contracts/*.schema.json shape
-        files: ^contracts/.*\.schema\.json$
-        args: [--schemafile, https://json-schema.org/draft-07/schema]
-
-  - repo: local
-    hooks:
-      - id: contracts-version-check
-        name: enforce schemaVersion bump on contract changes
-        language: script
-        entry: scripts/contracts-version-check.sh
-        files: ^contracts/.*\.schema\.json$
-        pass_filenames: false
