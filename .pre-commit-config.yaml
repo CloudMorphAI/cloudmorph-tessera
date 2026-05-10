@@ -34,6 +34,13 @@ repos:
         additional_dependencies:
           - pydantic>=2.0
 
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: [-c, bandit.yaml, -lll]
+        files: ^tessera/
+
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2
     hooks:

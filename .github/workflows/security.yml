@@ -19,3 +19,41 @@ jobs:
           python-version: '3.12'
       - run: pip install semgrep==1.162.0
       - run: semgrep --config=semgrep.yaml --error tessera/
+
+  bandit:
+    name: Bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install bandit==1.9.4
+      - run: bandit -c bandit.yaml -r tessera/ -lll
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit==2.10.0
+      - run: pip-audit --strict --vulnerability-service osv
+
+  reproducibility:
+    name: Reproducible build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image twice and compare SHA
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          docker build --build-arg SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH -t tessera-repro:1 .
+          docker build --build-arg SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH -t tessera-repro:2 .
+          SHA1=$(docker inspect tessera-repro:1 --format '{{.Id}}')
+          SHA2=$(docker inspect tessera-repro:2 --format '{{.Id}}')
+          echo "SHA1: $SHA1"
+          echo "SHA2: $SHA2"
+          [ "$SHA1" = "$SHA2" ] && echo "PASS: builds are reproducible" || (echo "FAIL: builds differ"; exit 1)

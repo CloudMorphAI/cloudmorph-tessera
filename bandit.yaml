@@ -1,0 +1,5 @@
+skips:
+  - B101  # assert statements — used in tests
+  - B311  # random — not used for security in this codebase
+targets:
+  - tessera/

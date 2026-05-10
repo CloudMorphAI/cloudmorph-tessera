@@ -44,6 +44,9 @@ dev = [
     "respx==0.23.1",
     "tzdata==2026.2",
     "jsonschema==4.23.0",
+    "bandit==1.9.4",
+    "pip-audit==2.10.0",
+    "cyclonedx-bom==7.3.0",
     # semgrep installed separately in CI (conflicts with click on Python 3.13+)
 ]
 runtime = [
