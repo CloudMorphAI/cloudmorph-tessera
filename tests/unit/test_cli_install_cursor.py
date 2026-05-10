@@ -87,3 +87,58 @@ def test_install_claude_code(tmp_path: Path) -> None:
     assert "github" in config["mcpServers"]
     assert config["mcpServers"]["github"]["url"] == "http://localhost:8080/mcp/github"
     assert "Authorization" in config["mcpServers"]["github"]["headers"]
+
+
+def test_install_claude_code_merges_existing(tmp_path: Path) -> None:
+    """install-claude-code preserves existing mcpServers entries."""
+    config_file = tmp_path / "claude.json"
+    existing = {"mcpServers": {"existing-server": {"url": "http://other-server:9000"}}}
+    config_file.write_text(json.dumps(existing))
+
+    result = runner.invoke(
+        app,
+        [
+            "install-claude-code",
+            "--claude-config", str(config_file),
+            "--tessera-url", "http://localhost:8080",
+            "--upstream-name", "github",
+        ],
+    )
+    assert result.exit_code == 0
+    config = json.loads(config_file.read_text())
+    assert "existing-server" in config["mcpServers"]
+    assert "github" in config["mcpServers"]
+
+
+def test_install_claude_code_no_auth_header_when_no_token(tmp_path: Path) -> None:
+    """install-claude-code omits headers when no token is provided."""
+    config_file = tmp_path / "claude.json"
+    result = runner.invoke(
+        app,
+        [
+            "install-claude-code",
+            "--claude-config", str(config_file),
+            "--tessera-url", "http://localhost:8080",
+            "--upstream-name", "github",
+        ],
+    )
+    assert result.exit_code == 0
+    config = json.loads(config_file.read_text())
+    server = config["mcpServers"]["github"]
+    assert "headers" not in server  # no headers when no token
+
+
+def test_install_cursor_hooks_no_token_in_env(tmp_path: Path) -> None:
+    """install-cursor-hooks writes env without TESSERA_BEARER_TOKEN when no token given."""
+    result = runner.invoke(
+        app,
+        [
+            "install-cursor-hooks",
+            "--cursor-config-dir", str(tmp_path),
+            "--tessera-url", "http://localhost:8080",
+        ],
+    )
+    assert result.exit_code == 0
+    hooks = json.loads((tmp_path / "hooks.json").read_text())["hooks"]
+    # TESSERA_BEARER_TOKEN should not be in env when no token given
+    assert "TESSERA_BEARER_TOKEN" not in hooks[0].get("env", {})
