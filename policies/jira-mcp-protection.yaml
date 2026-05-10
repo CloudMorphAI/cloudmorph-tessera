@@ -1,0 +1,29 @@
+id: jira-mcp-protection
+name: Jira MCP Protection
+description: Block Jira MCP operations on security-critical tickets and guard against
+  the August 2025 Cursor+Jira 0-Click _meta smuggling attack pattern.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: tool_name_in
+    values:
+      - "mcp__jira__update_issue"
+      - "mcp__jira__delete_issue"
+      - "mcp__jira__create_issue"
+      - "mcp__jira__transition_issue"
+      - "mcp__jira__add_comment"
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: issue_key
+        pattern: "(?i)^(prod|security)-[0-9]{1,10}$"
+      - condition: arg_matches_regex
+        arg: summary
+        pattern: "(?i)(prod|security)-[0-9]{1,10}"
+      - condition: arg_matches_regex
+        arg: description
+        pattern: "_meta\\s{0,10}[:=]\\s{0,10}\\{"
+action: block
+reason: "Jira operation blocked: production/security ticket or _meta injection detected"
+priority: 92
