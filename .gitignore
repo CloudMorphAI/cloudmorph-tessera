@@ -72,5 +72,8 @@ Thumbs.db
 *.tgz
 *.tar.gz
 
+# SBOM (generated artifact — do not commit)
+sbom.json
+
 # Node (removed — Python-only repo; keep entry to prevent accidental re-introduction)
 node_modules/

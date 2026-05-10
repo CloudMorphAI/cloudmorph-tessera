@@ -1,3 +1,9 @@
+# TODO(FOUNDER): pin to digest after running:
+#   docker manifest inspect python:3.12-slim --verbose | grep digest
+# Then replace the line below with:
+#   FROM python:3.12-slim@sha256:<digest> AS builder
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY pyproject.toml README.md ./
