@@ -1,11 +1,25 @@
 {
-  "name": "cloudmorph-mcp",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@cloudmorph/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for governing AI agent cloud actions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CloudMorphAI/cloudmorph-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "cloud-governance",
+    "cloudmorph"
+  ],
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
+    "test": "echo \"No tests yet\" && exit 0"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -15,5 +29,8 @@
     "@types/express": "^4.17.21",
     "@types/ws": "^8.5.10",
     "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -11,5 +11,8 @@ Usage::
 
 from cloudmorph.client import CloudMorph, CloudMorphError, RateLimitError
 
-__all__ = ["CloudMorph", "CloudMorphError", "RateLimitError"]
-__version__ = "0.1.0b1"
+# CloudMorphClient is the canonical public name; CloudMorph kept for backwards compat.
+CloudMorphClient = CloudMorph
+
+__all__ = ["CloudMorphClient", "CloudMorph", "CloudMorphError", "RateLimitError"]
+__version__ = "0.1.0"

@@ -15,6 +15,11 @@ from storage_pointers import build_pointer
 
 CONTAINER_APPS_API_VERSION = "2023-05-01"
 COMPUTE_API_VERSION = "2023-07-01"
+AUTHORIZATION_API_VERSION = "2022-04-01"
+AKS_API_VERSION = "2023-10-01"
+SQL_API_VERSION = "2021-11-01"
+KEYVAULT_API_VERSION = "2023-02-01"
+WEBSITES_API_VERSION = "2022-03-01"
 
 
 def _extract_action(job: Dict[str, Any]) -> str:
@@ -375,6 +380,373 @@ def _list_containerapp_jobs(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _list_role_assignments(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Authorization/roleAssignments"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': AUTHORIZATION_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    items_out: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        props = item.get("properties") or {}
+        items_out.append(
+            {
+                "id": item.get("id"),
+                "roleDefinitionId": props.get("roleDefinitionId"),
+                "principalId": props.get("principalId"),
+                "principalType": props.get("principalType"),
+                "scope": props.get("scope"),
+            }
+        )
+    return {"subscriptionId": subscription_id, "count": len(items_out), "roleAssignments": items_out}
+
+
+def _list_role_definitions(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Authorization/roleDefinitions"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': AUTHORIZATION_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    defs: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        props = item.get("properties") or {}
+        defs.append(
+            {
+                "name": (item.get("name") or ""),
+                "roleName": props.get("roleName"),
+                "description": props.get("description"),
+                "type": props.get("type"),
+            }
+        )
+    return {"subscriptionId": subscription_id, "count": len(defs), "roleDefinitions": defs}
+
+
+def _list_aks_clusters(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.ContainerService/managedClusters"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': AKS_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    clusters: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        clusters.append(
+            {
+                "name": item.get("name"),
+                "location": item.get("location"),
+                "id": item.get("id"),
+                "provisioningState": (item.get("properties") or {}).get("provisioningState"),
+                "kubernetesVersion": (item.get("properties") or {}).get("kubernetesVersion"),
+            }
+        )
+    return {"subscriptionId": subscription_id, "count": len(clusters), "clusters": clusters}
+
+
+def _list_sql_servers(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    if resource_group:
+        base = f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Sql/servers"
+    else:
+        base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Sql/servers"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': SQL_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    servers: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        servers.append(
+            {
+                "name": item.get("name"),
+                "location": item.get("location"),
+                "id": item.get("id"),
+                "fqdn": (item.get("properties") or {}).get("fullyQualifiedDomainName"),
+            }
+        )
+    return {"subscriptionId": subscription_id, "resourceGroup": resource_group or None, "count": len(servers), "servers": servers}
+
+
+def _list_sql_databases(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    server_name = str(payload.get("serverName") or payload.get("server") or "").strip()
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not resource_group:
+        raise ValueError("resource_group_missing")
+    if not server_name:
+        raise ValueError("server_name_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    base = f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Sql/servers/{server_name}/databases"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': SQL_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    dbs: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        dbs.append({"name": item.get("name"), "id": item.get("id")})
+    return {
+        "subscriptionId": subscription_id,
+        "resourceGroup": resource_group,
+        "serverName": server_name,
+        "count": len(dbs),
+        "databases": dbs,
+    }
+
+
+def _list_function_apps(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    if resource_group:
+        base = f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Web/sites"
+    else:
+        base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.Web/sites"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': WEBSITES_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results * 2)
+    functions: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        kind = str((item.get("properties") or {}).get("kind") or item.get("kind") or "")
+        if "functionapp" not in kind.lower():
+            continue
+        functions.append(
+            {
+                "name": item.get("name"),
+                "location": item.get("location"),
+                "id": item.get("id"),
+                "state": (item.get("properties") or {}).get("state"),
+            }
+        )
+        if len(functions) >= max_results:
+            break
+    return {"subscriptionId": subscription_id, "resourceGroup": resource_group or None, "count": len(functions), "functionApps": functions}
+
+
+def _describe_virtual_machine(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    vm_name = str(payload.get("vmName") or payload.get("vm") or payload.get("name") or "").strip()
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not resource_group:
+        raise ValueError("resource_group_missing")
+    if not vm_name:
+        raise ValueError("vm_name_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.Compute/virtualMachines/{vm_name}"
+        f"?{urllib.parse.urlencode({'api-version': COMPUTE_API_VERSION, '$expand': 'instanceView'})}"
+    )
+    data = _request_json(url, token)
+    props = data.get("properties") or {}
+    instance_view = props.get("instanceView") or {}
+    statuses = instance_view.get("statuses") or []
+    power_state = next(
+        (
+            s.get("displayStatus")
+            for s in statuses
+            if isinstance(s, dict) and str(s.get("code", "")).startswith("PowerState/")
+        ),
+        None,
+    )
+    return {
+        "name": data.get("name"),
+        "location": data.get("location"),
+        "id": data.get("id"),
+        "resourceGroup": resource_group,
+        "vmSize": (props.get("hardwareProfile") or {}).get("vmSize"),
+        "provisioningState": props.get("provisioningState"),
+        "powerState": power_state,
+        "osType": ((props.get("storageProfile") or {}).get("osDisk") or {}).get("osType"),
+        "adminUsername": (props.get("osProfile") or {}).get("adminUsername"),
+        "tags": data.get("tags") or {},
+    }
+
+
+def _get_storage_account_properties(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    account_name = _resolve_account(payload) or str(payload.get("accountName") or "").strip()
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not resource_group:
+        raise ValueError("resource_group_missing")
+    if not account_name:
+        raise ValueError("account_name_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    STORAGE_MGMT_API_VERSION = "2023-01-01"
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.Storage/storageAccounts/{account_name}"
+        f"?{urllib.parse.urlencode({'api-version': STORAGE_MGMT_API_VERSION})}"
+    )
+    data = _request_json(url, token)
+    props = data.get("properties") or {}
+    sku = data.get("sku") or {}
+    return {
+        "name": data.get("name"),
+        "location": data.get("location"),
+        "id": data.get("id"),
+        "sku": sku.get("name"),
+        "kind": data.get("kind"),
+        "accessTier": props.get("accessTier"),
+        "provisioningState": props.get("provisioningState"),
+        "primaryLocation": props.get("primaryLocation"),
+        "statusOfPrimary": props.get("statusOfPrimary"),
+        "allowBlobPublicAccess": props.get("allowBlobPublicAccess"),
+        "supportsHttpsTrafficOnly": props.get("supportsHttpsTrafficOnly"),
+        "tags": data.get("tags") or {},
+    }
+
+
+def _describe_sql_server(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    resource_group = _resolve_resource_group(payload)
+    server_name = str(payload.get("serverName") or payload.get("server") or "").strip()
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not resource_group:
+        raise ValueError("resource_group_missing")
+    if not server_name:
+        raise ValueError("server_name_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.Sql/servers/{server_name}"
+        f"?{urllib.parse.urlencode({'api-version': SQL_API_VERSION})}"
+    )
+    data = _request_json(url, token)
+    props = data.get("properties") or {}
+    return {
+        "name": data.get("name"),
+        "location": data.get("location"),
+        "id": data.get("id"),
+        "resourceGroup": resource_group,
+        "fqdn": props.get("fullyQualifiedDomainName"),
+        "version": props.get("version"),
+        "state": props.get("state"),
+        "minimalTlsVersion": props.get("minimalTlsVersion"),
+        "publicNetworkAccess": props.get("publicNetworkAccess"),
+        "tags": data.get("tags") or {},
+    }
+
+
+def _resolve_vault_url(payload: Dict[str, Any]) -> str:
+    for key in ("vaultUrl", "vault_url", "keyVaultUrl"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            url = value.strip().rstrip("/")
+            if not url.startswith("https://"):
+                url = f"https://{url}"
+            return url
+    name = str(payload.get("vaultName") or payload.get("vault_name") or "").strip()
+    if name:
+        return f"https://{name}.vault.azure.net"
+    return ""
+
+
+def _list_keyvault_secrets(payload: Dict[str, Any]) -> Dict[str, Any]:
+    vault_url = _resolve_vault_url(payload)
+    token = _resolve_access_token(payload)
+    if not vault_url:
+        raise ValueError("vault_url_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    max_results = min(_resolve_max_results(payload, default=25), 25)
+    url = f"{vault_url}/secrets?api-version=7.3&maxresults={max_results}"
+    data = _request_json(url, token)
+    secrets: List[Dict[str, Any]] = []
+    for item in data.get("value", []) if isinstance(data.get("value"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        attrs = item.get("attributes") or {}
+        secret_id = item.get("id") or ""
+        name = secret_id.rsplit("/", 1)[-1] if "/" in secret_id else secret_id
+        secrets.append({
+            "name": name,
+            "id": secret_id,
+            "enabled": attrs.get("enabled"),
+            "created": attrs.get("created"),
+            "updated": attrs.get("updated"),
+            "contentType": item.get("contentType"),
+        })
+    return {
+        "vaultUrl": vault_url,
+        "count": len(secrets),
+        "secrets": secrets,
+        "nextLink": data.get("nextLink"),
+    }
+
+
+def _list_key_vaults(payload: Dict[str, Any]) -> Dict[str, Any]:
+    subscription_id = _resolve_subscription(payload)
+    token = _resolve_access_token(payload)
+    if not subscription_id:
+        raise ValueError("subscription_missing")
+    if not token:
+        raise RuntimeError("access_token_missing")
+    base = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.KeyVault/vaults"
+    url = f"{base}?{urllib.parse.urlencode({'api-version': KEYVAULT_API_VERSION})}"
+    max_results = _resolve_max_results(payload)
+    page = _request_paged(url, token, max_results)
+    vaults: List[Dict[str, Any]] = []
+    for item in page.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        vaults.append(
+            {
+                "name": item.get("name"),
+                "location": item.get("location"),
+                "id": item.get("id"),
+                "vaultUri": (item.get("properties") or {}).get("vaultUri"),
+            }
+        )
+    return {"subscriptionId": subscription_id, "count": len(vaults), "vaults": vaults}
+
+
 def _as_list(value: Any) -> List[str]:
     if value is None:
         return []
@@ -466,6 +838,66 @@ def run(job: Dict[str, Any]) -> Dict[str, Any]:
             summary = f"Listed {result.get('count', 0)} jobs."
             return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
 
+        if normalized in {"azure.rbac.list_role_assignments"}:
+            result = _list_role_assignments(payload)
+            summary = f"Listed {result.get('count', 0)} role assignments."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.rbac.list_role_definitions"}:
+            result = _list_role_definitions(payload)
+            summary = f"Listed {result.get('count', 0)} role definitions."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.aks.list_clusters"}:
+            result = _list_aks_clusters(payload)
+            summary = f"Listed {result.get('count', 0)} AKS clusters."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.sql.list_servers"}:
+            result = _list_sql_servers(payload)
+            summary = f"Listed {result.get('count', 0)} SQL servers."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.sql.list_databases"}:
+            result = _list_sql_databases(payload)
+            summary = f"Listed {result.get('count', 0)} SQL databases."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.functions.list_apps"}:
+            result = _list_function_apps(payload)
+            summary = f"Listed {result.get('count', 0)} function apps."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.keyvault.list_vaults"}:
+            result = _list_key_vaults(payload)
+            summary = f"Listed {result.get('count', 0)} key vaults."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.compute.describe_vm"}:
+            result = _describe_virtual_machine(payload)
+            summary = f"Described VM {result.get('name', '')}."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.storage.get_account_properties"}:
+            result = _get_storage_account_properties(payload)
+            summary = f"Retrieved properties for storage account {result.get('name', '')}."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.iam.list_role_assignments"}:
+            result = _list_role_assignments(payload)
+            summary = f"Listed {result.get('count', 0)} role assignments."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.sql.describe_server"}:
+            result = _describe_sql_server(payload)
+            summary = f"Described SQL server {result.get('name', '')}."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
+        if normalized in {"azure.keyvault.list_secrets"}:
+            result = _list_keyvault_secrets(payload)
+            summary = f"Listed {result.get('count', 0)} secret names from vault."
+            return _build_result("completed", summary, result, "\n".join(log_lines), artifacts=artifacts)
+
         return _build_result("failed", "Unsupported action.", reason="unsupported_action", artifacts=artifacts)
     except Exception as exc:
         reason = _format_error(exc)
@@ -477,6 +909,14 @@ def run(job: Dict[str, Any]) -> Dict[str, Any]:
             reason = "resource_group_missing"
         if str(exc) == "access_token_missing":
             reason = "access_token_missing"
+        if str(exc) == "vm_name_missing":
+            reason = "vm_name_missing"
+        if str(exc) == "account_name_missing":
+            reason = "account_name_missing"
+        if str(exc) == "server_name_missing":
+            reason = "server_name_missing"
+        if str(exc) == "vault_url_missing":
+            reason = "vault_url_missing"
         return _build_result(
             "failed",
             "Execution failed.",

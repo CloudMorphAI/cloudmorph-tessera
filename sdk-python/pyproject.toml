@@ -4,17 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudmorph"
-version = "0.1.0b1"
-description = "CloudMorph Control Centre SDK — govern AI agents across multi-cloud."
+version = "0.1.0"
+description = "Python SDK for CloudMorph — govern AI agent cloud actions"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 requires-python = ">=3.9"
 authors = [{name = "CloudMorph", email = "sdk@cloudmorph.io"}]
 keywords = ["cloudmorph", "mcp", "multi-cloud", "agent", "governance"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",

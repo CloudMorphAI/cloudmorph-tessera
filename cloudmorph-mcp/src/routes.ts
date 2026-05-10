@@ -249,7 +249,7 @@ export function buildRouter(options: RouterOptions): Router {
       res.json(
         jsonRpcResult(id, {
           protocolVersion: "2024-11-05",
-          serverInfo: { name: "cloudmorph-mcp", version: "0.1.0" },
+          serverInfo: { name: "cloudmorph-mcp", version: "1.0.0" },
           capabilities: { tools: {} }
         })
       );
