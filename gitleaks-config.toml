@@ -1,4 +1,4 @@
-# gitleaks configuration for CloudMorph Control Centre
+# gitleaks configuration for Tessera (cloudmorph-tessera OSS)
 # Inherits the default ruleset and adds project-specific allowlists.
 
 [extend]
@@ -19,9 +19,8 @@ paths = [
     '''.*README\.md''',
     '''.*CONTRIBUTING\.md''',
     '''contracts/.*\.schema\.json''',
-    '''cloudmorph-mcp/\.env\.example''',
     '''tests/.*\.py''',
-    '''cloudmorph-common-py/tests/.*''',
+    '''tests/fixtures/.*\.json''',
 ]
 
 stopwords = [
