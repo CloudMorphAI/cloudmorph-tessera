@@ -83,13 +83,27 @@ def _jsonrpc_error(
 
 
 def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
-    """Inject tessera_audit_event_id into JSON-RPC response body."""
+    """Inject tessera_audit_event_id into JSON-RPC response body.
+
+    Placement is JSON-RPC 2.0 + MCP spec compliant:
+    - On `result` responses: nest under `result._meta`.
+    - On `error` responses: nest under `error.data._meta`.
+    Top-level `_meta` next to `error` is NOT valid JSON-RPC and is rejected
+    by strict MCP clients (Claude Code's Zod validator, MCP SDK).
+    """
     result = body.get("result")
+    error = body.get("error")
     if isinstance(result, dict):
         meta = result.setdefault("_meta", {})
         meta["tessera_audit_event_id"] = event_id
-    else:
-        body.setdefault("_meta", {})["tessera_audit_event_id"] = event_id
+    elif isinstance(error, dict):
+        data = error.setdefault("data", {})
+        if isinstance(data, dict):
+            meta = data.setdefault("_meta", {})
+            meta["tessera_audit_event_id"] = event_id
+        # If error.data is set to a non-dict, skip rather than overwrite it.
+    # If body has neither result nor error (shouldn't happen for valid JSON-RPC),
+    # we drop the audit_id rather than break the response shape.
     return body
 
 

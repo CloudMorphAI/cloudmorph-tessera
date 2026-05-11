@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **JSON-RPC error response shape.** When Tessera blocked a tool call, the
+  `tessera_audit_event_id` was being injected at the top level of the response
+  next to `error`. That's not JSON-RPC 2.0 spec-compliant. Strict MCP clients
+  (Claude Code's Zod validator, the official MCP SDK) rejected the whole
+  response and reported a transport-layer failure instead of surfacing the
+  block reason. The fix nests the audit id under `error.data._meta` instead.
+  Discovered during Claude Code integration testing.
 - **Docker image — pip CVE remediation.** Upgraded pip to `>=26.1.1` in both Docker
   build stages. Closes CVE-2026-6357 (pip 26.0.1 was the default in `python:3.12-slim`).
   The CVE was dormant in v0.1.0 because Tessera never invokes `pip install` at

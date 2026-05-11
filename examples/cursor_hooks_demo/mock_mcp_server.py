@@ -64,11 +64,45 @@ async def handle_mcp_call(request: Request) -> JSONResponse:
             {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": {"tools": []},
+                "result": {
+                    "tools": [
+                        {
+                            "name": "aws_s3_list_buckets",
+                            "description": "List S3 buckets in the account.",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        },
+                        {
+                            "name": "aws_s3_delete_bucket",
+                            "description": "Delete an S3 bucket. Destructive.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "bucket": {"type": "string"},
+                                    "environment": {"type": "string"},
+                                },
+                                "required": ["bucket"],
+                            },
+                        },
+                    ]
+                },
             }
         )
 
-    if method in ("initialize", "ping"):
+    if method == "initialize":
+        # Real MCP initialize handshake — Claude Code rejects empty result.
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "tessera-mock-upstream", "version": "0.1.0"},
+                },
+            }
+        )
+
+    if method == "ping":
         return JSONResponse({"jsonrpc": "2.0", "id": req_id, "result": {}})
 
     if method.startswith("notifications/"):
