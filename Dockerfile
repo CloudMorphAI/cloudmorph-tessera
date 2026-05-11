@@ -1,10 +1,15 @@
 # TODO(FOUNDER): pin to digest after running:
 #   docker manifest inspect python:3.12-slim --verbose | grep digest
-# Then replace the line below with:
+# Then replace the FROM lines below with:
 #   FROM python:3.12-slim@sha256:<digest> AS builder
+#   FROM python:3.12-slim@sha256:<digest>
+
+# Global ARG — re-declared inside each stage that uses it.
+ARG SOURCE_DATE_EPOCH
+
+FROM python:3.12-slim AS builder
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
-FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY pyproject.toml README.md ./
 RUN mkdir tessera && touch tessera/__init__.py
@@ -14,6 +19,8 @@ RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
 FROM python:3.12-slim
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 LABEL org.opencontainers.image.source="https://github.com/cloudmorphai/cloudmorph-tessera"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.title="Tessera"
