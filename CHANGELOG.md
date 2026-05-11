@@ -118,7 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Metrics endpoint**
 - Prometheus metrics endpoint at `/metrics`. Disabled by default (`metrics.enabled: false`).
 - When enabled, bearer authentication is required (dedicated `TESSERA_METRICS_TOKEN` or any main-list token).
-- Labels: `requests_total{outcome}`, `decisions_total{action,policy_id,mode}`, `audit_emit_failures_total`, `upstream_request_duration_seconds`, `regex_timeout_total{policy_id}`.
+- Labels: `requests_total{outcome}`, `decisions_total{action,mode}`, `audit_emit_failures_total`.
 
 **CLI** (Typer-based, entry point `tessera`):
 - `tessera serve` — start the proxy; `--config`, `--policy-dir`, `--bind`, `--log-level`.
@@ -126,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tessera policy test` — run fixture decisions against loaded policies; `--policy-dir`, `--fixture`, `--fixture-dir`, `--json`.
 - `tessera policy lint` — validate all YAML policies and run the ReDoS corpus test; `--policy-dir`, `--json`.
 - `tessera version` — print version, git SHA, and Python version; `--json`.
-- `tessera init` — scaffold `tessera.yaml` (with `mode: log_only`), `policies/`, and `tokens.example.yaml` into a directory; `--dir`, `--force`.
+- `tessera init` — scaffold `tessera.yaml` (with `mode: log_only`), `policies/`, and `.env.example` into a directory; `--dir`, `--force`.
 
 **Docker image**
 - Multi-stage Dockerfile: `python:3.12-slim` builder and runtime stages.
