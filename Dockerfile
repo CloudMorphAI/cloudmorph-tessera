@@ -11,16 +11,22 @@ FROM python:3.12-slim AS builder
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 WORKDIR /build
+# Upgrade pip — closes CVE-2026-6357 in default pip 26.0.1.
+RUN pip install --no-cache-dir --upgrade "pip>=26.1.1"
 COPY pyproject.toml README.md ./
 RUN mkdir tessera && touch tessera/__init__.py
 COPY tessera/ ./tessera/
 RUN python -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir --upgrade "pip>=26.1.1" && \
     /venv/bin/pip install --no-cache-dir . && \
     /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
 FROM python:3.12-slim
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
+# Upgrade runtime pip too — Tessera never invokes it but pip-audit / scanners
+# inspect the image and would flag the dormant CVE.
+RUN pip install --no-cache-dir --upgrade "pip>=26.1.1"
 LABEL org.opencontainers.image.source="https://github.com/cloudmorphai/cloudmorph-tessera"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.title="Tessera"

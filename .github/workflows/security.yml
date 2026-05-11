@@ -39,6 +39,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Upgrade pip itself first — closes CVE-2026-6357 (pip 26.0.1 default on
+      # the runner). Without this, pip-audit reports its own toolchain pip as
+      # vulnerable and fails CI even though the repo's deps are clean.
+      - run: python -m pip install --upgrade "pip>=26.1.1"
       - run: pip install pip-audit==2.10.0
       - run: pip-audit --strict --vulnerability-service osv
 

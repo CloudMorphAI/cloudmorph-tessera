@@ -19,16 +19,20 @@ runner = CliRunner()
 
 
 def test_version_command() -> None:
+    from tessera import __version__
+
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert __version__ in result.output
 
 
 def test_version_json() -> None:
+    from tessera import __version__
+
     result = runner.invoke(app, ["version", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data["version"] == "0.1.0"
+    assert data["version"] == __version__
     assert "python" in data
     assert "platform" in data
 

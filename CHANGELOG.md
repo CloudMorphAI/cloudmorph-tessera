@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-05-11
+
+### Fixed
+
+- **Docker image — pip CVE remediation.** Upgraded pip to `>=26.1.1` in both Docker
+  build stages. Closes CVE-2026-6357 (pip 26.0.1 was the default in `python:3.12-slim`).
+  The CVE was dormant in v0.1.0 because Tessera never invokes `pip install` at
+  runtime, but upgrading removes the static-scan finding for any image scanner
+  pointed at the Tessera image.
+- **CI security workflow.** `pip-audit` job now upgrades pip to `>=26.1.1` before
+  scanning, so the CI runner's own toolchain pip doesn't trigger the same CVE
+  finding on every push to main.
+- **Dockerfile.** Moved `ENV SOURCE_DATE_EPOCH` inside each `FROM` stage with a
+  re-declared `ARG`. Previous layout (`ENV` before any `FROM`) was syntactically
+  invalid and broke the v0.1.0 release Docker build on first attempt.
+- **Branding.** Aligned every `cloudmorph-ai` reference to the canonical org slug
+  `cloudmorphai` (no hyphen) — the previous slug was a different GitHub identity
+  and would have 404'd at `docker pull` time. Affected: README, INSTALL.md,
+  Dockerfile LABEL, release.yml, CHANGELOG.md, CONTRIBUTING.md.
+- **Action verbs registry.** Renamed all 50 entries from dotted (`aws.s3.list_buckets`)
+  to underscored (`aws_s3_list_buckets`), matching the actual MCP server naming
+  convention. Three shipped policies (`read-only-mode`, `write-action-approval`,
+  `data-residency-eu`) that use `action_class_in` would otherwise silently never
+  match real MCP tool names.
+- **Cursor demo (`examples/cursor_hooks_demo/test.sh`).** Rewrote with auto-start
+  for the mock upstream and Tessera proxy, with cleanup on exit. Old version
+  required two terminals running first.
+- **`tessera/proxy.py` lifespan migration.** Replaced deprecated `@app.on_event`
+  decorators with the FastAPI `lifespan` async context manager. Eliminates 19
+  `DeprecationWarning`s and the `unclosed database` `ResourceWarning` previously
+  surfaced by pytest.
+
+### Changed
+
+- **Docs structure (cleanup).** Removed `handbook/` (7 files) and `docs/ARCHITECTURE.md`;
+  folded `docs/REPRODUCIBLE_BUILDS.md` into `docs/INSTALL.md`. Slimmed
+  `docs/INSTALL.md`, `docs/POLICIES.md`, `docs/CONFIGURATION.md`, `docs/AUDIT.md`,
+  `docs/INTEGRATIONS.md`, and `docs/TROUBLESHOOTING.md` by an aggregate ~63%.
+- **`gitleaks-config.toml`.** Removed two stale allowlist paths referencing
+  pre-rename folder names (`cloudmorph-mcp/`, `cloudmorph-common-py/`); updated
+  the header comment.
+- **`.gitignore`.** Whitelisted `tests/fixtures/**` so the `*_secret*` rule doesn't
+  block legitimate fixture content. Gated `docs/_internal/**` so internal
+  operational drafts don't leak on push (with explicit allowlist for
+  `v1.1-spec.md`).
+
 ## [0.1.0] - 2026-05-10
 
 ### Added
@@ -100,4 +146,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/TROUBLESHOOTING.md` — common issues and remediation steps.
 - `docs/ROADMAP.md` — features deferred to v0.2 with rationale.
 
-[0.1.0]: https://github.com/cloudmorphai/cloudmorph-tessera/releases/tag/v0.1.0
+[0.1.1]: https://github.com/CloudMorphAI/cloudmorph-tessera/releases/tag/v0.1.1
+[0.1.0]: https://github.com/CloudMorphAI/cloudmorph-tessera/releases/tag/v0.1.0

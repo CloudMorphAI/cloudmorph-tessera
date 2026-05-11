@@ -21,10 +21,10 @@ AI agents calling MCP tools can delete production data, exfiltrate secrets, and 
 
 ```bash
 # Step 1: Pull
-docker pull ghcr.io/cloudmorphai/tessera:0.1.0
+docker pull ghcr.io/cloudmorphai/tessera:0.1.1
 
 # Step 2: Scaffold
-docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.1.0 tessera init --dir /out
+docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.1.1 tessera init --dir /out
 # Creates tessera.yaml (mode: log_only), policies/, .env.example
 
 # Step 3: Edit tessera.yaml — change upstreams[].url to your real MCP server URL
@@ -36,7 +36,7 @@ docker run -d --name tessera \
   -v "$PWD/policies:/etc/tessera/policies:ro" \
   -v tessera_audit:/var/lib/tessera \
   -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
-  ghcr.io/cloudmorphai/tessera:0.1.0
+  ghcr.io/cloudmorphai/tessera:0.1.1
 
 # Step 5: Wire your agent — add to ~/.cursor/mcp.json:
 # {
