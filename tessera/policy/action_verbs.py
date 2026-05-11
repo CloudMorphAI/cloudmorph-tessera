@@ -54,68 +54,74 @@ def _verbs(*verbs: str) -> frozenset[str]:
 
 
 # action → verb-set mapping. Per cloud, organized roughly by service.
+#
+# Naming convention: underscored, matching the MCP-server convention used by
+# the popular open-source MCP servers for AWS / GCP / Azure / Databricks /
+# Snowflake (e.g., `aws_s3_list_buckets`, NOT `aws.s3.list_buckets`).
+# Custom MCP servers with different naming should add entries via
+# `policies/_action_verbs.yaml` (loaded via `load_user_mappings`).
 ACTION_VERBS: dict[str, frozenset[str]] = {
     # ── AWS S3 ──
-    "aws.s3.list_buckets": _verbs("read.list"),
-    "aws.s3.list_objects": _verbs("read.list"),
-    "aws.s3.get_object_metadata": _verbs("read.describe", "read.get"),
-    "aws.s3.put_object": _verbs("write.create", "write.update"),
-    "aws.s3.delete_object": _verbs("write.delete"),
-    "aws.s3.delete_bucket": _verbs("write.delete"),
+    "aws_s3_list_buckets": _verbs("read.list"),
+    "aws_s3_list_objects": _verbs("read.list"),
+    "aws_s3_get_object_metadata": _verbs("read.describe", "read.get"),
+    "aws_s3_put_object": _verbs("write.create", "write.update"),
+    "aws_s3_delete_object": _verbs("write.delete"),
+    "aws_s3_delete_bucket": _verbs("write.delete"),
     # ── AWS EC2 ──
-    "aws.ec2.list_instances": _verbs("read.list"),
-    "aws.ec2.describe_instance": _verbs("read.describe"),
-    "aws.ec2.start_instance": _verbs("execute.run"),
-    "aws.ec2.stop_instance": _verbs("execute.run"),
-    "aws.ec2.terminate_instance": _verbs("write.delete"),
+    "aws_ec2_list_instances": _verbs("read.list"),
+    "aws_ec2_describe_instance": _verbs("read.describe"),
+    "aws_ec2_start_instance": _verbs("execute.run"),
+    "aws_ec2_stop_instance": _verbs("execute.run"),
+    "aws_ec2_terminate_instance": _verbs("write.delete"),
     # ── AWS ECS ──
-    "aws.ecs.list_clusters": _verbs("read.list"),
-    "aws.ecs.list_services": _verbs("read.list"),
-    "aws.ecs.list_tasks": _verbs("read.list"),
-    "aws.ecs.run_task": _verbs("execute.run"),
+    "aws_ecs_list_clusters": _verbs("read.list"),
+    "aws_ecs_list_services": _verbs("read.list"),
+    "aws_ecs_list_tasks": _verbs("read.list"),
+    "aws_ecs_run_task": _verbs("execute.run"),
     # ── AWS IAM ──
-    "aws.iam.list_users": _verbs("read.list"),
-    "aws.iam.list_roles": _verbs("read.list"),
-    "aws.iam.list_groups": _verbs("read.list"),
-    "aws.iam.create_user": _verbs("write.create"),
-    "aws.iam.delete_user": _verbs("write.delete"),
+    "aws_iam_list_users": _verbs("read.list"),
+    "aws_iam_list_roles": _verbs("read.list"),
+    "aws_iam_list_groups": _verbs("read.list"),
+    "aws_iam_create_user": _verbs("write.create"),
+    "aws_iam_delete_user": _verbs("write.delete"),
     # ── AWS Lambda ──
-    "aws.lambda.list_functions": _verbs("read.list"),
-    "aws.lambda.invoke": _verbs("execute.run"),
+    "aws_lambda_list_functions": _verbs("read.list"),
+    "aws_lambda_invoke": _verbs("execute.run"),
     # ── AWS misc ──
-    "aws.cloudformation.list_stacks": _verbs("read.list"),
-    "aws.cloudwatch.list_alarms": _verbs("read.list"),
-    "aws.vpc.list_vpcs": _verbs("read.list"),
-    "aws.vpc.list_subnets": _verbs("read.list"),
-    "aws.vpc.list_security_groups": _verbs("read.list"),
-    "aws.rds.list_db_instances": _verbs("read.list"),
-    "aws.secretsmanager.list_secrets": _verbs("read.list"),
-    "aws.secretsmanager.get_secret_metadata": _verbs("read.describe"),
-    "aws.elb.list_load_balancers": _verbs("read.list"),
+    "aws_cloudformation_list_stacks": _verbs("read.list"),
+    "aws_cloudwatch_list_alarms": _verbs("read.list"),
+    "aws_vpc_list_vpcs": _verbs("read.list"),
+    "aws_vpc_list_subnets": _verbs("read.list"),
+    "aws_vpc_list_security_groups": _verbs("read.list"),
+    "aws_rds_list_db_instances": _verbs("read.list"),
+    "aws_secretsmanager_list_secrets": _verbs("read.list"),
+    "aws_secretsmanager_get_secret_metadata": _verbs("read.describe"),
+    "aws_elb_list_load_balancers": _verbs("read.list"),
     # ── GCP Storage ──
-    "gcp.storage.list_buckets": _verbs("read.list"),
-    "gcp.storage.list_objects": _verbs("read.list"),
+    "gcp_storage_list_buckets": _verbs("read.list"),
+    "gcp_storage_list_objects": _verbs("read.list"),
     # ── GCP Compute ──
-    "gcp.compute.list_instances": _verbs("read.list"),
-    "gcp.run.list_jobs": _verbs("read.list"),
-    "gcp.run.list_services": _verbs("read.list"),
-    "gcp.container.list_clusters": _verbs("read.list"),
+    "gcp_compute_list_instances": _verbs("read.list"),
+    "gcp_run_list_jobs": _verbs("read.list"),
+    "gcp_run_list_services": _verbs("read.list"),
+    "gcp_container_list_clusters": _verbs("read.list"),
     # ── Azure Blob ──
-    "azure.blob.list_containers": _verbs("read.list"),
-    "azure.blob.list_blobs": _verbs("read.list"),
+    "azure_blob_list_containers": _verbs("read.list"),
+    "azure_blob_list_blobs": _verbs("read.list"),
     # ── Azure Compute ──
-    "azure.compute.list_vms": _verbs("read.list"),
-    "azure.containerapps.list_apps": _verbs("read.list"),
-    "azure.containerapps.list_jobs": _verbs("read.list"),
+    "azure_compute_list_vms": _verbs("read.list"),
+    "azure_containerapps_list_apps": _verbs("read.list"),
+    "azure_containerapps_list_jobs": _verbs("read.list"),
     # ── Databricks ──
-    "databricks.workspace.list_clusters": _verbs("read.list"),
-    "databricks.workspace.list_jobs": _verbs("read.list"),
-    "databricks.workspace.list_notebooks": _verbs("read.list"),
-    "databricks.sql.list_warehouses": _verbs("read.list"),
-    "databricks.unity_catalog.list_catalogs": _verbs("read.list"),
-    "databricks.unity_catalog.list_schemas": _verbs("read.list"),
+    "databricks_workspace_list_clusters": _verbs("read.list"),
+    "databricks_workspace_list_jobs": _verbs("read.list"),
+    "databricks_workspace_list_notebooks": _verbs("read.list"),
+    "databricks_sql_list_warehouses": _verbs("read.list"),
+    "databricks_unity_catalog_list_catalogs": _verbs("read.list"),
+    "databricks_unity_catalog_list_schemas": _verbs("read.list"),
     # All possible verbs — actual verbs decided by parsing the SQL
-    "databricks.sql.execute_query": _verbs(
+    "databricks_sql_execute_query": _verbs(
         "read.list",
         "read.aggregate",
         "read.search",
@@ -124,12 +130,12 @@ ACTION_VERBS: dict[str, frozenset[str]] = {
         "write.delete",
     ),
     # ── Snowflake ──
-    "snowflake.account.list_databases": _verbs("read.list"),
-    "snowflake.account.list_warehouses": _verbs("read.list"),
-    "snowflake.account.list_roles": _verbs("read.list"),
-    "snowflake.database.list_schemas": _verbs("read.list"),
-    "snowflake.schema.list_tables": _verbs("read.list"),
-    "snowflake.sql.execute_query": _verbs(
+    "snowflake_account_list_databases": _verbs("read.list"),
+    "snowflake_account_list_warehouses": _verbs("read.list"),
+    "snowflake_account_list_roles": _verbs("read.list"),
+    "snowflake_database_list_schemas": _verbs("read.list"),
+    "snowflake_schema_list_tables": _verbs("read.list"),
+    "snowflake_sql_execute_query": _verbs(
         "read.list",
         "read.aggregate",
         "read.search",
@@ -144,9 +150,18 @@ def verbs_for(action: str) -> frozenset[str]:
     """Look up the verb set for an action.
 
     Returns empty frozenset for unknown actions (matcher treats as ambiguous).
+
+    Defensive normalization: also tries the input with `.` → `_` so that
+    legacy dotted tool names (e.g., from older fixtures or pre-MCP examples)
+    still resolve. Real MCP servers use underscored names; this is a safety
+    net, not a contract.
     """
     if action in ACTION_VERBS:
         return ACTION_VERBS[action]
+    # Fallback: try normalized form for backwards compatibility.
+    normalized = action.replace(".", "_")
+    if normalized != action and normalized in ACTION_VERBS:
+        return ACTION_VERBS[normalized]
     return frozenset()
 
 

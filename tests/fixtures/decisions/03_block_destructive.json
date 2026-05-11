@@ -1,8 +1,8 @@
 {
   "name": "block_destructive",
-  "description": "Destructive tool (delete_bucket) is blocked by an explicit block policy.",
+  "description": "Destructive tool (delete_bucket) on a prod-* resource is blocked by prod-protection.yaml. Custom integration-test engine matches by tool name regardless of args.",
   "input": {
-    "tool_call": {"name": "aws_s3_delete_bucket", "arguments": {"bucket": "test"}},
+    "tool_call": {"name": "aws_s3_delete_bucket", "arguments": {"bucket": "my-bucket", "environment": "prod"}},
     "runtime": {"lockdown": false},
     "intent": null
   },

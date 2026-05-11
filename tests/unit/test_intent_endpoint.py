@@ -143,7 +143,7 @@ def test_intent_invalid_json_body(client: TestClient) -> None:
 def test_intent_response_shape(client: TestClient) -> None:
     resp = client.post(
         "/intent",
-        json={"tool_name": "aws.iam.list_users"},
+        json={"tool_name": "aws_iam_list_users"},
     )
     assert resp.status_code == 200
     body = resp.json()
