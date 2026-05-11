@@ -4,10 +4,8 @@ Used by the intent matcher (lexical stage) to determine whether a tool
 call's verbs are consistent with the agent's declared intent.
 
 The verb taxonomy is locked at v0.1 — extending requires a major schema
-bump. See contracts/intent_declaration.schema.json for the full enum.
-
-CI gate: tests/test_action_verbs_complete.py asserts every action handler
-in any executor has a mapping here. New actions without a mapping fail CI.
+bump. See schemas/policy.schema.json and the KNOWN_VERBS constant below
+for the full enum.
 """
 
 from __future__ import annotations
@@ -16,8 +14,7 @@ from pathlib import Path
 
 import yaml
 
-# All known intent verbs. Mirrors the structuredVerbs enum in
-# contracts/intent_declaration.schema.json.
+# All known intent verbs. Mirrors the structuredVerbs enum in schemas/policy.schema.json.
 KNOWN_VERBS: frozenset[str] = frozenset(
     {
         "read.list",

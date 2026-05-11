@@ -4,7 +4,7 @@ Public surface:
 
     emitter = AuditEmitter(
         tenant_id="tnt_abc",
-        sinks=[StdoutSink(), S3Sink(bucket="audit-bucket")],
+        sinks=[StdoutSink(), SqliteSink("/var/lib/tessera/audit.db")],
         hash_chain=HashChain(),  # optional; one created if omitted
     )
     emitter.emit("decision.made", payload={"outcome": "allow", ...})
