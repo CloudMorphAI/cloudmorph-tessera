@@ -74,7 +74,7 @@ docker exec tessera tessera audit verify --scope default
 - **Intent-blind agent support** — agents that do not declare intent in `_meta.tessera_intent` are handled by tool-name and argument policies. `intent.required: false` is the default. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 - **CLI** — `tessera serve`, `tessera audit verify`, `tessera policy test`, `tessera policy lint`, `tessera version`, `tessera init`. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - **Multi-stage Docker image** — builder + slim runtime; runs as UID 10001 (non-root). See [docs/INSTALL.md](docs/INSTALL.md).
-- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` are resolved via importlib at startup; swap implementations without modifying core code. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` are resolved via importlib at startup; swap implementations without modifying core code. See [tessera/pluggable.py](tessera/pluggable.py).
 
 ---
 
@@ -92,7 +92,7 @@ Every inbound `POST /mcp/{upstream}` is:
 
 In `enforcement` mode a `block` decision returns a JSON-RPC error (code `-32603`) over HTTP 200 to the agent and does not touch the upstream. In `log_only` mode the upstream is always called and the decision is returned in response headers (`X-Tessera-Decision`, `X-Tessera-Policy-Id`, `X-Tessera-Reason`).
 
-Full component breakdown: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Source code is under [tessera/](tessera/); contributor notes in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -174,10 +174,6 @@ Deferred from v0.1; detail and rationale in [docs/ROADMAP.md](docs/ROADMAP.md).
 - **Multi-tenant isolation** — not planned for OSS; available in Tessera Cloud.
 
 ---
-
-## Handbook
-
-Read [the Tessera handbook](handbook/README.md) — how we build, our roadmap, team, funding, and security commitment.
 
 ## Contributing
 

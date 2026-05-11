@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Documentation**
 - `README.md` with 5-minute quickstart (`log_only` → `enforcement` walkthrough).
-- `docs/INSTALL.md`, `docs/POLICIES.md`, `docs/CONFIGURATION.md`, `docs/ARCHITECTURE.md`, `docs/INTEGRATIONS.md`.
+- `docs/INSTALL.md`, `docs/POLICIES.md`, `docs/CONFIGURATION.md`, `docs/INTEGRATIONS.md`.
 - `docs/AUDIT.md` — audit event schema, `verify` usage, hash chain guarantees, SQLite → Postgres migration path.
 - `docs/TROUBLESHOOTING.md` — common issues and remediation steps.
 - `docs/ROADMAP.md` — features deferred to v0.2 with rationale.
