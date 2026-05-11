@@ -7,6 +7,8 @@ import logging
 import os
 import uuid
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import httpx
@@ -96,12 +98,10 @@ def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
 
 def create_app(config: TesseraConfig | None = None) -> FastAPI:
     """Create and configure the Tessera FastAPI app."""
-    app = FastAPI(title="Tessera MCP Proxy", version="0.1.0")
 
-    # ── Startup ──────────────────────────────────────────────────────────────
-
-    @app.on_event("startup")
-    async def _startup() -> None:
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # ── Startup ──────────────────────────────────────────────────────────
         cfg = config if config is not None else load_config()
         app.state.config = cfg
 
@@ -130,6 +130,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             policies = loader.load_all("default")
         except Exception as exc:
             logger.error("event=startup_policy_load_failed error=%s", exc)
+            # Best-effort cleanup of the sink we just opened, then re-raise.
+            try:
+                sink.close()
+            except Exception:  # noqa: BLE001
+                pass
             raise
 
         default_action = Action(cfg.policies.default_action)
@@ -174,19 +179,23 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             len(policies),
         )
 
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        # Close HTTP clients
-        for client in getattr(app.state, "http_clients", {}).values():
-            await client.aclose()
-        # Close audit sink
-        sink = getattr(app.state, "sink", None)
-        if sink is not None:
-            sink.close()
-        # Stop policy watcher
-        loader = getattr(app.state, "loader", None)
-        if loader is not None:
-            loader.stop()
+        try:
+            yield
+        finally:
+            # ── Shutdown ─────────────────────────────────────────────────────
+            # Close HTTP clients
+            for client in getattr(app.state, "http_clients", {}).values():
+                await client.aclose()
+            # Close audit sink
+            sink = getattr(app.state, "sink", None)
+            if sink is not None:
+                sink.close()
+            # Stop policy watcher
+            loader = getattr(app.state, "loader", None)
+            if loader is not None:
+                loader.stop()
+
+    app = FastAPI(title="Tessera MCP Proxy", version="0.1.0", lifespan=_lifespan)
 
     # ── Routes ────────────────────────────────────────────────────────────────
 
