@@ -75,6 +75,13 @@ def test_arg_equals_missing_arg() -> None:
     assert evaluate_condition(cond, _ctx(arguments={})) is False
 
 
+def test_arg_equals_wildcard() -> None:
+    """arg='*': True if any argument value equals value."""
+    cond = ArgEquals(condition="arg_equals", arg="*", value="prod")
+    assert evaluate_condition(cond, _ctx(arguments={"env": "prod", "region": "us-east-1"})) is True
+    assert evaluate_condition(cond, _ctx(arguments={"env": "dev", "region": "us-east-1"})) is False
+
+
 # ── ArgGreaterThan ────────────────────────────────────────────────────────────
 
 
@@ -93,6 +100,15 @@ def test_arg_greater_than_non_numeric() -> None:
     assert evaluate_condition(cond, _ctx(arguments={"count": "not-a-number"})) is False
 
 
+def test_arg_greater_than_wildcard() -> None:
+    """arg='*': True if any numeric argument is greater than value; non-numerics ignored."""
+    cond = ArgGreaterThan(condition="arg_greater_than", arg="*", value=5)
+    assert evaluate_condition(cond, _ctx(arguments={"count": 10, "label": "tag"})) is True
+    assert evaluate_condition(cond, _ctx(arguments={"count": 2, "label": "tag"})) is False
+    # All non-numeric → falsy
+    assert evaluate_condition(cond, _ctx(arguments={"label": "tag"})) is False
+
+
 # ── ArgLessThan ───────────────────────────────────────────────────────────────
 
 
@@ -104,6 +120,17 @@ def test_arg_less_than_true() -> None:
 def test_arg_less_than_false() -> None:
     cond = ArgLessThan(condition="arg_less_than", arg="count", value=10)
     assert evaluate_condition(cond, _ctx(arguments={"count": 15})) is False
+
+
+def test_arg_less_than_wildcard_and_missing() -> None:
+    """arg='*' iteration + missing-arg fallthrough."""
+    cond_wild = ArgLessThan(condition="arg_less_than", arg="*", value=10)
+    assert evaluate_condition(cond_wild, _ctx(arguments={"count": 3, "label": "tag"})) is True
+    assert evaluate_condition(cond_wild, _ctx(arguments={"count": 50, "label": "tag"})) is False
+    cond_missing = ArgLessThan(condition="arg_less_than", arg="count", value=10)
+    assert evaluate_condition(cond_missing, _ctx(arguments={})) is False
+    # non-numeric also returns False (ValueError swallowed)
+    assert evaluate_condition(cond_missing, _ctx(arguments={"count": "abc"})) is False
 
 
 # ── ArgMatchesRegex ───────────────────────────────────────────────────────────
@@ -162,6 +189,21 @@ def test_arg_contains_pattern_alias() -> None:
     assert evaluate_condition(cond_contains, ctx) is True
 
 
+def test_arg_contains_pattern_wildcard_and_missing() -> None:
+    """arg='*' iteration + missing-arg fallthrough for ArgContainsPattern."""
+    cond_wild = ArgContainsPattern(condition="arg_contains_pattern", arg="*", pattern=r"AKIA[0-9A-Z]{16}")
+    assert (
+        evaluate_condition(
+            cond_wild,
+            _ctx(arguments={"note": "hello", "token": "AKIAIOSFODNN7EXAMPLE"}),
+        )
+        is True
+    )
+    assert evaluate_condition(cond_wild, _ctx(arguments={"note": "hello"})) is False
+    cond_missing = ArgContainsPattern(condition="arg_contains_pattern", arg="token", pattern=r"AKIA")
+    assert evaluate_condition(cond_missing, _ctx(arguments={})) is False
+
+
 # ── ArgSizeGreaterThan ────────────────────────────────────────────────────────
 
 
@@ -174,6 +216,15 @@ def test_arg_size_greater_than_true() -> None:
 def test_arg_size_greater_than_false() -> None:
     cond = ArgSizeGreaterThan(condition="arg_size_greater_than", arg="payload", bytes=100)
     assert evaluate_condition(cond, _ctx(arguments={"payload": "tiny"})) is False
+
+
+def test_arg_size_greater_than_wildcard_and_missing() -> None:
+    """arg='*' iteration + missing-arg fallthrough for ArgSizeGreaterThan."""
+    cond_wild = ArgSizeGreaterThan(condition="arg_size_greater_than", arg="*", bytes=10)
+    assert evaluate_condition(cond_wild, _ctx(arguments={"a": "tiny", "b": "x" * 30})) is True
+    assert evaluate_condition(cond_wild, _ctx(arguments={"a": "tiny"})) is False
+    cond_missing = ArgSizeGreaterThan(condition="arg_size_greater_than", arg="payload", bytes=10)
+    assert evaluate_condition(cond_missing, _ctx(arguments={})) is False
 
 
 # ── ToolNameIn ────────────────────────────────────────────────────────────────
@@ -256,6 +307,19 @@ def test_region_in_missing() -> None:
     assert evaluate_condition(cond, _ctx(arguments={})) is False
 
 
+def test_region_in_wildcard() -> None:
+    """arg='*': True if any argument value startswith any region prefix."""
+    cond = RegionIn(condition="region_in", arg="*", regions=["us-east", "eu-west"])
+    assert (
+        evaluate_condition(cond, _ctx(arguments={"label": "tag", "region": "us-east-1"}))
+        is True
+    )
+    assert (
+        evaluate_condition(cond, _ctx(arguments={"label": "tag", "region": "ap-southeast-1"}))
+        is False
+    )
+
+
 # ── TimeOfDayOutside ──────────────────────────────────────────────────────────
 
 
@@ -283,6 +347,26 @@ def test_time_of_day_inside_window() -> None:
         result = evaluate_condition(cond, _ctx())
 
     assert result is False
+
+
+def test_time_of_day_outside_wraparound() -> None:
+    """Window 22:00-06:00 wraps midnight; 02:00 is INSIDE (not outside), 12:00 is outside."""
+    cond = TimeOfDayOutside(condition="time_of_day_outside", start="22:00", end="06:00", tz="UTC")
+    from zoneinfo import ZoneInfo
+
+    inside_dt = datetime(2026, 1, 1, 2, 0, 0, tzinfo=ZoneInfo("UTC"))
+    outside_dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=ZoneInfo("UTC"))
+
+    with patch("tessera.policy.conditions._now_fn", return_value=inside_dt):
+        assert evaluate_condition(cond, _ctx()) is False
+    with patch("tessera.policy.conditions._now_fn", return_value=outside_dt):
+        assert evaluate_condition(cond, _ctx()) is True
+
+
+def test_time_of_day_outside_bad_timezone() -> None:
+    """Unknown tz fails-closed (returns False)."""
+    cond = TimeOfDayOutside(condition="time_of_day_outside", start="08:00", end="18:00", tz="Not/A/Real/TZ")
+    assert evaluate_condition(cond, _ctx()) is False
 
 
 # ── MetaFieldEquals ───────────────────────────────────────────────────────────
