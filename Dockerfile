@@ -14,7 +14,7 @@ RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
 FROM python:3.12-slim
-LABEL org.opencontainers.image.source="https://github.com/cloudmorph-ai/cloudmorph-tessera"
+LABEL org.opencontainers.image.source="https://github.com/cloudmorphai/cloudmorph-tessera"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.title="Tessera"
 LABEL org.opencontainers.image.description="The open-source MCP firewall for AI agents"

@@ -8,7 +8,7 @@ All items require human action. Sonnet cannot perform these from the overnight r
 
 - [ ] Enable Private Vulnerability Reporting: GitHub Settings → Security → Code security and
   analysis → Private vulnerability reporting → **Enable**.
-  URL: `https://github.com/cloudmorph-ai/cloudmorph-tessera/settings/security_analysis`
+  URL: `https://github.com/cloudmorphai/cloudmorph-tessera/settings/security_analysis`
 - [ ] Activate CodeQL scanning: push `feature/days-0-90-tessera` to trigger the first
   `.github/workflows/codeql.yml` run, then verify Settings → Code security and analysis →
   Code scanning shows a green status.
@@ -16,11 +16,11 @@ All items require human action. Sonnet cannot perform these from the overnight r
 
   ```bash
   export GHCR_PAT="<your-github-personal-access-token>"
-  docker login ghcr.io -u cloudmorph-ai -p "$GHCR_PAT"
-  docker build -t ghcr.io/cloudmorph-ai/tessera:0.1.0 .
-  docker tag ghcr.io/cloudmorph-ai/tessera:0.1.0 ghcr.io/cloudmorph-ai/tessera:latest
-  docker push ghcr.io/cloudmorph-ai/tessera:0.1.0
-  docker push ghcr.io/cloudmorph-ai/tessera:latest
+  docker login ghcr.io -u cloudmorphai -p "$GHCR_PAT"
+  docker build -t ghcr.io/cloudmorphai/tessera:0.1.0 .
+  docker tag ghcr.io/cloudmorphai/tessera:0.1.0 ghcr.io/cloudmorphai/tessera:latest
+  docker push ghcr.io/cloudmorphai/tessera:0.1.0
+  docker push ghcr.io/cloudmorphai/tessera:latest
   ```
 
 ---

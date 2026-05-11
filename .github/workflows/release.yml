@@ -64,8 +64,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/cloudmorph-ai/tessera:${{ steps.version.outputs.VERSION }}
-            ghcr.io/cloudmorph-ai/tessera:latest
+            ghcr.io/cloudmorphai/tessera:${{ steps.version.outputs.VERSION }}
+            ghcr.io/cloudmorphai/tessera:latest
           build-args: |
             SOURCE_DATE_EPOCH=${{ github.event.repository.pushed_at }}
 
@@ -75,7 +75,7 @@ jobs:
       - name: Sign image with cosign (keyless)
         run: |
           cosign sign --yes \
-            ghcr.io/cloudmorph-ai/tessera@${{ steps.build.outputs.digest }}
+            ghcr.io/cloudmorphai/tessera@${{ steps.build.outputs.digest }}
         env:
           COSIGN_EXPERIMENTAL: "1"
 
@@ -115,6 +115,6 @@ jobs:
           cosign attest --yes \
             --predicate sbom.json \
             --type cyclonedx \
-            ghcr.io/cloudmorph-ai/tessera:${{ steps.version.outputs.VERSION }}
+            ghcr.io/cloudmorphai/tessera:${{ steps.version.outputs.VERSION }}
         env:
           COSIGN_EXPERIMENTAL: "1"

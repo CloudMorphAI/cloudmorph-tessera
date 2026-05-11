@@ -22,7 +22,7 @@ Thank you for taking the time to contribute. This document covers everything you
 
 ```bash
 # Clone the repo
-git clone https://github.com/cloudmorph-ai/cloudmorph-tessera.git
+git clone https://github.com/cloudmorphai/cloudmorph-tessera.git
 cd cloudmorph-tessera
 
 # Create and activate a virtual environment

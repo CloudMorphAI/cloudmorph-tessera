@@ -20,7 +20,7 @@ Docker is the recommended path for production. pip install is for local developm
 ## 1. Docker install (recommended)
 
 ```bash
-docker pull ghcr.io/cloudmorph-ai/tessera:0.1.0
+docker pull ghcr.io/cloudmorphai/tessera:0.1.0
 ```
 
 ```bash
@@ -31,7 +31,7 @@ docker run -d \
   -v "$PWD/policies:/etc/tessera/policies:ro" \
   -v tessera_audit:/var/lib/tessera \
   -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
-  ghcr.io/cloudmorph-ai/tessera:0.1.0
+  ghcr.io/cloudmorphai/tessera:0.1.0
 ```
 
 | Flag | Purpose |
@@ -64,7 +64,7 @@ pip install cloudmorph-tessera && tessera --help
 **Dev / source install:**
 
 ```bash
-git clone https://github.com/cloudmorph-ai/tessera.git && cd tessera
+git clone https://github.com/cloudmorphai/cloudmorph-tessera.git && cd tessera
 pip install -e ".[dev]" && pre-commit install
 ```
 
@@ -75,7 +75,7 @@ pip install -e ".[dev]" && pre-commit install
 `docker-compose.example.yaml` (in the repo root) starts Tessera alongside a mock MCP server — fastest end-to-end evaluation without a real upstream.
 
 ```bash
-git clone https://github.com/cloudmorph-ai/tessera.git && cd tessera
+git clone https://github.com/cloudmorphai/cloudmorph-tessera.git && cd tessera
 docker compose -f docker-compose.example.yaml up
 ```
 
@@ -132,7 +132,7 @@ docker run --rm -v tessera_audit:/data -v "$PWD/backup:/backup" \
 
 ```bash
 tessera init   # pip install
-# Docker: docker run --rm -v "$PWD:/out" ghcr.io/cloudmorph-ai/tessera:0.1.0 tessera init --dir /out
+# Docker: docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.1.0 tessera init --dir /out
 ```
 
 Output files: `tessera.yaml` (mode: `log_only`), `policies/`, `.env.example`.
@@ -244,16 +244,16 @@ Images are signed with Sigstore (keyless OIDC) via cosign.
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp 'https://github.com/cloudmorph-ai/cloudmorph-tessera/.github/workflows/release.yml' \
+  --certificate-identity-regexp 'https://github.com/cloudmorphai/cloudmorph-tessera/.github/workflows/release.yml' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/cloudmorph-ai/tessera:0.1.0
+  ghcr.io/cloudmorphai/tessera:0.1.0
 ```
 
 **SBOM:**
 
 ```bash
 cosign download attestation \
-  ghcr.io/cloudmorph-ai/tessera:0.1.0 \
+  ghcr.io/cloudmorphai/tessera:0.1.0 \
   | jq '.payload | @base64d | fromjson'
 ```
 

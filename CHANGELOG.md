@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-root `tessera` user (uid/gid 10001).
 - HEALTHCHECK polls `/healthz` every 30 s.
 - Target image size ~150 MB (no OPA runtime).
-- Published to `ghcr.io/cloudmorph-ai/tessera:0.1.0`.
+- Published to `ghcr.io/cloudmorphai/tessera:0.1.0`.
 
 **Pluggable extension points** — three `Protocol` interfaces for Tessera Cloud and custom deployments:
 - `PolicyLoader` — `load_all(scope)` + `watch(scope, callback)`.
@@ -100,4 +100,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/TROUBLESHOOTING.md` — common issues and remediation steps.
 - `docs/ROADMAP.md` — features deferred to v0.2 with rationale.
 
-[0.1.0]: https://github.com/cloudmorph-ai/cloudmorph-tessera/releases/tag/v0.1.0
+[0.1.0]: https://github.com/cloudmorphai/cloudmorph-tessera/releases/tag/v0.1.0
