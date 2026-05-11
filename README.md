@@ -156,6 +156,38 @@ Full condition catalog and fixture format: [docs/POLICIES.md](docs/POLICIES.md).
 
 ---
 
+## Routing your AI agent through Tessera (CLAUDE.md / system-prompt pattern)
+
+Adding Tessera as one of many available MCP servers isn't enough — your agent will often prefer the direct cloud MCP server because it sees that one too. To make Tessera the default route for cloud tool calls, instruct the agent in its system context.
+
+For **Claude Code**, drop a `CLAUDE.md` at your project root (or `~/.claude/CLAUDE.md` for global default):
+
+```markdown
+# Tool routing — use Tessera as the MCP firewall
+
+When this project calls MCP tools that touch cloud resources (AWS, GCP, Azure,
+Databricks, Snowflake, GitHub, Slack, Postgres, Kubernetes):
+
+- **Always prefer the `tessera` MCP server** if the same tool is reachable
+  through it. Tessera enforces deterministic policy + writes a hash-chained
+  audit log of every call.
+- If a tool is only available via a direct cloud MCP server, **stop and ask
+  the user before proceeding** — don't silently bypass the firewall.
+- Read-only operations (list, describe, get) typically pass through normally.
+- Destructive operations (delete, terminate, drop, force-push) WILL be blocked
+  by the shipped reference policies if they touch prod resources. When the
+  block response carries `error.data._meta.tessera_audit_event_id`, surface
+  the policy reason to the user verbatim.
+```
+
+For **Cursor**, equivalent goes in `.cursorrules` at project root, or in user-level Cursor settings. For **Claude Desktop**, put it in the global system prompt via Settings → "Personalization".
+
+This pattern is the difference between "a firewall the user must remember to use" and "a firewall the agent uses by default." Combined with the 14 reference policies, it gives you defense-in-depth without per-call vigilance.
+
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-client config recipes (Cursor, Claude Code, Claude Desktop).
+
+---
+
 ## Tessera Cloud
 
 Want hosted? Multi-tenant? SSO? Compliance evidence export? Tessera Cloud is the same engine with hosted orchestration. The same `Authenticator`, `PolicyLoader`, and `AuditSink` Protocols are used — the implementations are swapped (e.g., `DynamoDBPolicyLoader` instead of `FilesystemPolicyLoader`). Your existing `tessera.yaml` and policy files work without changes when you migrate. https://cloudmorph.ai
