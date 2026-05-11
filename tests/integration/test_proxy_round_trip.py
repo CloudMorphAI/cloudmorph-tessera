@@ -341,19 +341,47 @@ def test_multi_token_scope_in_audit(tmp_path: Path) -> None:
 
 
 def test_pass_through_methods(test_config: TesseraConfig) -> None:
-    """tools/list and initialize are forwarded without policy evaluation."""
+    """All methods in _PASS_THROUGH_METHODS are forwarded without policy evaluation.
+
+    Covers the expanded set added in MCP-AUDIT-2026-05-11:
+    initialize, ping, tools/list, prompts/list, prompts/get,
+    resources/list, resources/read, resources/subscribe,
+    resources/unsubscribe, roots/list, logging/setLevel,
+    completion/complete, sampling/createMessage.
+    """
+    _ALL_PASS_THROUGH = [
+        # Lifecycle
+        "initialize",
+        "ping",
+        # Discovery
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "roots/list",
+        # Config
+        "logging/setLevel",
+        # Action-category (pass-through per MCP-AUDIT-2026-05-11)
+        "resources/unsubscribe",
+        "prompts/get",
+        "resources/read",
+        "resources/subscribe",
+        "completion/complete",
+        "sampling/createMessage",
+    ]
     with _proxy_client(
-        test_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {"tools": []}})
+        test_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {}})
     ) as (client, app):
-        for method in ("tools/list", "initialize"):
+        for method in _ALL_PASS_THROUGH:
             resp = client.post(
                 "/mcp/mock",
                 json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
                 headers=_HEADERS_ALICE,
             )
-            assert resp.status_code == 200
+            assert resp.status_code == 200, f"method={method!r} returned non-200"
             body = resp.json()
-            assert "error" not in body or body.get("error") is None
+            assert "error" not in body or body.get("error") is None, (
+                f"method={method!r} returned error: {body.get('error')}"
+            )
 
 
 def test_unknown_method_rejected(test_config: TesseraConfig) -> None:

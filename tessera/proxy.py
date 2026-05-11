@@ -58,12 +58,35 @@ class IntentResponseMeta(BaseModel):
 
 _METRICS: dict[str, int] = defaultdict(int)
 
+# MCP-AUDIT-2026-05-11: The following methods are passed-through without policy
+# evaluation, even though they are MCP "action" category and *could* leak data:
+#   - prompts/get          (prompt arguments may contain PII/secrets)
+#   - resources/read       (could exfiltrate via resource URI)
+#   - resources/subscribe  (subscription is a write-ish action)
+#   - completion/complete  (arguments may contain PII/secrets)
+#   - sampling/createMessage (arguments may contain PII/secrets)
+# Founder decision needed: should pii-block, secret-leak-block, etc. apply to
+# these methods? Today only tools/call is policy-evaluated. Re-evaluate post-launch
+# once we have real-world Cursor + Claude Code traffic to study.
 _PASS_THROUGH_METHODS = {
+    # Lifecycle
+    "initialize",
+    "ping",
+    # Discovery — metadata only, no policy risk
     "tools/list",
     "prompts/list",
     "resources/list",
-    "initialize",
-    "ping",
+    "roots/list",
+    # Config / admin — no data exfil risk
+    "logging/setLevel",
+    # Resource actions — pass-through for v0.1.1 (see MCP-AUDIT above)
+    "resources/unsubscribe",
+    # Action-category methods passed through pending founder decision (see MCP-AUDIT above)
+    "prompts/get",
+    "resources/read",
+    "resources/subscribe",
+    "completion/complete",
+    "sampling/createMessage",
 }
 
 
