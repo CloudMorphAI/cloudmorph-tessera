@@ -232,7 +232,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             if loader is not None:
                 loader.stop()
 
-    app = FastAPI(title="Tessera MCP Proxy", version="0.1.0", lifespan=_lifespan)
+    from tessera import __version__ as _tessera_version
+
+    app = FastAPI(title="Tessera MCP Proxy", version=_tessera_version, lifespan=_lifespan)
 
     # ── Routes ────────────────────────────────────────────────────────────────
 
