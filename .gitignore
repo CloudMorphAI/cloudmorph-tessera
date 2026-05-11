@@ -77,3 +77,15 @@ sbom.json
 
 # Node (removed — Python-only repo; keep entry to prevent accidental re-introduction)
 node_modules/
+
+# Test fixtures whitelist — fixtures intentionally contain secret/credential-shaped
+# strings so the secret-leak-block policy can be tested. Whitelist must come AFTER
+# the *_secret* / *_credential* / *_key* patterns above so it overrides them.
+!tests/fixtures/**
+
+# Internal docs — strategy, drafts, operational artifacts. Never for public consumption.
+# v1.1-spec.md is the one exception: it's the public-grade archived architecture spec
+# that the founder explicitly intended to keep tracked at the v0.1 cleanup.
+docs/_internal/**
+!docs/_internal/v1.1-spec.md
+!docs/_internal/.gitkeep
