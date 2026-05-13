@@ -1,0 +1,3 @@
+include tessera/intelligence/public_key.pem
+recursive-include policies *.yaml
+recursive-include schemas *.json

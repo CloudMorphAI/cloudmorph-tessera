@@ -34,6 +34,7 @@ dependencies = [
     "regex==2026.4.4",
     "watchdog==6.0.0",
     "PyYAML==6.0.3",
+    "jmespath>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -92,6 +93,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tessera*"]
+
+[tool.setuptools.package-data]
+tessera = ["intelligence/*.pem", "intelligence/*.json"]
 
 [tool.ruff]
 line-length = 110
