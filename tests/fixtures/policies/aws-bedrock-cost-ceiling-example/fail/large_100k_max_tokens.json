@@ -1,0 +1,13 @@
+{
+  "tool_call": {
+    "name": "aws_bedrock_InvokeModel",
+    "arguments": {
+      "modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+      "body": "{\"max_tokens\": 100000, \"messages\": [{\"role\": \"user\", \"content\": \"Process all documents.\"}]}",
+      "max_tokens": 100000,
+      "predicted_cost_usd": 2.40
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}

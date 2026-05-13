@@ -1,0 +1,13 @@
+{
+  "tool_call": {
+    "name": "aws_iam_PutRolePolicy",
+    "arguments": {
+      "RoleName": "org-wide-role",
+      "PolicyName": "wildcard-s3-policy",
+      "PolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+      "principal_count": 200
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}

@@ -1,0 +1,12 @@
+{
+  "tool_call": {
+    "name": "aws_iam_AttachRolePolicy",
+    "arguments": {
+      "RoleName": "assume-anyone-role",
+      "PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess",
+      "principal_count": 450
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}

@@ -1,0 +1,13 @@
+{
+  "tool_call": {
+    "name": "aws_rds_CreateDBInstance",
+    "arguments": {
+      "DBInstanceIdentifier": "prod-apac-db",
+      "DBInstanceClass": "db.r6g.large",
+      "Engine": "mysql",
+      "region": "ap-southeast-1"
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}

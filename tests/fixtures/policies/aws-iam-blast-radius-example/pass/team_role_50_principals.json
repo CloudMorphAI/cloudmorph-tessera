@@ -1,0 +1,12 @@
+{
+  "tool_call": {
+    "name": "aws_iam_AttachRolePolicy",
+    "arguments": {
+      "RoleName": "engineering-team-role",
+      "PolicyArn": "arn:aws:iam::aws:policy/ReadOnlyAccess",
+      "principal_count": 50
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "allow"
+}

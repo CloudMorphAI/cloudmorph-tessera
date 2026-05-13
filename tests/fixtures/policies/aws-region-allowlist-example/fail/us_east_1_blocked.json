@@ -1,0 +1,11 @@
+{
+  "tool_call": {
+    "name": "aws_s3_CreateBucket",
+    "arguments": {
+      "Bucket": "my-us-data-bucket",
+      "region": "us-east-1"
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}

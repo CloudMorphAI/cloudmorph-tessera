@@ -1,0 +1,13 @@
+{
+  "tool_call": {
+    "name": "aws_ec2_RunInstances",
+    "arguments": {
+      "InstanceType": "c5.xlarge",
+      "MinCount": 1,
+      "MaxCount": 1,
+      "cumulative_spend_today_usd": 400.0
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "allow"
+}

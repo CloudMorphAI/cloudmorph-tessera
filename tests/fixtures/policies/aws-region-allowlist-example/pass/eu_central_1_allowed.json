@@ -1,0 +1,12 @@
+{
+  "tool_call": {
+    "name": "aws_rds_CreateDBCluster",
+    "arguments": {
+      "DBClusterIdentifier": "prod-eu-cluster",
+      "Engine": "aurora-postgresql",
+      "region": "eu-central-1"
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "allow"
+}

@@ -1,0 +1,12 @@
+{
+  "tool_call": {
+    "name": "aws_lambda_InvokeFunction",
+    "arguments": {
+      "FunctionName": "my-processor",
+      "Payload": "{\"event\": \"test\"}",
+      "cumulative_spend_today_usd": 0.0
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "allow"
+}

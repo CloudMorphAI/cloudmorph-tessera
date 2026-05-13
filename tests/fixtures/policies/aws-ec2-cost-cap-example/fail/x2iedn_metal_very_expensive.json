@@ -1,0 +1,14 @@
+{
+  "tool_call": {
+    "name": "aws_ec2_RunInstances",
+    "arguments": {
+      "ImageId": "ami-0c55b159cbfafe1f0",
+      "InstanceType": "x2iedn.metal",
+      "MinCount": 1,
+      "MaxCount": 8,
+      "predicted_cost_usd": 168.24
+    }
+  },
+  "upstream": "aws",
+  "expected_action": "block"
+}
