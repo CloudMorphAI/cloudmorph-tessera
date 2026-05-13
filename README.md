@@ -14,9 +14,61 @@
 
 ---
 
+Tessera is the deterministic cost and blast-radius firewall for AI agents on AWS. Block expensive operations before they execute. Audit-grade. No false positives.
+
+---
+
+## What's New in v0.2.0
+
+- **AWS MCP Server upstream** (`kind: aws_mcp`) — IAM-signed routing to the official AWS MCP server via `mcp-proxy-for-aws`. Install with `pip install "cloudmorph-tessera[aws]"`.
+- **5 new semantic conditions** — `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, `time_of_day_outside` — enables cost-aware and blast-radius policies beyond simple argument matching.
+- **Infracost integration** — real-time cost estimation for AWS tool calls via the Infracost GraphQL API. Install with `pip install "cloudmorph-tessera[infracost]"`.
+- **Gemini policy authoring** — `tessera policy author` and `tessera analyze` commands powered by Gemini 1.5 Pro. Install with `pip install "cloudmorph-tessera[gemini]"`.
+- **Intelligence client** — `tessera intelligence pull <pack>` fetches and verifies license-gated premium packs (Ed25519 signature, tier gating). Install with `pip install "cloudmorph-tessera[intelligence]"`.
+- **OIDC/JWT authentication** — management-plane SSO via Clerk/Auth0/Cognito (OQ-2) and JWT mode for MCP traffic from Entra/Okta/Cognito agents.
+
+---
+
+## AWS Quickstart
+
+```bash
+pip install "cloudmorph-tessera[aws,gemini,intelligence]"
+```
+
+Sample `tessera.yaml` for AWS MCP Server:
+
+```yaml
+listen:
+  host: 127.0.0.1
+  port: 8080
+
+auth:
+  type: bearer
+
+policies:
+  dir: ./policies
+  mode: log_only
+  default_action: block
+
+upstreams:
+  - name: aws
+    kind: aws_mcp
+    url: https://mcp.amazonaws.com
+    aws_region: us-east-1
+    # Credentials resolved via boto3 chain (env, ~/.aws, instance profile)
+```
+
+Start Tessera:
+
+```bash
+TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve --config tessera.yaml
+```
+
+---
+
 ## Why Tessera
 
-AI agents calling MCP tools can delete production data, exfiltrate secrets, and exceed cost caps — all in a single tool call your code never explicitly authorized. Tessera is an HTTP proxy that sits between the agent and every MCP server; every `tools/call` request is evaluated against a YAML policy set before it reaches the upstream. Decisions are written to a hash-chain audit log so tampering is detectable. The engine is pure Python — no OPA, no ML, no cloud credentials — so the policy outcome for a given input is always the same. The 14 policies (7 generic + 7 vendor-specific) ship with the container; core policies are the same ones sold separately by other vendors.
+AI agents calling MCP tools can delete production data, exfiltrate secrets, and exceed cost caps — all in a single tool call your code never explicitly authorized. Tessera is an HTTP proxy that sits between the agent and every MCP server; every `tools/call` request is evaluated against a YAML policy set before it reaches the upstream. Decisions are written to a hash-chain audit log so tampering is detectable. The engine is pure Python — no OPA, no ML, no cloud credentials — so the policy outcome for a given input is always the same. 12 reference policies (7 generic + 5 AWS-illustrative) ship with the container; vendor-specific policies are available via Tessera Cloud premium packs.
 
 ---
 
@@ -161,7 +213,7 @@ See [recipes/cursor-hooks.md](recipes/cursor-hooks.md) for a demo walkthrough.
 - **Three enforcement modes** — `enforcement` (blocks fire), `log_only` (advisory, always forwards), `observation` (engine skipped). See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - **16-condition pure-Python policy engine** — `arg_equals`, `arg_greater_than`, `arg_less_than`, `arg_matches_regex`, `arg_in_set`, `arg_contains_pattern`, `arg_size_greater_than`, `tool_name_in`, `action_class_in`, `intent_class_in`, `intent_purpose_matches`, `region_in`, `time_of_day_outside`, `meta_field_equals`, `any_of`, `none_of`. See [docs/POLICIES.md](docs/POLICIES.md).
 - **Hash-chain audit log** — every event is chained to the previous via SHA-256; `tessera audit verify` detects any gap or tamper. Per-token scope isolation. See [docs/AUDIT.md](docs/AUDIT.md).
-- **14 policies (7 generic + 7 vendor-specific)** — generic: `read-only-mode`, `prod-protection`, `secret-leak-block`, `pii-block`, `cost-cap`, `write-action-approval`, `data-residency-eu`; vendor-specific: `github-mcp-protection`, `jira-mcp-protection`, `owasp-mcp-prompt-injection`, `owasp-mcp-tool-poisoning`, `postgres-mcp-protection`, `salesforce-mcp-protection`, `slack-mcp-protection`. See [Policy Catalog](#policy-catalog) and [docs/POLICIES.md](docs/POLICIES.md).
+- **12 reference policies (7 generic + 5 AWS-illustrative)** — generic: `read-only-mode`, `prod-protection`, `secret-leak-block`, `pii-block`, `cost-cap`, `write-action-approval`, `data-residency-eu`; AWS-illustrative: `aws-ec2-cost-cap-EXAMPLE`, `aws-iam-blast-radius-EXAMPLE`, `aws-region-allowlist-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`, `aws-bedrock-cost-ceiling-EXAMPLE`. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are available via Tessera Cloud premium packs. See [Policy Catalog](#policy-catalog) and [docs/POLICIES.md](docs/POLICIES.md).
 - **Per-file reload error isolation** — a bad YAML file is skipped and logged; the rest of the policy set remains live. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - **Regex safety (ReDoS defense)** — all regex conditions are evaluated via the `regex` library with a 100 ms timeout; a timeout returns `false` and tags the audit event. See [docs/POLICIES.md](docs/POLICIES.md).
 - **Intent-blind agent support** — agents that do not declare intent in `_meta.tessera_intent` are handled by tool-name and argument policies. `intent.required: false` is the default. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
@@ -173,7 +225,7 @@ See [recipes/cursor-hooks.md](recipes/cursor-hooks.md) for a demo walkthrough.
 
 ## Policy Catalog
 
-Tessera v0.1.1 ships **14 reference policies** out of the box. Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork.
+Tessera v0.2.0 ships **12 reference policies** out of the box (7 generic + 5 AWS-illustrative). Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are in the Tessera Cloud premium pack.
 
 ### Generic (7)
 
@@ -187,23 +239,23 @@ Tessera v0.1.1 ships **14 reference policies** out of the box. Drop any of them 
 | `write-action-approval.yaml` | Require human approval for all write and delete operations |
 | `data-residency-eu.yaml` | Ensure data operations stay within EU regions |
 
-### Vendor-specific MCP server policies (7)
+### AWS-illustrative policies (5)
 
 | Policy | Effect |
 |---|---|
-| `github-mcp-protection.yaml` | Block destructive GitHub MCP operations on protected branches or production repos (repo deletion, force-push, branch deletion) |
-| `jira-mcp-protection.yaml` | Block Jira MCP operations on security-critical tickets and guard against the August 2025 Cursor+Jira `_meta` smuggling attack pattern |
-| `postgres-mcp-protection.yaml` | Block Postgres MCP `DROP`, `TRUNCATE`, and `ALTER` operations on critical tables |
-| `salesforce-mcp-protection.yaml` | Require approval for Salesforce MCP delete and update operations on production org IDs |
-| `slack-mcp-protection.yaml` | Block Slack MCP messages to public channels containing sensitive content (PII, secrets, API keys) |
-| `owasp-mcp-prompt-injection.yaml` | Block tool calls whose arguments contain prompt-injection patterns flagged by OWASP MCP Top 10 |
-| `owasp-mcp-tool-poisoning.yaml` | Block tool calls whose name matches known impostor namespaces or typo-squatting patterns flagged by OWASP MCP Top 10 |
+| `aws-ec2-cost-cap-EXAMPLE.yaml` | Block EC2 RunInstances calls predicted to cost more than $50/hr |
+| `aws-iam-blast-radius-EXAMPLE.yaml` | Block IAM PutRolePolicy/AttachRolePolicy affecting more than 100 principals |
+| `aws-region-allowlist-EXAMPLE.yaml` | Block operations outside EU regions (data-residency enforcement) |
+| `aws-cost-runaway-stop-EXAMPLE.yaml` | Halt all cost-incurring calls when cumulative daily spend exceeds $500 |
+| `aws-bedrock-cost-ceiling-EXAMPLE.yaml` | Block Bedrock InvokeModel calls with ceiling cost above $1.50 |
+
+These require `predicted_cost` / `blast_radius` / `cumulative_spend_today` condition support from the Tessera Cloud `aws-cost-aware-defaults` premium pack. In `log_only` mode they are safe to try without the premium pack (unknown conditions fail-open).
+
+### Vendor-specific policies (premium pack)
+
+The 7 vendor-specific policies (GitHub, Jira, OWASP prompt injection, OWASP tool poisoning, Postgres, Salesforce, Slack) are available in the **Tessera Cloud premium pack** `vendor-mcp-protection`. Access via `tessera intelligence pull vendor-mcp-protection`.
 
 See [`policies/README.md`](policies/README.md) for the full schema and authoring guide.
-
-### OWASP MCP Top 10 coverage
-
-Tessera ships baseline policies for two categories from the [OWASP MCP Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) — **prompt injection** (`owasp-mcp-prompt-injection.yaml`) and **tool poisoning** (`owasp-mcp-tool-poisoning.yaml`). Both are off by default; opt in by including them in your `--policy-dir`. Expanded OWASP MCP coverage is on the v0.2.0 roadmap.
 
 ---
 
