@@ -1,0 +1,14 @@
+id: aws-region-allowlist-example
+name: AWS region allowlist — EU only (illustrative)
+description: Block operations outside EU regions to enforce data-residency policy.
+priority: 70
+match:
+  upstream: "*"
+when:
+  - condition: none_of
+    conditions:
+      - condition: region_in
+        arg: region
+        regions: ["eu-", "europe-"]
+action: block
+reason: Operation outside EU regions; data-residency policy blocks.

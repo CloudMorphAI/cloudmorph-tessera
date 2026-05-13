@@ -1,0 +1,14 @@
+id: aws-bedrock-cost-ceiling-example
+name: AWS Bedrock cost ceiling (illustrative)
+description: Block Bedrock InvokeModel calls whose ceiling cost estimate exceeds $1.50.
+priority: 80
+match:
+  upstream: "*"
+  tool: aws_bedrock_InvokeModel
+when:
+  - condition: predicted_cost
+    usd_threshold: 1.50
+    band: ceiling
+    operator: greater_than
+action: block
+reason: Bedrock call could cost up to $1.50 (ceiling) — require explicit approval.

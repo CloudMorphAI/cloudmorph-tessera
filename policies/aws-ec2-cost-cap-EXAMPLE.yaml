@@ -1,0 +1,16 @@
+# Illustrative — for production-tuned versions see Tessera Cloud premium packs
+# (aws-cost-aware-defaults).
+id: aws-ec2-cost-cap-example
+name: AWS EC2 cost cap (illustrative)
+description: Block EC2 RunInstances calls predicted to cost more than $50/hr.
+priority: 80
+match:
+  upstream: "*"
+  tool: aws_ec2_RunInstances
+when:
+  - condition: predicted_cost
+    usd_threshold: 50.0
+    band: high
+    operator: greater_than
+action: block
+reason: Predicted EC2 cost exceeds $50/hr; require manual approval for larger instances.

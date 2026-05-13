@@ -1,0 +1,14 @@
+id: aws-iam-blast-radius-example
+name: AWS IAM blast-radius gate (illustrative)
+description: Block IAM policy changes that would affect more than 100 principals.
+priority: 90
+match:
+  upstream: "*"
+  tool_pattern: "^aws_iam_(PutRolePolicy|AttachRolePolicy)$"
+when:
+  - condition: blast_radius
+    principal_count_threshold: 100
+    resource_types: ["aws_iam_PutRolePolicy", "aws_iam_AttachRolePolicy"]
+    operator: greater_than
+action: block
+reason: IAM policy change affects more than 100 principals; require explicit approval.

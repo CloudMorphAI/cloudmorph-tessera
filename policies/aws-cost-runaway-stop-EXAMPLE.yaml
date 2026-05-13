@@ -1,0 +1,12 @@
+id: aws-cost-runaway-stop-example
+name: AWS cumulative daily spend cap (illustrative)
+description: Halt all cost-incurring calls once the scope has spent $500 today.
+priority: 95
+match:
+  upstream: "*"
+when:
+  - condition: cumulative_spend_today
+    usd_threshold: 500.0
+    operator: greater_than
+action: block
+reason: Daily AWS spend on this scope exceeded $500; halt further cost-incurring calls.
