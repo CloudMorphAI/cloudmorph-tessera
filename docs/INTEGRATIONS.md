@@ -171,6 +171,94 @@ Reference policies: `write-action-approval.yaml`. See [`docs/POLICIES.md`](POLIC
 
 ---
 
+## AWS MCP Server
+
+Tessera supports AWS-hosted MCP servers secured with IAM SigV4 signing via the
+`kind: aws_mcp` upstream type. Requests are signed automatically using the
+`mcp-proxy-for-aws` library; credentials come from the standard boto3 credential
+chain (no Tessera config needed for credentials).
+
+### Prerequisites
+
+Install the `aws` extra:
+
+```bash
+pip install "cloudmorph-tessera[aws]"
+```
+
+This pulls in `mcp-proxy-for-aws==0.2.0` and `boto3>=1.34.0`.
+
+### tessera.yaml configuration
+
+```yaml
+upstreams:
+  - name: aws-bedrock
+    kind: aws_mcp          # required — activates IAM-signed client
+    url: https://mcp.bedrock.us-east-1.amazonaws.com
+    aws_region: us-east-1  # required for aws_mcp kind
+    aws_service: aws-mcp   # default; override if the service name differs
+    # aws_endpoint_override: http://localhost:4566  # optional — LocalStack / custom
+    timeout_seconds: 30
+    # No `credentials` block needed — boto3 chain resolves credentials
+```
+
+AWS credentials are resolved in boto3's standard priority order:
+
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`)
+2. AWS config file (`~/.aws/credentials`)
+3. IAM role attached to the EC2 instance / ECS task / Lambda function
+4. AWS SSO / IAM Identity Center
+
+Tessera never reads or stores AWS credentials — they stay inside the boto3 client.
+
+### Agent client config (unchanged)
+
+The agent client configuration is identical to the bearer upstream case. Tessera's
+`/mcp/{name}` route is the proxy; the client does not need to know that the upstream
+is AWS-signed.
+
+```json
+{
+  "mcpServers": {
+    "aws-bedrock": {
+      "url": "http://localhost:8080/mcp/aws-bedrock",
+      "headers": {
+        "Authorization": "Bearer tk_your_tessera_token_here"
+      }
+    }
+  }
+}
+```
+
+### Audit enrichment
+
+When an AWS MCP response includes the `aws:ViaAWSMCPService` or `aws:CalledViaAWSMCP`
+headers, Tessera captures them in the audit event payload under `_aws_context`:
+
+```json
+{
+  "eventType": "passthrough",
+  "payload": {
+    "method": "tools/list",
+    "_aws_context": {
+      "via_aws_mcp_service": "bedrock-agent-runtime",
+      "called_via_aws_mcp": "true"
+    }
+  }
+}
+```
+
+This gives compliance teams a clear signal that traffic transited the AWS MCP
+service tier.
+
+### AWS Activate
+
+If you are a startup, check eligibility for [AWS Activate](https://aws.amazon.com/activate/)
+credits ($5,000–$100,000 in AWS credits) — these can cover the cost of AWS MCP
+service API calls during your evaluation period.
+
+---
+
 ## Verifying the connection
 
 ```bash
