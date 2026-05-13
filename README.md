@@ -136,6 +136,10 @@ Tessera v0.1.1 ships **14 reference policies** out of the box. Drop any of them 
 
 See [`policies/README.md`](policies/README.md) for the full schema and authoring guide.
 
+### OWASP MCP Top 10 coverage
+
+Tessera ships baseline policies for two categories from the [OWASP MCP Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) — **prompt injection** (`owasp-mcp-prompt-injection.yaml`) and **tool poisoning** (`owasp-mcp-tool-poisoning.yaml`). Both are off by default; opt in by including them in your `--policy-dir`. Expanded OWASP MCP coverage is on the v0.2.0 roadmap.
+
 ---
 
 ## How it works
