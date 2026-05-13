@@ -51,6 +51,8 @@ _ITER_ALL = "SELECT payload_json FROM audit_events ORDER BY scope, seq"
 
 _ITER_SCOPED = "SELECT payload_json FROM audit_events WHERE scope=? ORDER BY scope, seq"
 
+_ITER_SCOPES = "SELECT DISTINCT scope FROM audit_events"
+
 
 class SqliteSink:
     name: str = "sqlite"
@@ -122,3 +124,9 @@ class SqliteSink:
             cursor = self._conn.execute(_ITER_SCOPED, (scope,))
         for row in cursor:
             yield json.loads(row["payload_json"])
+
+    def iter_scopes(self) -> Iterator[str]:
+        """Yield all distinct scope values present in the audit database."""
+        cursor = self._conn.execute(_ITER_SCOPES)
+        for row in cursor:
+            yield str(row[0])
