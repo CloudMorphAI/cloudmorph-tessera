@@ -336,6 +336,16 @@ Deferred from v0.1; detail and rationale in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ---
 
+## FAQ
+
+### Does Tessera work with Claude Desktop?
+
+Tessera v0.1.1 is HTTP-mode only. Claude Desktop **free tier** supports stdio MCP servers only, so Tessera v0.1.1 won't appear there. Claude Desktop **Pro / Max / Team / Enterprise** plans support [Custom Connectors](https://support.anthropic.com/en/articles/11724636-claude-desktop-custom-connectors), which can talk to Tessera via the same `http://localhost:8080/mcp` endpoint Cursor uses.
+
+A stdio adapter is on the **v0.2.0 roadmap** so Claude Desktop free-tier users can also use Tessera without a paid plan. Track it in [issues](https://github.com/CloudMorphAI/cloudmorph-tessera/issues).
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run `pip install -e ".[dev]"` and `pre-commit install` to get started.
