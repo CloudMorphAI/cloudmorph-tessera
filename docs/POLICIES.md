@@ -319,3 +319,122 @@ Set `intent.required: true` in `tessera.yaml` to reject every call that lacks a 
 - **No chaining or inheritance** — No `extends`, `import`, or `compose`. Each YAML is self-contained. Intra-policy composition is `any_of`/`none_of` within a single `when` list only.
 - **No per-policy version pinning or signed bundles** — Policy directory is trusted as-is.
 - **No native rate limiting** — Deploy Tessera behind nginx, Caddy, Cloudflare, or AWS API Gateway for rate limiting.
+
+---
+
+## v0.2.0 production-ready conditions
+
+The following two conditions graduated to production-ready in v0.2.0. They require no external backends and are safe to deploy immediately.
+
+### `time_of_day_outside` — Business-hours enforcement
+
+Blocks (or logs) calls outside your team's working hours. Useful for preventing accidental destructive operations at night or on weekends.
+
+**Example: Block all write actions outside UTC business hours**
+
+```yaml
+id: no-writes-after-hours
+name: No write actions outside UTC business hours
+match:
+  upstream: "*"
+when:
+  - condition: action_class_in
+    values: ["write.mutate", "write.delete"]
+  - condition: time_of_day_outside
+    start: "09:00"
+    end: "17:00"
+    tz: "UTC"
+action: block
+reason: "Write operations are restricted to 09:00–17:00 UTC. Submit a change request for off-hours access."
+priority: 80
+```
+
+**Example: Require approval for deployments outside US/Eastern business hours**
+
+```yaml
+id: deployment-hours-eastern
+name: Deployments require approval outside Eastern business hours
+match:
+  upstream: "*"
+  tool_pattern: ".*deploy.*|.*release.*|.*provision.*"
+when:
+  - condition: time_of_day_outside
+    start: "08:00"
+    end: "18:00"
+    tz: "America/New_York"
+action: require_approval
+reason: "Deployments outside Eastern business hours require explicit approval."
+priority: 70
+```
+
+Fields:
+| Field | Required | Notes |
+|-------|----------|-------|
+| `start` | yes | `HH:MM` 24-hour time. Inclusive. |
+| `end` | yes | `HH:MM` 24-hour time. Inclusive. |
+| `tz` | yes | IANA timezone name (e.g. `UTC`, `America/New_York`, `Europe/London`). |
+
+Condition returns `true` (matches) when the **current server time is outside** the `[start, end]` window. Overnight ranges (e.g. `start: "22:00"`, `end: "06:00"`) are supported.
+
+---
+
+### `region_in` — Data residency enforcement
+
+Restricts which AWS/GCP/Azure regions a tool call may target. Used for EU data residency, sovereignty compliance, and cost-centre geo-fencing.
+
+**Example: EU-only data residency — block non-EU S3 operations**
+
+```yaml
+id: eu-data-residency
+name: EU data residency — block S3 writes to non-EU regions
+match:
+  upstream: "aws"
+  tool_pattern: "aws_s3_.*"
+when:
+  - condition: action_class_in
+    values: ["write.mutate", "write.create"]
+  - condition: none_of
+    conditions:
+      - condition: region_in
+        arg: region
+        regions:
+          - "eu-west-1"
+          - "eu-west-2"
+          - "eu-west-3"
+          - "eu-central-1"
+          - "eu-north-1"
+          - "eu-south-1"
+action: block
+reason: "S3 write operations must target EU regions only (GDPR compliance)."
+priority: 90
+```
+
+**Example: Allowlist production regions for EC2**
+
+```yaml
+id: approved-ec2-regions
+name: EC2 launches only in approved regions
+match:
+  upstream: "aws"
+  tool: "aws_ec2_RunInstances"
+when:
+  - condition: none_of
+    conditions:
+      - condition: region_in
+        arg: region
+        regions:
+          - "us-east-1"
+          - "us-west-2"
+          - "eu-west-1"
+action: block
+reason: "EC2 instances may only be launched in approved regions."
+priority: 85
+```
+
+Fields:
+| Field | Required | Notes |
+|-------|----------|-------|
+| `arg` | yes | Argument name containing the region string. Use `"*"` to check all argument values. |
+| `regions` | yes | List of region prefixes. Matching uses `str.startswith`, so `"eu-"` matches all EU regions. |
+
+Condition returns `true` when the tool argument **starts with** one of the listed region strings. Combine with `none_of` to create an allowlist (block if NOT in the approved set).
