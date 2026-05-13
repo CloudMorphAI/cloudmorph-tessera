@@ -157,11 +157,35 @@ def policy_test(
     fixture_dir: str = typer.Option(None, "--fixture-dir"),
     fixture: str = typer.Option(None, "--fixture"),
     json_output: bool = typer.Option(False, "--json"),
+    default_action: str = typer.Option(
+        None,
+        "--default-action",
+        help="Default action when no policy matches: allow|block|log_only|require_approval. "
+        "Defaults to 'allow' for policy test; production server typically defaults 'block'.",
+    ),
 ) -> None:
     """Run fixture decisions against loaded policies."""
     from tessera.policy.engine import PolicyEngine
     from tessera.policy.loader import FilesystemPolicyLoader
     from tessera.policy.schema import Action
+
+    # Warn if --default-action not explicitly set (production usually defaults block)
+    if default_action is None:
+        typer.echo(
+            'WARN: --default-action defaults to "allow"; production server typically defaults "block". '
+            'Pass --default-action block to match production behavior.',
+            err=True,
+        )
+        _resolved_default_action = Action.allow
+    else:
+        valid_actions = {"allow", "block", "log_only", "require_approval"}
+        if default_action not in valid_actions:
+            typer.echo(
+                f"Invalid --default-action {default_action!r}. Choose from: {', '.join(sorted(valid_actions))}",
+                err=True,
+            )
+            raise typer.Exit(2)
+        _resolved_default_action = Action(default_action)
 
     # Load policies
     try:
@@ -171,7 +195,7 @@ def policy_test(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
 
-    engine = PolicyEngine(policies, default_action=Action.allow)
+    engine = PolicyEngine(policies, default_action=_resolved_default_action)
 
     # Gather fixture files
     fixture_files: list[Path] = []
@@ -413,6 +437,17 @@ def install_cursor_hooks(
         envvar="TESSERA_BEARER_TOKEN",
         help="Bearer token for Tessera. Reads TESSERA_BEARER_TOKEN if not provided.",
     ),
+    token_name: str = typer.Option(
+        None,
+        "--token-name",
+        help="Named token to select from TESSERA_BEARER_TOKENS or TESSERA_BEARER_TOKENS_FILE. "
+        "Injected as TESSERA_CURSOR_TOKEN_NAME in hook env.",
+    ),
+    fail_closed: bool = typer.Option(
+        False,
+        "--fail-closed",
+        help="When Tessera is unreachable, deny the MCP call instead of failing open.",
+    ),
     uninstall: bool = typer.Option(False, "--uninstall", help="Remove Tessera hooks."),
     upgrade: bool = typer.Option(False, "--upgrade", help="Overwrite existing hook file."),
 ) -> None:
@@ -460,10 +495,23 @@ def install_cursor_hooks(
         shutil.copy2(hook_src, hook_dest)
         typer.echo(f"Installed hook script at {hook_dest}")
 
-    # Write/merge hooks.json
+    # Build hook env dict — propagate multi-token env vars from caller's shell.
     env: dict[str, str] = {"TESSERA_URL": tessera_url}
-    if token:
+
+    # Multi-token propagation: pass through whichever token source is active in
+    # the caller's environment so the hook resolves tokens the same way.
+    if os.environ.get("TESSERA_BEARER_TOKENS"):
+        env["TESSERA_BEARER_TOKENS"] = os.environ["TESSERA_BEARER_TOKENS"]
+    elif os.environ.get("TESSERA_BEARER_TOKENS_FILE"):
+        env["TESSERA_BEARER_TOKENS_FILE"] = os.environ["TESSERA_BEARER_TOKENS_FILE"]
+    elif token:
         env["TESSERA_BEARER_TOKEN"] = token
+
+    if token_name:
+        env["TESSERA_CURSOR_TOKEN_NAME"] = token_name
+
+    if fail_closed:
+        env["TESSERA_CURSOR_FAIL_CLOSED"] = "true"
 
     tessera_hook_entry = {
         "command": str(hook_dest),
