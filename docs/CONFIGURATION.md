@@ -339,3 +339,139 @@ pytest tests/integration/
 This is useful in CI to start the proxy without a real policies directory.
 
 *For policy authoring, see `docs/POLICIES.md`. For audit chain details, see `docs/AUDIT.md`.*
+
+---
+
+## 9. Management-plane SSO
+
+Management-plane SSO uses OIDC/JWKS to authenticate requests to `/app/*` routes
+(license check, org management — reserved for v0.2.x; the authenticator is
+instantiated at startup but no routes consume it yet). MCP traffic at
+`/mcp/{upstream}` continues to use `bearer` or `jwt` mode (see §10).
+
+Configure in `tessera.yaml` under `auth.management_plane`:
+
+```yaml
+auth:
+  type: bearer          # MCP traffic still uses bearer or jwt
+  management_plane:
+    provider: clerk
+    jwks_url: https://clerk.your-domain.com/.well-known/jwks.json
+    issuer: https://clerk.your-domain.com
+    audience: tessera-management
+    clock_skew_seconds: 60
+    scope_claim: email  # claim used to derive the audit scope slug
+```
+
+### Clerk (default)
+
+```yaml
+auth:
+  management_plane:
+    provider: clerk
+    jwks_url: https://<your-clerk-frontend-api>/.well-known/jwks.json
+    issuer: https://<your-clerk-frontend-api>
+    audience: tessera-management
+```
+
+The `email` claim from the Clerk session token is normalized to a SCOPE_RE-compliant
+slug: `alice@example.com` → `alice_at_example_com`.
+
+### Auth0
+
+```yaml
+auth:
+  management_plane:
+    provider: auth0
+    jwks_url: https://<your-tenant>.auth0.com/.well-known/jwks.json
+    issuer: https://<your-tenant>.auth0.com/
+    audience: https://api.tessera.yourcompany.com
+    scope_claim: email
+```
+
+### Cognito
+
+```yaml
+auth:
+  management_plane:
+    provider: cognito
+    jwks_url: https://cognito-idp.<region>.amazonaws.com/<user-pool-id>/.well-known/jwks.json
+    issuer: https://cognito-idp.<region>.amazonaws.com/<user-pool-id>
+    audience: <app-client-id>
+    scope_claim: email
+```
+
+### Bearer-vs-OIDC matrix
+
+| Traffic type | Auth mechanism | Config field |
+|---|---|---|
+| MCP tool calls (`/mcp/{upstream}`) | Static bearer tokens | `TESSERA_BEARER_TOKENS` / `TESSERA_BEARER_TOKEN` |
+| MCP tool calls (JWT-authenticated agents) | OIDC JWT (`auth.type: jwt`) | `auth.jwt.*` (see §10) |
+| Management-plane routes (`/app/*`) | OIDC JWT (SSO) | `auth.management_plane.*` |
+
+---
+
+## 10. MCP traffic JWT mode
+
+Set `auth.type: jwt` to authenticate MCP client requests with signed JWTs instead
+of static bearer tokens. Useful for CI pipelines, multi-tenant SaaS, or deployments
+where the agent runtime already has an OIDC token from Entra, Okta, or Cognito.
+
+```yaml
+auth:
+  type: jwt
+  jwt:
+    jwks_url: https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+    issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+    audience: api://tessera-mcp
+    clock_skew_seconds: 60
+    principal_claim: sub     # claim used as principal_id in audit events
+    scope_claim: scope       # claim used for audit chain scope slug
+```
+
+The `JWTAuthenticator` validates the Bearer token in the `Authorization` header
+against the JWKS endpoint, then extracts `principal_claim` (default `sub`) and
+`scope_claim` (default `scope`). The scope is taken as the first space-delimited
+token and must match `[a-z0-9_-]{1,64}`; non-compliant values fall back to
+`deployment_id`.
+
+### Microsoft Entra (Azure AD)
+
+```yaml
+auth:
+  type: jwt
+  jwt:
+    jwks_url: https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys
+    issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+    audience: api://tessera-mcp
+    principal_claim: sub
+    scope_claim: scope
+```
+
+### Okta
+
+```yaml
+auth:
+  type: jwt
+  jwt:
+    jwks_url: https://<your-org>.okta.com/oauth2/default/v1/keys
+    issuer: https://<your-org>.okta.com/oauth2/default
+    audience: api://tessera
+    principal_claim: sub
+    scope_claim: scp
+```
+
+### Cognito (machine-to-machine)
+
+```yaml
+auth:
+  type: jwt
+  jwt:
+    jwks_url: https://cognito-idp.<region>.amazonaws.com/<pool-id>/.well-known/jwks.json
+    issuer: https://cognito-idp.<region>.amazonaws.com/<pool-id>
+    audience: <app-client-id>
+    principal_claim: client_id
+    scope_claim: scope
+```
+
+`auth.type: jwt` requires the `oidc` extra: `pip install "cloudmorph-tessera[oidc]"`.
