@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from tessera.policy import action_verbs as _action_verbs_module
 from tessera.policy.action_verbs import (
     ACTION_VERBS,
     KNOWN_VERBS,
@@ -96,3 +97,49 @@ def test_merge_mappings_disjoint() -> None:
     assert "tool.b" in result
     assert result["tool.a"] == frozenset({"read.list"})
     assert result["tool.b"] == frozenset({"analyze"})
+
+
+# ---------------------------------------------------------------------------
+# A-4-2: _user_mappings dict integration (verbs_for consults user table first)
+# ---------------------------------------------------------------------------
+
+
+def test_user_mappings_override_builtin_via_module_dict(tmp_path: pytest.TempPathFactory) -> None:
+    """verbs_for() must return user-overridden verbs when _user_mappings is populated."""
+    # Inject directly into module-level dict (mimics lifespan startup)
+    _action_verbs_module._user_mappings["custom_override_tool"] = frozenset({"write.create"})
+    try:
+        result = verbs_for("custom_override_tool")
+        assert result == frozenset({"write.create"})
+    finally:
+        _action_verbs_module._user_mappings.pop("custom_override_tool", None)
+
+
+def test_user_mappings_override_existing_builtin_key(tmp_path: pytest.TempPathFactory) -> None:
+    """User mapping for an existing builtin key overrides the builtin."""
+    # aws_s3_list_buckets is normally read.list — override with analyze
+    _action_verbs_module._user_mappings["aws_s3_list_buckets"] = frozenset({"analyze"})
+    try:
+        result = verbs_for("aws_s3_list_buckets")
+        assert result == frozenset({"analyze"})
+    finally:
+        _action_verbs_module._user_mappings.pop("aws_s3_list_buckets", None)
+
+
+def test_user_mappings_file_roundtrip(tmp_path: pytest.TempPathFactory) -> None:
+    """load_user_mappings → _user_mappings → verbs_for full path."""
+    yaml_file = tmp_path / "_action_verbs.yaml"
+    yaml_file.write_text(
+        "mappings:\n"
+        "  my_vendor_tool_list: [read.list]\n"
+        "  my_vendor_tool_run: [execute.run, audit.log]\n",
+        encoding="utf-8",
+    )
+    user = load_user_mappings(yaml_file)
+    _action_verbs_module._user_mappings.update(user)
+    try:
+        assert verbs_for("my_vendor_tool_list") == frozenset({"read.list"})
+        assert verbs_for("my_vendor_tool_run") == frozenset({"execute.run", "audit.log"})
+    finally:
+        _action_verbs_module._user_mappings.pop("my_vendor_tool_list", None)
+        _action_verbs_module._user_mappings.pop("my_vendor_tool_run", None)

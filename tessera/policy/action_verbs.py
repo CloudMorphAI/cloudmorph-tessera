@@ -143,8 +143,18 @@ ACTION_VERBS: dict[str, frozenset[str]] = {
 }
 
 
+# User-supplied mappings from policies/_action_verbs.yaml.  The proxy replaces
+# this dict at startup if the file exists.  Using a module-level dict instead of
+# mutating ACTION_VERBS preserves the original builtin table for introspection.
+_user_mappings: dict[str, frozenset[str]] = {}
+
+
 def verbs_for(action: str) -> frozenset[str]:
     """Look up the verb set for an action.
+
+    Lookup order:
+    1. User-supplied mappings (from policies/_action_verbs.yaml, loaded at startup)
+    2. Built-in ACTION_VERBS table
 
     Returns empty frozenset for unknown actions (matcher treats as ambiguous).
 
@@ -153,9 +163,15 @@ def verbs_for(action: str) -> frozenset[str]:
     still resolve. Real MCP servers use underscored names; this is a safety
     net, not a contract.
     """
+    # User mappings take precedence over builtins.
+    if action in _user_mappings:
+        return _user_mappings[action]
+    normalized_user = action.replace(".", "_")
+    if normalized_user != action and normalized_user in _user_mappings:
+        return _user_mappings[normalized_user]
+
     if action in ACTION_VERBS:
         return ACTION_VERBS[action]
-    # Fallback: try normalized form for backwards compatibility.
     normalized = action.replace(".", "_")
     if normalized != action and normalized in ACTION_VERBS:
         return ACTION_VERBS[normalized]
