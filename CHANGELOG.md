@@ -7,73 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - UNRELEASED
 
-This entry tracks the in-progress v0.2.0 release. Tonight's overnight execution
-session landed a focused subset of the planned v0.2.0 work; the bulk of the
-release (AWS upstream embedding, semantic conditions, Infracost integration,
-Gemini policy authoring, intelligence client, license validation, full release
-prep) remains for follow-up sessions. See `1305.md` in the workspace root for
-the complete v0.2.0 task ledger and current status.
+This entry tracks the in-progress v0.2.0 release.
 
-### Breaking changes (landed tonight)
+### Breaking changes
 
 - **Default bind address flipped from `0.0.0.0:8080` to `127.0.0.1:8080`**
   (`tessera/config.py:ListenConfig.host`). Existing deployments needing
   non-loopback exposure must explicitly set `listen.host: 0.0.0.0` in
   `tessera.yaml`, pass `--bind 0.0.0.0:8080` to `tessera serve`, or set the
-  `TESSERA_BIND_HOST=0.0.0.0` environment variable. Rationale: defaulting to
-  `0.0.0.0` makes the proxy LAN-reachable on a fresh install of a
-  developer-laptop tool, which is unnecessary attack surface. (Per
-  1305.md A-4-1.)
+  `TESSERA_BIND_HOST=0.0.0.0` environment variable. (A-4-1.)
 - **`install-claude-code` now refuses to overwrite** an existing
   `mcpServers[upstream_name]` entry in `~/.claude.json` without `--upgrade`.
-  Re-running the command without `--upgrade` is now a hard error rather than
-  a silent overwrite. Matches the existing semantics of
-  `install-cursor-hooks --upgrade`. (Per 1305.md A-4-8.)
+  (A-4-8.)
+- **`BufferedSink` removed from public exports** (`tessera/audit/__init__.py`).
+  Import directly from `tessera.audit.sinks._buffered` if needed. The source
+  file has been renamed `tessera/audit/sinks/_buffered.py` (underscore-prefix
+  marks it as internal). (A-4-9.)
+
+### Features
+
+- **`kind: aws_mcp` upstream** (`tessera/integrations/aws/upstream.py`). AWS
+  IAM-signed MCP server routing via `mcp-proxy-for-aws`. Configure with
+  `kind: aws_mcp`, `aws_region`, and optionally `aws_service` /
+  `aws_endpoint_override` in `tessera.yaml`. Credentials resolved via boto3
+  chain — no Tessera config for credentials. Install with
+  `pip install "cloudmorph-tessera[aws]"`. (A-1-1, A-1-2, A-1-4.)
+- **`--default-action` flag for `tessera policy test`** (`tessera/cli.py`).
+  Accepts `allow|block|log_only|require_approval`. Without the flag, a WARN
+  is printed to stderr noting that the production default is `block`. (A-4-3.)
+- **Multi-token Cursor hook propagation** (`tessera/integrations/cursor_hooks.py`).
+  `_resolve_bearer_token()` walks the same 3-source precedence as
+  `build_token_list()`. `TESSERA_CURSOR_TOKEN_NAME` env var selects a named
+  token. `tessera install-cursor-hooks --token-name <name>` injects it. (A-4-4.)
+- **`fail_closed` Cursor hook config** (`tessera/integrations/cursor_hooks.py`).
+  When `TESSERA_CURSOR_FAIL_CLOSED=true`, an unreachable Tessera proxy causes
+  `handle_before` to return `deny` instead of failing open. Wire via
+  `tessera install-cursor-hooks --fail-closed`. (A-4-5.)
+- **Pluggable backends wired into runtime** (`tessera/proxy.py:_lifespan`).
+  `TESSERA_AUTHENTICATOR`, `TESSERA_AUDIT_SINK`, `TESSERA_POLICY_LOADER` env
+  vars are now consulted at startup via `pluggable.resolve()` before
+  instantiating the default classes. Documented in `docs/CONFIGURATION.md`
+  §8. (A-4-10.)
+- **`passthrough_data_leak_candidate` audit events** (`tessera/proxy.py`).
+  The 5 data-exfil-risk pass-through methods (`prompts/get`, `resources/read`,
+  `resources/subscribe`, `completion/complete`, `sampling/createMessage`) now
+  emit an additional audit event with method, truncated params, principal_id,
+  and scope. Controlled by `audit.flag_data_leak_passthrough: bool` (default
+  `True`). (A-PRE-4, OQ-1.)
+- **Optional dependency groups** (`pyproject.toml`). Added `aws`, `gemini`,
+  `anthropic`, `openai`, `bedrock`, `azure-openai`, `oidc`, `all-llm`,
+  `intelligence`, `infracost` groups. (A-1-1, A-10-1.)
+- **`CursorHooksConfig` and `IntegrationsConfig`** nested under `TesseraConfig`
+  for future cursor_hooks YAML config (`tessera/config.py`). (A-4-5.)
+- **`audit.flag_data_leak_passthrough`** field on `AuditConfig` (default
+  `True`). Allows operators to suppress the extra audit event if noisy. (A-PRE-4.)
+
+### Fixes
+
+- **`HashChain.restore_head` auto-called on lifespan startup** (`tessera/proxy.py`).
+  On startup, `SqliteSink.iter_scopes()` is used to enumerate persisted scopes;
+  `head_hash()` is called per scope and fed into `chain.restore_head()`. This
+  ensures the hash chain is continuous across process restarts. (A-4-6.)
+- **`_action_verbs.yaml` user mappings wired into engine** (`tessera/proxy.py`).
+  If `<policies_dir>/_action_verbs.yaml` exists, `load_user_mappings()` is
+  called at startup and the results are merged into the module-level
+  `_user_mappings` dict before policies are loaded. `verbs_for()` now consults
+  user mappings first. (A-4-2.)
+- **`SqliteSink.iter_scopes()`** added to return all distinct scope values
+  from the audit database. Used by the chain-restore code path. (A-4-6.)
 
 ### Documentation
 
+- **`docs/INTEGRATIONS.md`** — new "## AWS MCP Server" section with `kind:
+  aws_mcp` config block, boto3 chain explanation, and AWS Activate link.
+  (A-1-5.)
+- **`docs/CONFIGURATION.md`** — new "## 8. Pluggable backends" section
+  documenting `TESSERA_AUTHENTICATOR`, `TESSERA_AUDIT_SINK`,
+  `TESSERA_POLICY_LOADER` with example usage. (A-4-10.)
 - **`docs/TROUBLESHOOTING.md`** issue 8 (bearer-token rejection) rewritten to
-  reference the actually-supported env vars (`TESSERA_BEARER_TOKENS`,
-  `TESSERA_BEARER_TOKENS_FILE`, `TESSERA_BEARER_TOKEN`) instead of the
-  non-existent `TESSERA_TOKEN_FILE`. (Per 1305.md A-4-7.)
-- **`docs/TROUBLESHOOTING.md`** issue 9 (upstream timeout) now references the
-  correct config field `upstreams[].timeout_seconds` (was `timeout_ms`,
-  which never existed). (Per 1305.md A-4-7.)
-- **`docs/INSTALL.md`** bind-mount cheatsheet now references the correct
-  non-root UID `10001` (was `1000`). (Per 1305.md A-4-7.)
+  reference the actually-supported env vars. (A-4-7.)
+- **`docs/TROUBLESHOOTING.md`** issue 9 (upstream timeout) references the
+  correct config field `upstreams[].timeout_seconds`. (A-4-7.)
+- **`docs/INSTALL.md`** bind-mount cheatsheet now references non-root UID
+  `10001`. (A-4-7.)
 - **`docs/CONFIGURATION.md`** `policies.reload` field documentation removes
-  the unimplemented `sighup` option. Source-comment in
-  `tessera/config.py:PoliciesConfig.reload` updated accordingly. (Per
-  1305.md A-4-7.)
+  the unimplemented `sighup` option. (A-4-7.)
 
 ### Version
 
-- `tessera/__init__.py:__version__` bumped to `"0.2.0"`. The PyPI publish
-  step (`twine upload`) and the GHCR tag push remain in the founder's
-  morning checklist; this commit only updates the source-of-truth version
-  string. (Per 1305.md A-10-6.)
+- `tessera/__init__.py:__version__` bumped to `"0.2.0"`. (A-10-6.)
 
 ### Not yet landed (deferred to follow-up sessions)
 
-The complete v0.2.0 feature set per the plan in `1305.md` includes substantial
-work that requires verification against external services (AWS, Infracost,
-Gemini, Clerk) and content drafting that benefits from a dedicated session:
-
-- **A-1 series** — `mcp-proxy-for-aws` library embedding, `kind: aws_mcp`
-  upstream, end-to-end AWS-MCP routing, `INTEGRATIONS.md` AWS section.
 - **A-2 / A-3 series** — Clerk SSO for the management plane and JWT validator
   mode for MCP traffic.
-- **A-4-2 / A-4-3 / A-4-5 / A-4-6 / A-4-9 / A-4-10** — engine `_action_verbs.yaml`
-  merge wiring, `policy test` default-action warning, `cursor_hooks.fail_closed`
-  config, `HashChain.restore_head` auto-call on startup, `BufferedSink` removal
-  from public exports, `pluggable.resolve()` runtime wiring.
 - **A-5 series** — seven new semantic condition types (`predicted_cost`,
   `blast_radius`, `affected_resource_count`, `data_volume`,
-  `cumulative_spend_today`, plus reuse-documentation for
-  `time_of_day_outside` and `region_in`).
+  `cumulative_spend_today`, plus `time_of_day_outside` and `region_in`
+  documentation).
 - **A-6 series** — Infracost GraphQL client, AWS mapping shim, license-gated
-  extended mappings, `tessera pricing serve` CLI wrapper, pricing snapshot ID
-  in audit events.
+  extended mappings, `tessera pricing serve` CLI wrapper.
 - **A-7 series** — Gemini policy-authoring CLI (`tessera policy author`,
   `tessera analyze`), stub providers for Anthropic / OpenAI / Bedrock /
   Azure OpenAI.
@@ -83,10 +116,9 @@ Gemini, Clerk) and content drafting that benefits from a dedicated session:
 - **A-9 series** — 5 new AWS-illustrative reference policies; migration of
   7 vendor-specific policies to `tessera-intelligence/packs/vendor-mcp-protection/`
   per OQ-3.
-- **A-10 series** — optional-dependency groups in `pyproject.toml`, Dockerfile
-  base-image SHA pinning + `[aws,gemini]` extras, multi-arch image verification,
-  README update with deterministic-positioning paragraph, `release.yml`
-  end-to-end run, PyPI + GHCR publish, Fargate task image-tag update.
+- **A-10 series** (partial) — Dockerfile base-image SHA pinning +
+  `[aws,gemini]` extras, multi-arch image verification, README update,
+  `release.yml` end-to-end run, PyPI + GHCR publish.
 
 ## [0.1.1] - 2026-05-11
 
