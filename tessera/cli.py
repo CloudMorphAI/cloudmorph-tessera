@@ -23,6 +23,10 @@ app.add_typer(audit_app, name="audit")
 policy_app = typer.Typer(help="Policy management commands.")
 app.add_typer(policy_app, name="policy")
 
+# Sub-commands for pricing
+pricing_app = typer.Typer(help="Pricing backend management.")
+app.add_typer(pricing_app, name="pricing")
+
 
 # ---------------------------------------------------------------------------
 # serve
@@ -613,6 +617,167 @@ def install_claude_code(
     typer.echo(f"Updated {config_file}")
     typer.echo(f"Claude Code → Tessera proxy configured for upstream '{upstream_name}'")
     typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+
+
+# ---------------------------------------------------------------------------
+# policy author
+# ---------------------------------------------------------------------------
+
+
+@policy_app.command("author")
+def policy_author(
+    intent: str = typer.Option(..., "--intent", help="Free-text customer intent"),
+    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai"),
+    output: str = typer.Option("-", "--output", help="- for stdout, or directory path to write files"),
+) -> None:
+    """Generate draft policies from natural-language intent. Human review required."""
+    provider = _resolve_llm_provider(model)
+
+    try:
+        recommendations = provider.propose_policies(intent)
+    except Exception as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    if not recommendations:
+        typer.echo("# Generated draft — review before deploying.", err=True)
+        typer.echo("No policies generated.", err=True)
+        return
+
+    if output == "-":
+        typer.echo("# Generated draft — review before deploying.")
+        for rec in recommendations:
+            typer.echo(f"\n# --- {rec.filename} ---")
+            typer.echo(f"# Reason: {rec.reason}")
+            typer.echo(rec.yaml_body)
+    else:
+        out_dir = Path(output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        typer.echo("# Generated draft — review before deploying.")
+        for rec in recommendations:
+            dest = out_dir / rec.filename
+            dest.write_text(rec.yaml_body, encoding="utf-8")
+            typer.echo(f"Wrote {dest}  ({rec.reason})")
+
+
+# ---------------------------------------------------------------------------
+# analyze
+# ---------------------------------------------------------------------------
+
+
+@app.command("analyze")
+def analyze(
+    mcp_url: str = typer.Option(..., "--mcp", help="MCP server URL to introspect"),
+    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai"),
+    output: str = typer.Option("-", "--output", help="- for stdout JSON, or file path"),
+    token: str | None = typer.Option(None, "--token", envvar="TESSERA_BEARER_TOKEN", help="Bearer token"),
+) -> None:
+    """Analyze an MCP server's tool catalog and recommend policies."""
+    import httpx
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    rpc_body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.post(mcp_url, json=rpc_body, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    except Exception as exc:
+        typer.echo(f"ERROR fetching tool catalog: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    result = data.get("result", {})
+    tools: list[dict] = result.get("tools", []) if isinstance(result, dict) else []
+
+    if not tools:
+        typer.echo("No tools found in catalog.", err=True)
+        raise typer.Exit(1)
+
+    # Derive upstream name from URL for context
+    from urllib.parse import urlparse
+    parsed_url = urlparse(mcp_url)
+    upstream_name = parsed_url.netloc or mcp_url
+
+    provider = _resolve_llm_provider(model)
+
+    try:
+        recommendations = provider.analyze_tools(tools, upstream_name=upstream_name)
+    except Exception as exc:
+        typer.echo(f"ERROR generating recommendations: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    output_data = [
+        {"filename": r.filename, "reason": r.reason, "yaml_body": r.yaml_body}
+        for r in recommendations
+    ]
+    json_str = json.dumps(output_data, indent=2)
+
+    if output == "-":
+        typer.echo(json_str)
+    else:
+        out_path = Path(output)
+        out_path.write_text(json_str, encoding="utf-8")
+        typer.echo(f"Wrote {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# LLM provider resolver (shared by policy author + analyze)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_llm_provider(model: str):  # type: ignore[return]
+    """Instantiate the correct LLM provider from a short name."""
+    model_lower = model.lower()
+    if model_lower == "gemini":
+        from tessera.llm.gemini import GeminiPolicyAuthor
+        return GeminiPolicyAuthor()
+    if model_lower == "anthropic":
+        from tessera.llm.anthropic import AnthropicPolicyAuthor
+        return AnthropicPolicyAuthor()
+    if model_lower == "openai":
+        from tessera.llm.openai import OpenAIPolicyAuthor
+        return OpenAIPolicyAuthor()
+    if model_lower == "bedrock":
+        from tessera.llm.bedrock import BedrockPolicyAuthor
+        return BedrockPolicyAuthor()
+    if model_lower in ("azure-openai", "azure_openai", "azure"):
+        from tessera.llm.azure_openai import AzureOpenAIPolicyAuthor
+        return AzureOpenAIPolicyAuthor()
+    typer.echo(f"Unknown model provider: {model!r}. Choose from: gemini, anthropic, openai, bedrock, azure-openai", err=True)
+    raise typer.Exit(2)
+
+
+# ---------------------------------------------------------------------------
+# pricing serve
+# ---------------------------------------------------------------------------
+
+
+@pricing_app.command("serve")
+def pricing_serve(
+    port: int = typer.Option(4000, "--port", help="Host port to expose the pricing API on."),
+    detach: bool = typer.Option(False, "--detach", help="Run container in background (-d)."),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="INFRACOST_API_KEY",
+        help="Infracost API key (or set INFRACOST_API_KEY env var).",
+    ),
+) -> None:
+    """Run the Infracost Cloud Pricing API container locally."""
+    import subprocess
+
+    cmd = ["docker", "run", "--rm"]
+    if detach:
+        cmd.append("-d")
+    cmd.extend(["-p", f"{port}:4000"])
+    if api_key:
+        cmd.extend(["-e", f"INFRACOST_API_KEY={api_key}"])
+    cmd.append("infracost/cloud-pricing-api:latest")
+    sys.exit(subprocess.call(cmd))
 
 
 if __name__ == "__main__":
