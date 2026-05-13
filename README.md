@@ -109,6 +109,52 @@ docker exec tessera tessera audit verify --scope default
 
 ---
 
+## Wire up Cursor
+
+With Tessera running (`tessera serve --bind 127.0.0.1:8080`), add Tessera as an MCP server in Cursor's config.
+
+### macOS / Linux
+
+Edit `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tessera": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+### Windows
+
+Edit `%USERPROFILE%\.cursor\mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tessera": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+Restart Cursor. Tessera should appear in the MCP indicator. All tool calls Cursor makes through Tessera are now subject to your policy bundle, with every decision recorded to the hash-chained audit log.
+
+Tessera also ships a Cursor Hooks integration if you prefer the hooks-based wiring (fires on `beforeMCPExecution` / `afterMCPExecution` events):
+
+```bash
+tessera install-cursor-hooks
+```
+
+See [recipes/cursor-hooks.md](recipes/cursor-hooks.md) for a demo walkthrough.
+
+---
+
 ## What ships
 
 - **Multi-token bearer auth** — inline env var, YAML file, or single legacy token; per-token scope isolates audit streams. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
