@@ -6,7 +6,7 @@ import os
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -32,10 +32,34 @@ class ListenConfig(BaseModel):
     port: int = 8080
 
 
+class ManagementPlaneConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    provider: Literal["clerk", "auth0", "cognito", "custom"] = "clerk"
+    jwks_url: str
+    issuer: str
+    audience: str
+    clock_skew_seconds: int = 60
+    scope_claim: str = "email"
+
+
+class JWTAuthConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    jwks_url: str
+    issuer: str
+    audience: str
+    clock_skew_seconds: int = 60
+    principal_claim: str = "sub"
+    scope_claim: str = "scope"
+
+
 class AuthConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    type: str = "bearer"
+    type: Literal["bearer", "jwt"] = "bearer"
+    management_plane: ManagementPlaneConfig | None = None
+    jwt: JWTAuthConfig | None = None
 
 
 class AuditConfig(BaseModel):
@@ -124,6 +148,21 @@ class RuntimeConfig(BaseModel):
     lockdown: bool = False
 
 
+class IntelligenceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    catalog_url: str = "https://intelligence.tessera.cloudmorph.ai/catalogs/pack-index.json"
+    mapping_url: str = "https://intelligence.tessera.cloudmorph.ai/catalogs/mapping-index.json"
+    license_check_url: str = "https://license.tessera.cloudmorph.ai/v1/check"
+    license_key_env: str = "TESSERA_LICENSE_KEY"
+    cache_dir: str = "~/.tessera/intelligence"
+    public_key_path: str = "bundled"  # "bundled" or filesystem path
+    refresh_interval_hours: int = 24
+    license_cache_fallback_days: int = 7
+    fail_closed_on_license_check: bool = False
+
+
 class TesseraConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -138,6 +177,7 @@ class TesseraConfig(BaseModel):
     upstreams: list[UpstreamConfig] = []
     runtime: RuntimeConfig = RuntimeConfig()
     integrations: IntegrationsConfig = IntegrationsConfig()
+    intelligence: IntelligenceConfig = IntelligenceConfig()
 
 
 # ---------------------------------------------------------------------------
