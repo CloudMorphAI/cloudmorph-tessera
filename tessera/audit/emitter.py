@@ -76,6 +76,7 @@ class AuditEmitter:
         session_id: str | None = None,
         actor_id: str | None = None,
         tenant_id: str | None = None,
+        pricing_snapshot_id: str | None = None,
     ) -> dict[str, Any]:
         """Emit an event. Returns the stamped event."""
         event: dict[str, Any] = {
@@ -90,6 +91,8 @@ class AuditEmitter:
             event["sessionId"] = session_id
         if actor_id:
             event["actorId"] = actor_id
+        if pricing_snapshot_id is not None:
+            event["pricingSnapshotId"] = pricing_snapshot_id
 
         with self._lock:
             stamped = self.hash_chain.stamp(event)
