@@ -64,6 +64,16 @@ runtime = [
     "watchdog==6.0.0",
     "PyYAML==6.0.3",
 ]
+aws = ["mcp-proxy-for-aws==0.2.0", "boto3>=1.34.0,<2.0.0"]
+gemini = ["google-genai>=2.0.0,<3.0.0"]
+anthropic = ["anthropic>=0.30.0"]
+openai = ["openai>=1.30.0"]
+bedrock = ["boto3>=1.34.0,<2.0.0"]
+azure-openai = ["openai>=1.30.0", "azure-identity>=1.15.0"]
+oidc = ["python-jose[cryptography]>=3.3.0", "httpx>=0.27.0"]
+all-llm = ["google-genai>=2.0.0,<3.0.0", "anthropic>=0.30.0", "openai>=1.30.0", "azure-identity>=1.15.0"]
+intelligence = ["cryptography>=42.0.0"]
+infracost = ["gql[all]>=3.5.0"]
 
 [project.scripts]
 tessera = "tessera.cli:app"

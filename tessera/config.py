@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from tessera.errors import ConfigError
 
@@ -44,6 +44,10 @@ class AuditConfig(BaseModel):
     sink: str = "sqlite"
     path: str = "/var/lib/tessera/audit.db"
     also_stdout: bool = False
+    # When True, emit a passthrough_data_leak_candidate audit event for the 5
+    # data-exfil-risk pass-through methods (prompts/get, resources/read, etc.)
+    # in addition to the normal passthrough event. Default on; set False if noisy.
+    flag_data_leak_passthrough: bool = True
 
 
 class PoliciesMode(str, Enum):
@@ -89,6 +93,29 @@ class UpstreamConfig(BaseModel):
     url: str
     timeout_seconds: int = 30
     credentials: CredentialsConfig | None = None
+    # v0.2.0: upstream kind — "bearer" (default httpx path) or "aws_mcp" (IAM-signed)
+    kind: str = "bearer"
+    aws_region: str | None = None
+    aws_service: str = "aws-mcp"
+    aws_endpoint_override: str | None = None
+
+    @model_validator(mode="after")
+    def _require_aws_region_for_aws_mcp(self) -> UpstreamConfig:
+        if self.kind == "aws_mcp" and not self.aws_region:
+            raise ValueError(f"upstream '{self.name}': aws_region is required when kind == 'aws_mcp'")
+        return self
+
+
+class CursorHooksConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    fail_closed: bool = False
+
+
+class IntegrationsConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    cursor_hooks: CursorHooksConfig | None = None
 
 
 class RuntimeConfig(BaseModel):
@@ -110,6 +137,7 @@ class TesseraConfig(BaseModel):
     log_level: str = "INFO"
     upstreams: list[UpstreamConfig] = []
     runtime: RuntimeConfig = RuntimeConfig()
+    integrations: IntegrationsConfig = IntegrationsConfig()
 
 
 # ---------------------------------------------------------------------------

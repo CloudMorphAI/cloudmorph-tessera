@@ -24,10 +24,12 @@ from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
-from tessera.policy.action_verbs import verbs_for
+from tessera.policy import action_verbs as _action_verbs_module
+from tessera.policy.action_verbs import load_user_mappings, verbs_for
 from tessera.policy.engine import PolicyEngine
 from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action
+from tessera import pluggable
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +67,12 @@ _METRICS: dict[str, int] = defaultdict(int)
 #   - resources/subscribe  (subscription is a write-ish action)
 #   - completion/complete  (arguments may contain PII/secrets)
 #   - sampling/createMessage (arguments may contain PII/secrets)
-# Founder decision needed: should pii-block, secret-leak-block, etc. apply to
-# these methods? Today only tools/call is policy-evaluated. Re-evaluate post-launch
-# once we have real-world Cursor + Claude Code traffic to study.
+# Audit-only handling (v0.2.0, OQ-1): these 5 methods emit a separate
+# passthrough_data_leak_candidate audit event in addition to the normal
+# passthrough event. The audit flag is configurable via
+# audit.flag_data_leak_passthrough (default True). Policy evaluation for these
+# methods is deferred to a future release once real-world traffic patterns are
+# understood.
 _PASS_THROUGH_METHODS = {
     # Lifecycle
     "initialize",
@@ -142,34 +147,79 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         cfg = config if config is not None else load_config()
         app.state.config = cfg
 
+        # ── Pluggable backend resolution ─────────────────────────────────────
+        # Env vars override the default classes.  Format: "module.path:ClassName".
+        auth_spec = os.environ.get("TESSERA_AUTHENTICATOR")
+        sink_spec = os.environ.get("TESSERA_AUDIT_SINK")
+        loader_spec = os.environ.get("TESSERA_POLICY_LOADER")
+
+        authenticator_cls = pluggable.resolve(
+            auth_spec or "", "tessera.auth.bearer:BearerTokenAuthenticator"
+        )
+        sink_cls = pluggable.resolve(
+            sink_spec or "", "tessera.audit.sinks.sqlite:SqliteSink"
+        )
+        loader_cls = pluggable.resolve(
+            loader_spec or "", "tessera.policy.loader:FilesystemPolicyLoader"
+        )
+
         # Auth
-        app.state.authenticator = BearerTokenAuthenticator(
+        app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
             deployment_id=cfg.deployment_id,
         )
 
         # Audit sink
         audit_path = cfg.audit.path
-        sink = SqliteSink(path=audit_path)
+        sink = sink_cls(path=audit_path)  # type: ignore[call-arg]
         app.state.sink = sink
 
         # Hash chain (shared across scopes)
-        app.state.hash_chain = HashChain()
+        chain = HashChain()
+        app.state.hash_chain = chain
+
+        # Restore hash chain heads from persisted sink for all existing scopes.
+        # This ensures the chain is continuous across process restarts.
+        try:
+            for scope in sink.iter_scopes():  # type: ignore[union-attr]
+                head = sink.head_hash(scope)  # type: ignore[union-attr]
+                if head:
+                    try:
+                        chain.restore_head(scope, head)
+                    except ValueError:
+                        logger.warning("event=bad_chain_head scope=%s head=%r", scope, head)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("event=chain_restore_failed error=%s", exc)
 
         # Emitter map: scope → AuditEmitter (created on demand)
         app.state.emitter_map = {}
 
         # Policy loader
-        loader = FilesystemPolicyLoader(
+        loader = loader_cls(  # type: ignore[call-arg]
             cfg.policies.dir,
             reload_mode=cfg.policies.reload,
         )
+
+        # Load user-defined action verb mappings before policies are evaluated so
+        # verbs_for() sees the merged table during evaluation (option b: update
+        # module-level _user_mappings dict, leaving ACTION_VERBS builtins intact).
+        _action_verbs_yaml = Path(cfg.policies.dir) / "_action_verbs.yaml"
+        if _action_verbs_yaml.exists():
+            try:
+                user_mappings = load_user_mappings(_action_verbs_yaml)
+                _action_verbs_module._user_mappings.update(user_mappings)
+                logger.info(
+                    "event=action_verbs_merged user_entries=%d", len(user_mappings)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("event=action_verbs_merge_failed path=%s error=%s", _action_verbs_yaml, exc)
+
         try:
             policies = loader.load_all("default")
         except Exception as exc:
             logger.error("event=startup_policy_load_failed error=%s", exc)
             # Best-effort cleanup of the sink we just opened, then re-raise.
             try:
-                sink.close()
+                sink.close()  # type: ignore[union-attr]
             except Exception:  # noqa: BLE001
                 pass
             raise
@@ -189,17 +239,33 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
             loader.watch("default", _on_reload)
 
-        # HTTP clients per upstream
+        # HTTP clients and AWS clients per upstream
         app.state.http_clients = {}
+        app.state.aws_clients = {}
+
         for upstream in cfg.upstreams:
-            headers: dict[str, str] = {}
-            if upstream.credentials:
-                headers[upstream.credentials.header] = upstream.credentials.value
-            app.state.http_clients[upstream.name] = httpx.AsyncClient(
-                base_url=upstream.url,
-                headers=headers,
-                timeout=upstream.timeout_seconds,
-            )
+            if upstream.kind == "aws_mcp":
+                from tessera.integrations.aws.upstream import AWSMcpUpstream
+
+                aws_client = AWSMcpUpstream(
+                    name=upstream.name,
+                    endpoint=upstream.url,
+                    aws_region=upstream.aws_region or "us-east-1",
+                    aws_service=upstream.aws_service,
+                    aws_endpoint_override=upstream.aws_endpoint_override,
+                    timeout_seconds=upstream.timeout_seconds,
+                )
+                await aws_client.__aenter__()
+                app.state.aws_clients[upstream.name] = aws_client
+            else:
+                headers: dict[str, str] = {}
+                if upstream.credentials:
+                    headers[upstream.credentials.header] = upstream.credentials.value
+                app.state.http_clients[upstream.name] = httpx.AsyncClient(
+                    base_url=upstream.url,
+                    headers=headers,
+                    timeout=upstream.timeout_seconds,
+                )
 
         # Emit startup audit event (use deployment scope)
         _get_or_create_emitter(app.state, cfg.deployment_id)
@@ -223,6 +289,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             # Close HTTP clients
             for client in getattr(app.state, "http_clients", {}).values():
                 await client.aclose()
+            # Close AWS clients
+            for aws_client in getattr(app.state, "aws_clients", {}).values():
+                await aws_client.__aexit__(None, None, None)
             # Close audit sink
             sink = getattr(app.state, "sink", None)
             if sink is not None:
@@ -709,28 +778,81 @@ async def _forward_upstream(
     body: dict[str, Any],
     jsonrpc_id: Any,
 ) -> dict[str, Any] | JSONResponse:
-    """Forward a request to the named upstream. Returns parsed response dict or JSONResponse on error."""
-    http_clients: dict[str, httpx.AsyncClient] = state.http_clients
-    client = http_clients.get(upstream_name)
-    if client is None:
-        _METRICS["requests_total{outcome=unknown_upstream}"] += 1
-        return _jsonrpc_error(
-            jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
-        )
+    """Forward a request to the named upstream. Returns parsed response dict or JSONResponse on error.
 
-    try:
-        response = await client.post("/", json=body)
-        if response.status_code >= 500:
-            _METRICS["requests_total{outcome=upstream_5xx}"] += 1
-            return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
-        return cast("dict[str, Any]", response.json())
-    except httpx.TimeoutException:
-        _METRICS["requests_total{outcome=upstream_timeout}"] += 1
-        return _jsonrpc_error(jsonrpc_id, -32000, "Upstream timeout")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("event=upstream_error upstream=%s error=%s", upstream_name, exc)
-        _METRICS["requests_total{outcome=upstream_error}"] += 1
-        return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
+    Dispatches on upstream kind:
+      - "aws_mcp" → AWSMcpUpstream.forward() (IAM-signed streamable HTTP)
+      - "bearer" / default → existing httpx.AsyncClient path
+    """
+    # Determine which upstream kind this is and dispatch accordingly.
+    cfg: TesseraConfig = state.config
+    upstream_cfg = next((u for u in cfg.upstreams if u.name == upstream_name), None)
+
+    upstream_kind = upstream_cfg.kind if upstream_cfg is not None else "bearer"
+
+    match upstream_kind:
+        case "aws_mcp":
+            aws_clients: dict[str, Any] = getattr(state, "aws_clients", {})
+            aws_client = aws_clients.get(upstream_name)
+            if aws_client is None:
+                _METRICS["requests_total{outcome=unknown_upstream}"] += 1
+                return _jsonrpc_error(
+                    jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
+                )
+            return await aws_client.forward(body)
+
+        case _:
+            # Default bearer / httpx path
+            http_clients: dict[str, httpx.AsyncClient] = state.http_clients
+            client = http_clients.get(upstream_name)
+            if client is None:
+                _METRICS["requests_total{outcome=unknown_upstream}"] += 1
+                return _jsonrpc_error(
+                    jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
+                )
+
+            try:
+                response = await client.post("/", json=body)
+                if response.status_code >= 500:
+                    _METRICS["requests_total{outcome=upstream_5xx}"] += 1
+                    return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
+                return cast("dict[str, Any]", response.json())
+            except httpx.TimeoutException:
+                _METRICS["requests_total{outcome=upstream_timeout}"] += 1
+                return _jsonrpc_error(jsonrpc_id, -32000, "Upstream timeout")
+            except Exception as exc:  # noqa: BLE001
+                logger.error("event=upstream_error upstream=%s error=%s", upstream_name, exc)
+                _METRICS["requests_total{outcome=upstream_error}"] += 1
+                return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
+
+
+# Methods that pass through without policy evaluation but carry data-exfil risk.
+# These emit an additional passthrough_data_leak_candidate audit event when
+# audit.flag_data_leak_passthrough is True (the default).
+_DATA_LEAK_PASSTHROUGH_METHODS = frozenset(
+    {
+        "prompts/get",
+        "resources/read",
+        "resources/subscribe",
+        "completion/complete",
+        "sampling/createMessage",
+    }
+)
+
+_MAX_PARAM_VALUE_LEN = 1024  # bound audit-row size for data-leak events
+
+
+def _truncate_params(params: Any) -> Any:
+    """Return params with string values longer than 1 KB replaced by a truncation marker."""
+    if not isinstance(params, dict):
+        return params
+    result: dict[str, Any] = {}
+    for k, v in params.items():
+        if isinstance(v, str) and len(v) > _MAX_PARAM_VALUE_LEN:
+            result[k] = f"<truncated {len(v)} chars>"
+        else:
+            result[k] = v
+    return result
 
 
 async def _handle_pass_through(
@@ -747,13 +869,32 @@ async def _handle_pass_through(
     if isinstance(upstream_response, JSONResponse):
         return upstream_response
 
+    method: str = body.get("method", "")
+
+    # For the 5 data-exfil-risk methods, emit an additional audit event so operators
+    # have visibility without needing to enable full policy evaluation for them.
+    if method in _DATA_LEAK_PASSTHROUGH_METHODS and cfg.audit.flag_data_leak_passthrough:
+        _emit(
+            state,
+            auth_ctx.scope,
+            "passthrough_data_leak_candidate",
+            {
+                "method": method,
+                "params": _truncate_params(body.get("params")),
+                "principal_id": auth_ctx.principal_id,
+                "scope": auth_ctx.scope,
+                "upstream": upstream_name,
+                "request_id": request_id,
+            },
+        )
+
     audit_event = _emit(
         state,
         auth_ctx.scope,
         "passthrough",
         {
             "upstream": upstream_name,
-            "method": body.get("method", ""),
+            "method": method,
             "principal_id": auth_ctx.principal_id,
             "request_id": request_id,
         },
