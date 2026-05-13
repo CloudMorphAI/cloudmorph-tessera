@@ -25,7 +25,10 @@ _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 class ListenConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    host: str = "0.0.0.0"  # noqa: S104
+    # v0.2.0 BREAKING CHANGE: default bind flipped to loopback for safer defaults.
+    # Existing deployments needing non-loopback exposure must set `listen.host: 0.0.0.0`
+    # in tessera.yaml or pass `--bind 0.0.0.0:8080` / set TESSERA_BIND_HOST=0.0.0.0.
+    host: str = "127.0.0.1"
     port: int = 8080
 
 
@@ -53,7 +56,7 @@ class PoliciesConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     dir: str = "/etc/tessera/policies"
-    reload: str = "watch"  # watch | sighup | none
+    reload: str = "watch"  # watch | none  (sighup declared in v0.1.x but unimplemented; removed in v0.2.0 docs)
     mode: PoliciesMode = PoliciesMode.log_only
     default_action: str = "block"
 

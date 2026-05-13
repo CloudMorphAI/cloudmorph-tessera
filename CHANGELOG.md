@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - UNRELEASED
+
+This entry tracks the in-progress v0.2.0 release. Tonight's overnight execution
+session landed a focused subset of the planned v0.2.0 work; the bulk of the
+release (AWS upstream embedding, semantic conditions, Infracost integration,
+Gemini policy authoring, intelligence client, license validation, full release
+prep) remains for follow-up sessions. See `1305.md` in the workspace root for
+the complete v0.2.0 task ledger and current status.
+
+### Breaking changes (landed tonight)
+
+- **Default bind address flipped from `0.0.0.0:8080` to `127.0.0.1:8080`**
+  (`tessera/config.py:ListenConfig.host`). Existing deployments needing
+  non-loopback exposure must explicitly set `listen.host: 0.0.0.0` in
+  `tessera.yaml`, pass `--bind 0.0.0.0:8080` to `tessera serve`, or set the
+  `TESSERA_BIND_HOST=0.0.0.0` environment variable. Rationale: defaulting to
+  `0.0.0.0` makes the proxy LAN-reachable on a fresh install of a
+  developer-laptop tool, which is unnecessary attack surface. (Per
+  1305.md A-4-1.)
+- **`install-claude-code` now refuses to overwrite** an existing
+  `mcpServers[upstream_name]` entry in `~/.claude.json` without `--upgrade`.
+  Re-running the command without `--upgrade` is now a hard error rather than
+  a silent overwrite. Matches the existing semantics of
+  `install-cursor-hooks --upgrade`. (Per 1305.md A-4-8.)
+
+### Documentation
+
+- **`docs/TROUBLESHOOTING.md`** issue 8 (bearer-token rejection) rewritten to
+  reference the actually-supported env vars (`TESSERA_BEARER_TOKENS`,
+  `TESSERA_BEARER_TOKENS_FILE`, `TESSERA_BEARER_TOKEN`) instead of the
+  non-existent `TESSERA_TOKEN_FILE`. (Per 1305.md A-4-7.)
+- **`docs/TROUBLESHOOTING.md`** issue 9 (upstream timeout) now references the
+  correct config field `upstreams[].timeout_seconds` (was `timeout_ms`,
+  which never existed). (Per 1305.md A-4-7.)
+- **`docs/INSTALL.md`** bind-mount cheatsheet now references the correct
+  non-root UID `10001` (was `1000`). (Per 1305.md A-4-7.)
+- **`docs/CONFIGURATION.md`** `policies.reload` field documentation removes
+  the unimplemented `sighup` option. Source-comment in
+  `tessera/config.py:PoliciesConfig.reload` updated accordingly. (Per
+  1305.md A-4-7.)
+
+### Version
+
+- `tessera/__init__.py:__version__` bumped to `"0.2.0"`. The PyPI publish
+  step (`twine upload`) and the GHCR tag push remain in the founder's
+  morning checklist; this commit only updates the source-of-truth version
+  string. (Per 1305.md A-10-6.)
+
+### Not yet landed (deferred to follow-up sessions)
+
+The complete v0.2.0 feature set per the plan in `1305.md` includes substantial
+work that requires verification against external services (AWS, Infracost,
+Gemini, Clerk) and content drafting that benefits from a dedicated session:
+
+- **A-1 series** — `mcp-proxy-for-aws` library embedding, `kind: aws_mcp`
+  upstream, end-to-end AWS-MCP routing, `INTEGRATIONS.md` AWS section.
+- **A-2 / A-3 series** — Clerk SSO for the management plane and JWT validator
+  mode for MCP traffic.
+- **A-4-2 / A-4-3 / A-4-5 / A-4-6 / A-4-9 / A-4-10** — engine `_action_verbs.yaml`
+  merge wiring, `policy test` default-action warning, `cursor_hooks.fail_closed`
+  config, `HashChain.restore_head` auto-call on startup, `BufferedSink` removal
+  from public exports, `pluggable.resolve()` runtime wiring.
+- **A-5 series** — seven new semantic condition types (`predicted_cost`,
+  `blast_radius`, `affected_resource_count`, `data_volume`,
+  `cumulative_spend_today`, plus reuse-documentation for
+  `time_of_day_outside` and `region_in`).
+- **A-6 series** — Infracost GraphQL client, AWS mapping shim, license-gated
+  extended mappings, `tessera pricing serve` CLI wrapper, pricing snapshot ID
+  in audit events.
+- **A-7 series** — Gemini policy-authoring CLI (`tessera policy author`,
+  `tessera analyze`), stub providers for Anthropic / OpenAI / Bedrock /
+  Azure OpenAI.
+- **A-8 series** — `tessera/intelligence/` client subsystem (catalog fetch,
+  Ed25519 signature verification, pack download, cache management, license
+  tier gating).
+- **A-9 series** — 5 new AWS-illustrative reference policies; migration of
+  7 vendor-specific policies to `tessera-intelligence/packs/vendor-mcp-protection/`
+  per OQ-3.
+- **A-10 series** — optional-dependency groups in `pyproject.toml`, Dockerfile
+  base-image SHA pinning + `[aws,gemini]` extras, multi-arch image verification,
+  README update with deterministic-positioning paragraph, `release.yml`
+  end-to-end run, PyPI + GHCR publish, Fargate task image-tag update.
+
 ## [0.1.1] - 2026-05-11
 
 ### Fixed

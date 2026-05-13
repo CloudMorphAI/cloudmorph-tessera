@@ -73,7 +73,7 @@ Dev mode is for local evaluation only.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `policies.dir` | path | `/etc/tessera/policies` | Policy YAML directory. `_`-prefixed files are config overlays, not policies. Overridden by `TESSERA_POLICY_DIR`. |
-| `policies.reload` | string | `watch` | Reload trigger: `watch` (fs watcher), `sighup`, or `none`. |
+| `policies.reload` | string | `watch` | Reload trigger: `watch` (filesystem watcher) or `none`. (`sighup` was declared in v0.1.x but unimplemented; removed from supported values in v0.2.0.) |
 | `policies.mode` | string | `log_only` | Enforcement mode. See [Three enforcement modes](#3-three-enforcement-modes). |
 | `policies.default_action` | string | `block` | Action when no policy matches in `enforcement` mode. No effect in `log_only` or `observation`. |
 

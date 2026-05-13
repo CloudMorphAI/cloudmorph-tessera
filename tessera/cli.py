@@ -517,6 +517,11 @@ def install_claude_code(
         "--claude-config",
         help="Override path to ~/.claude.json",
     ),
+    upgrade: bool = typer.Option(
+        False,
+        "--upgrade",
+        help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
 ) -> None:
     """Configure Claude Code to use Tessera as MCP proxy via ~/.claude.json."""
     # Detect config file
@@ -535,6 +540,15 @@ def install_claude_code(
         config = {}
 
     mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
+
+    # Per A-4-8: refuse to overwrite an existing entry unless --upgrade is passed.
+    if upstream_name in mcp_servers and not upgrade:
+        typer.echo(
+            f"ERROR: ~/.claude.json already has an mcpServers entry for '{upstream_name}'. "
+            "Pass --upgrade to replace it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     headers: dict[str, str] = {}
     if token:

@@ -89,7 +89,7 @@ curl -s http://localhost:8080/healthz | jq '.policy_state.errored'
 
 **Symptom.** All routes return 401; token is correct but Tessera rejects it.
 
-**Remediation.** Tessera loads tokens from the file pointed to by `TESSERA_TOKEN_FILE`. Confirm the file is mounted and readable inside the container, and that the token in the `Authorization` header exactly matches a line in that file (no trailing whitespace, no BOM). Format must be `Authorization: Bearer <token>` — scheme name is case-insensitive but the space and word `Bearer` are required. If using multiple tokens, each must appear on its own line. Rotate a compromised token by removing its line and sending SIGHUP (token reload is SIGHUP-safe).
+**Remediation.** Tessera loads tokens from one of three sources, in precedence order: `TESSERA_BEARER_TOKENS` (inline `name1:token1,name2:token2`), `TESSERA_BEARER_TOKENS_FILE` (YAML file with `tokens: [{name, token, scope?}]`), or `TESSERA_BEARER_TOKEN` (legacy single token). Confirm the file (or inline list) is reachable and that the token in the `Authorization` header exactly matches one of the configured tokens (no trailing whitespace, no BOM). Format must be `Authorization: Bearer <token>` — scheme name is case-insensitive but the space and word `Bearer` are required. Minimum token length is 16 characters after trimming. Rotate a compromised token by removing it from the configured source and restarting the process (policy reloads via watchdog; token reloads require restart).
 
 ```bash
 docker exec tessera cat /etc/tessera/tokens.txt | wc -l
@@ -101,7 +101,7 @@ docker exec tessera cat /etc/tessera/tokens.txt | wc -l
 
 **Symptom.** Requests return 502 or 504; audit log shows `upstream_error: connection refused` or `upstream_error: timeout`; `/healthz` is healthy.
 
-**Remediation.** Tessera acts as a proxy — a 502/504 means it reached your config but could not reach the upstream. Check `upstreams[].url` in `tessera.yaml` is correct and reachable from inside the container (DNS, network policy). Increase `upstreams[].timeout_ms` if the upstream is legitimately slow. For Docker Compose, ensure Tessera and the upstream share a network and use the service name as the hostname, not `localhost`.
+**Remediation.** Tessera acts as a proxy — a 502/504 means it reached your config but could not reach the upstream. Check `upstreams[].url` in `tessera.yaml` is correct and reachable from inside the container (DNS, network policy). Increase `upstreams[].timeout_seconds` if the upstream is legitimately slow. For Docker Compose, ensure Tessera and the upstream share a network and use the service name as the hostname, not `localhost`.
 
 ```bash
 docker exec tessera wget -qO- http://<upstream-host>:<port>/health
@@ -120,4 +120,4 @@ tessera config validate --config tessera.yaml
 tessera policy lint --policy-dir policies/
 ```
 
-Required top-level fields: `upstreams` (non-empty list), `auth.token_file` or `TESSERA_TOKEN_FILE` env var. All `upstreams[].url` values must be valid URLs.
+Required top-level fields: `upstreams` (non-empty list). Bearer tokens are required for non-loopback exposure and resolved from `TESSERA_BEARER_TOKENS`, `TESSERA_BEARER_TOKENS_FILE`, or `TESSERA_BEARER_TOKEN` (precedence order). All `upstreams[].url` values must be valid URLs.

@@ -120,7 +120,7 @@ docker run --rm -v tessera_audit:/data -v "$PWD/backup:/backup" \
   alpine tar czf /backup/audit-$(date +%Y%m%d).tar.gz -C /data .
 ```
 
-**Bind mount:** `-v "/srv/tessera/audit:/var/lib/tessera"` — host dir must be writable by UID 1000 (`chown 1000:1000`).
+**Bind mount:** `-v "/srv/tessera/audit:/var/lib/tessera"` — host dir must be writable by UID 10001 (`chown 10001:10001`).
 
 **Multi-token file:** `-v "$PWD/tokens.yaml:/etc/tessera/tokens.yaml:ro" -e TESSERA_BEARER_TOKENS_FILE="/etc/tessera/tokens.yaml"` — see `tokens.example.yaml` for format.
 
