@@ -47,6 +47,39 @@ Docker is the primary path for users running Tessera as a service. PyPI is the p
 
 ## 5-minute quickstart
 
+### Primary path: pip + Cursor
+
+```bash
+# Step 1: Install
+pipx install cloudmorph-tessera
+# or: pip install cloudmorph-tessera  (inside a venv)
+
+# Step 2: Scaffold
+tessera init
+# Creates tessera.yaml (mode: log_only), policies/, .env.example in current directory
+
+# Step 3: Start Tessera
+# Default bind is 0.0.0.0:8080; use --bind to restrict to loopback if preferred
+tessera serve --policy-dir ./policies --bind 127.0.0.1:8080
+# Tessera HTTP MCP server is now listening on http://localhost:8080
+
+# Step 4: Wire Cursor — see the "Wire up Cursor" section below
+
+# Step 5: Verify policy decisions were logged
+# The audit log is a SQLite file; check integrity with:
+tessera audit verify --audit-path /var/lib/tessera/audit.db --scope default
+# Adjust --audit-path if you changed audit.path in tessera.yaml
+
+# Step 6: When ready, switch to enforcement mode
+# Edit tessera.yaml: change mode: log_only -> mode: enforcement
+# Restart Tessera. Block decisions now fire.
+
+# IMPORTANT: If exposing Tessera beyond localhost, put it behind nginx/Caddy
+# with a rate-limit rule. Native rate limiting is on the v0.2 roadmap.
+```
+
+### Alternative path: Docker
+
 ```bash
 # Step 1: Pull
 docker pull ghcr.io/cloudmorphai/tessera:0.1.1
@@ -55,9 +88,7 @@ docker pull ghcr.io/cloudmorphai/tessera:0.1.1
 docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.1.1 tessera init --dir /out
 # Creates tessera.yaml (mode: log_only), policies/, .env.example
 
-# Step 3: Edit tessera.yaml — change upstreams[].url to your real MCP server URL
-
-# Step 4: Start Tessera (log_only by default — safe to try, nothing is blocked yet)
+# Step 3: Start Tessera (log_only by default — safe to try, nothing is blocked yet)
 docker run -d --name tessera \
   -p 8080:8080 \
   -v "$PWD/tessera.yaml:/etc/tessera/tessera.yaml:ro" \
@@ -66,26 +97,14 @@ docker run -d --name tessera \
   -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
   ghcr.io/cloudmorphai/tessera:0.1.1
 
-# Step 5: Wire your agent — add to ~/.cursor/mcp.json:
-# {
-#   "mcpServers": {
-#     "aws-via-tessera": {
-#       "url": "http://localhost:8080/mcp/aws",
-#       "headers": {"Authorization": "Bearer <your-token>"}
-#     }
-#   }
-# }
-# See docs/INTEGRATIONS.md for Claude Code, Claude Desktop, Windsurf.
+# Step 4: Wire Cursor — see the "Wire up Cursor" section below
 
-# Step 6: Verify a tool call was logged
+# Step 5: Verify a tool call was logged
 docker exec tessera tessera audit verify --scope default
 
-# Step 7: When ready, switch to enforcement
+# Step 6: When ready, switch to enforcement
 # Edit tessera.yaml: change mode: log_only -> mode: enforcement
 # Restart Tessera. Now block decisions fire.
-
-# IMPORTANT: If exposing Tessera beyond localhost, put it behind nginx/Caddy
-# with a rate-limit rule. Native rate limiting is on the v0.2 roadmap.
 ```
 
 ---
