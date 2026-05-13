@@ -20,6 +20,31 @@ AI agents calling MCP tools can delete production data, exfiltrate secrets, and 
 
 ---
 
+## Installation
+
+### Option 1: Docker (recommended for production)
+
+```bash
+docker pull ghcr.io/cloudmorphai/tessera:0.1.1
+```
+
+### Option 2: Python package (for local development and CLI use)
+
+```bash
+pip install cloudmorph-tessera
+```
+
+After install, verify:
+
+```bash
+tessera version
+# tessera 0.1.1
+```
+
+Docker is the primary path for users running Tessera as a service. PyPI is the path for users who want to author policies locally or run `tessera policy lint` / `tessera policy test` in CI.
+
+---
+
 ## 5-minute quickstart
 
 ```bash
