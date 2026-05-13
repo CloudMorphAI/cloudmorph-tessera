@@ -9,6 +9,10 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+# Alias used by new condition models — keeps them consistent with existing ones.
+_ConditionBase = BaseModel
+
+
 class Action(str, Enum):
     allow = "allow"
     block = "block"
@@ -128,6 +132,78 @@ class NoneOf(BaseCondition):
     conditions: list[ConditionType]
 
 
+# ── v0.2.0 semantic conditions ───────────────────────────────────────────────
+
+
+class PredictedCost(BaseCondition):
+    """Condition: estimated cost of the call exceeds (or is within) a USD threshold.
+
+    Requires a cost_backend and aws_mapping in the eval context.
+    Fail-closed on missing mapping or backend timeout (returns False = don't block).
+    """
+
+    condition: Literal["predicted_cost"] = "predicted_cost"
+    usd_threshold: float
+    band: Literal["high", "medium", "ceiling"] = "high"
+    operator: Literal["greater_than", "less_than", "between"] = "greater_than"
+    usd_threshold_upper: float | None = None  # for "between"
+
+    @model_validator(mode="after")
+    def _validate_between(self) -> PredictedCost:
+        if self.operator == "between" and self.usd_threshold_upper is None:
+            raise ValueError("predicted_cost with operator=between requires usd_threshold_upper")
+        return self
+
+
+class BlastRadius(BaseCondition):
+    """Condition: number of principals affected by an IAM/S3/KMS policy change.
+
+    Requires a blast_radius_backend in the eval context.
+    Fail-closed when backend is missing or raises (returns True = block on uncertainty).
+    """
+
+    condition: Literal["blast_radius"] = "blast_radius"
+    principal_count_threshold: int
+    account_scope: Literal["same_account", "cross_account", "any"] = "any"
+    resource_types: list[str] = Field(default_factory=list)
+    operator: Literal["greater_than", "less_than"] = "greater_than"
+
+
+class AffectedResourceCount(BaseCondition):
+    """Condition: count of items at a JMESPath within args exceeds a threshold.
+
+    Uses the jmespath library to navigate nested args structures.
+    """
+
+    condition: Literal["affected_resource_count"] = "affected_resource_count"
+    arg: str  # JMESPath expression applied to the tool call arguments
+    count_threshold: int
+    operator: Literal["greater_than", "less_than"] = "greater_than"
+
+
+class DataVolume(BaseCondition):
+    """Condition: estimated byte volume of the operation exceeds a threshold."""
+
+    condition: Literal["data_volume"] = "data_volume"
+    bytes_threshold: int
+    operator: Literal["greater_than", "less_than"] = "greater_than"
+    estimator: Literal["s3_get_byte_estimate", "rds_query_result_estimate", "static_arg_size"] = (
+        "static_arg_size"
+    )
+
+
+class CumulativeSpendToday(BaseCondition):
+    """Condition: cumulative USD spend for the calling scope today exceeds a threshold.
+
+    Requires a state_backend (DailySpendState) in the eval context.
+    Fail-closed on missing backend (returns False = don't block).
+    """
+
+    condition: Literal["cumulative_spend_today"] = "cumulative_spend_today"
+    usd_threshold: float
+    operator: Literal["greater_than", "less_than"] = "greater_than"
+
+
 # ── Discriminated union ──────────────────────────────────────────────────────
 
 ConditionType = Annotated[
@@ -146,7 +222,12 @@ ConditionType = Annotated[
     | TimeOfDayOutside
     | MetaFieldEquals
     | AnyOf
-    | NoneOf,
+    | NoneOf
+    | PredictedCost
+    | BlastRadius
+    | AffectedResourceCount
+    | DataVolume
+    | CumulativeSpendToday,
     Field(discriminator="condition"),
 ]
 
