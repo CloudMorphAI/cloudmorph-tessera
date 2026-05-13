@@ -12,13 +12,18 @@ requires-python = ">=3.12"
 authors = [
     {name = "CloudMorph AI", email = "oss@cloudmorph.io"},
 ]
-keywords = ["mcp", "firewall", "ai-agents", "policy", "audit"]
+keywords = ["mcp", "model-context-protocol", "firewall", "security", "policy-as-code", "ai-agents", "audit", "cursor", "claude-code"]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
+    "Topic :: System :: Networking :: Firewalls",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "fastapi==0.136.1",
@@ -62,6 +67,13 @@ runtime = [
 
 [project.scripts]
 tessera = "tessera.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/CloudMorphAI/cloudmorph-tessera"
+Repository = "https://github.com/CloudMorphAI/cloudmorph-tessera"
+Documentation = "https://cloudmorph.ai/docs"
+Changelog = "https://github.com/CloudMorphAI/cloudmorph-tessera/blob/main/CHANGELOG.md"
+Issues = "https://github.com/CloudMorphAI/cloudmorph-tessera/issues"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
