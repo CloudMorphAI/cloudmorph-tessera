@@ -9,6 +9,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -32,6 +33,10 @@ from tessera.policy.schema import Action
 from tessera import pluggable
 
 logger = logging.getLogger(__name__)
+
+# Pricing snapshot version — refreshed once per minute by a background task.
+# None when no Infracost backend is configured.
+_pricing_snapshot_id: str | None = None
 
 
 # ── Intent endpoint models ────────────────────────────────────────────────────
@@ -153,9 +158,6 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         sink_spec = os.environ.get("TESSERA_AUDIT_SINK")
         loader_spec = os.environ.get("TESSERA_POLICY_LOADER")
 
-        authenticator_cls = pluggable.resolve(
-            auth_spec or "", "tessera.auth.bearer:BearerTokenAuthenticator"
-        )
         sink_cls = pluggable.resolve(
             sink_spec or "", "tessera.audit.sinks.sqlite:SqliteSink"
         )
@@ -163,10 +165,49 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             loader_spec or "", "tessera.policy.loader:FilesystemPolicyLoader"
         )
 
-        # Auth
-        app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
-            deployment_id=cfg.deployment_id,
-        )
+        # Auth — dispatch on cfg.auth.type when no TESSERA_AUTHENTICATOR override is set
+        if auth_spec:
+            authenticator_cls = pluggable.resolve(auth_spec, "tessera.auth.bearer:BearerTokenAuthenticator")
+            app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
+                deployment_id=cfg.deployment_id,
+            )
+        elif cfg.auth.type == "jwt":
+            if not cfg.auth.jwt:
+                from tessera.errors import ConfigError as _CE
+                raise _CE("auth.type=jwt requires auth.jwt sub-block")
+            from tessera.auth.jwt_mcp import JWTAuthenticator
+            app.state.authenticator = JWTAuthenticator(
+                jwks_url=cfg.auth.jwt.jwks_url,
+                issuer=cfg.auth.jwt.issuer,
+                audience=cfg.auth.jwt.audience,
+                clock_skew_seconds=cfg.auth.jwt.clock_skew_seconds,
+                principal_claim=cfg.auth.jwt.principal_claim,
+                scope_claim=cfg.auth.jwt.scope_claim,
+                deployment_id=cfg.deployment_id,
+            )
+        else:
+            authenticator_cls = pluggable.resolve(
+                "", "tessera.auth.bearer:BearerTokenAuthenticator"
+            )
+            app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
+                deployment_id=cfg.deployment_id,
+            )
+
+        # Management-plane authenticator (reserved for future /app/* routes)
+        if cfg.auth.management_plane:
+            from tessera.auth.oidc import OIDCAuthenticator
+            mp = cfg.auth.management_plane
+            app.state.management_plane_authenticator = OIDCAuthenticator(
+                jwks_url=mp.jwks_url,
+                issuer=mp.issuer,
+                audience=mp.audience,
+                clock_skew_seconds=mp.clock_skew_seconds,
+                scope_claim=mp.scope_claim,
+                provider=mp.provider,
+                deployment_id=cfg.deployment_id,
+            )
+        else:
+            app.state.management_plane_authenticator = None
 
         # Audit sink
         audit_path = cfg.audit.path
@@ -267,6 +308,91 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     timeout=upstream.timeout_seconds,
                 )
 
+        # ── Optional: Infracost cost backend ─────────────────────────────────
+        infracost_url = os.environ.get("TESSERA_INFRACOST_URL")
+        if infracost_url:
+            try:
+                from tessera.cost.infracost import InfracostClient
+                from tessera.cost import aws_mapping as _aws_mapping_module
+                cost_client = InfracostClient(
+                    backend_url=infracost_url,
+                    api_key=os.environ.get("INFRACOST_API_KEY"),
+                )
+                app.state.cost_backend = cost_client
+                app.state.aws_mapping = _aws_mapping_module
+                logger.info("event=infracost_backend_initialized url=%s", infracost_url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("event=infracost_backend_init_failed error=%s", exc)
+                app.state.cost_backend = None
+                app.state.aws_mapping = None
+        else:
+            app.state.cost_backend = None
+            app.state.aws_mapping = None
+
+        # ── Optional: blast-radius backend ───────────────────────────────────
+        if os.environ.get("TESSERA_BLAST_RADIUS_ENABLED", "").lower() in ("1", "true", "yes"):
+            try:
+                from tessera.integrations.aws.blast_radius import BlastRadiusBackend
+                app.state.blast_radius_backend = BlastRadiusBackend()
+                logger.info("event=blast_radius_backend_initialized")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("event=blast_radius_backend_init_failed error=%s", exc)
+                app.state.blast_radius_backend = None
+        else:
+            app.state.blast_radius_backend = None
+
+        # ── State backend (cumulative spend) ──────────────────────────────────
+        try:
+            from tessera.state.daily_spend import DailySpendState
+            state_dir_env = os.environ.get("TESSERA_STATE_DIR")
+            state_dir = Path(state_dir_env) if state_dir_env else None
+            app.state.state_backend = DailySpendState(state_dir=state_dir)
+            logger.info("event=state_backend_initialized")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("event=state_backend_init_failed error=%s", exc)
+            app.state.state_backend = None
+
+        # ── Background task: refresh pricing snapshot id once per minute ─────
+        _pricing_refresh_task: asyncio.Task[None] | None = None
+        if app.state.cost_backend is not None:
+            async def _refresh_pricing_snapshot() -> None:
+                global _pricing_snapshot_id
+                while True:
+                    try:
+                        ver = await app.state.cost_backend.data_version()
+                        _pricing_snapshot_id = ver
+                    except Exception:  # noqa: BLE001
+                        pass
+                    await asyncio.sleep(60)
+
+            _pricing_refresh_task = asyncio.create_task(_refresh_pricing_snapshot())
+
+        # ── Optional: Intelligence client (pack downloads + license check) ────
+        app.state.intelligence_client = None
+        if cfg.intelligence.enabled:
+            try:
+                from tessera.intelligence.client import IntelligenceClient
+                from tessera.intelligence.license import LicenseValidator
+
+                # Load bundled public key for license verification
+                import importlib.resources as _ilr
+                _pub_key_pem = (_ilr.files("tessera.intelligence") / "public_key.pem").read_bytes()
+
+                _license_validator = LicenseValidator(
+                    config=cfg.intelligence,
+                    public_key_pem=_pub_key_pem,
+                )
+                intel_client = IntelligenceClient(
+                    config=cfg.intelligence,
+                    license_validator=_license_validator,
+                )
+                await intel_client.refresh()
+                await intel_client.start_refresh_task()
+                app.state.intelligence_client = intel_client
+                logger.info("event=intelligence_client_initialized")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("event=intelligence_client_init_failed error=%s", exc)
+
         # Emit startup audit event (use deployment scope)
         _get_or_create_emitter(app.state, cfg.deployment_id)
         _emit(
@@ -286,12 +412,27 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             yield
         finally:
             # ── Shutdown ─────────────────────────────────────────────────────
+            # Cancel pricing refresh task
+            if _pricing_refresh_task is not None:
+                _pricing_refresh_task.cancel()
+                try:
+                    await _pricing_refresh_task
+                except asyncio.CancelledError:
+                    pass
             # Close HTTP clients
             for client in getattr(app.state, "http_clients", {}).values():
                 await client.aclose()
             # Close AWS clients
             for aws_client in getattr(app.state, "aws_clients", {}).values():
                 await aws_client.__aexit__(None, None, None)
+            # Close Infracost client
+            cost_backend = getattr(app.state, "cost_backend", None)
+            if cost_backend is not None:
+                await cost_backend.aclose()
+            # Close state backend
+            state_bk = getattr(app.state, "state_backend", None)
+            if state_bk is not None:
+                state_bk.close()
             # Close audit sink
             sink = getattr(app.state, "sink", None)
             if sink is not None:
@@ -469,6 +610,22 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return JSONResponse(resp_body)
 
         # Step 6 — Build context
+        # Pre-fetch cost estimate for predicted_cost condition (async → sync bridge)
+        cost_cache: dict[str, float] = {}
+        cost_backend = getattr(app.state, "cost_backend", None)
+        aws_mapping_mod = getattr(app.state, "aws_mapping", None)
+        if cost_backend is not None and aws_mapping_mod is not None:
+            query = aws_mapping_mod.map_request(tool_name, arguments)
+            if query is not None:
+                try:
+                    sku_result = await cost_backend.query_sku(
+                        query.service, query.region, query.attributes
+                    )
+                    if sku_result is not None:
+                        cost_cache[tool_name] = sku_result.usd_per_unit
+                except Exception:  # noqa: BLE001
+                    pass
+
         context: dict[str, Any] = {
             "tool_call": {"name": tool_name, "arguments": arguments, "_meta": meta},
             "intent": intent,
@@ -476,6 +633,12 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             "runtime": {"lockdown": cfg.runtime.lockdown},
             "mode": cfg.policies.mode.value,
             "policy_id": None,
+            "scope": auth_ctx.scope,
+            "cost_backend": cost_backend,
+            "cost_cache": cost_cache,
+            "aws_mapping": aws_mapping_mod,
+            "blast_radius_backend": getattr(app.state, "blast_radius_backend", None),
+            "state_backend": getattr(app.state, "state_backend", None),
         }
 
         # Step 7 — Lockdown check (before mode branch)
@@ -761,10 +924,17 @@ def _get_or_create_emitter(state: Any, scope: str) -> AuditEmitter:
 
 
 def _emit(state: Any, scope: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Emit an audit event for the given scope. Swallows sink errors."""
+    """Emit an audit event for the given scope. Swallows sink errors.
+
+    Automatically attaches the current pricing_snapshot_id when available.
+    """
     emitter = _get_or_create_emitter(state, scope)
     try:
-        return emitter.emit(event_type, payload=payload)
+        return emitter.emit(
+            event_type,
+            payload=payload,
+            pricing_snapshot_id=_pricing_snapshot_id,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("event=audit_emit_failed scope=%s error=%s", scope, exc)
         _METRICS["audit_emit_failures_total"] += 1
