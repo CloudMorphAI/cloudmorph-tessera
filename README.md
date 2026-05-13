@@ -6,10 +6,11 @@
 
 **See Tessera block a destructive Cursor action in 60 seconds → [cursor-hooks recipe](recipes/cursor-hooks.md)**
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.12-blue.svg)](pyproject.toml)
+[![PyPI version](https://img.shields.io/pypi/v/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
+[![Python versions](https://img.shields.io/pypi/pyversions/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/CloudMorphAI/cloudmorph-tessera/blob/main/LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fcloudmorphai%2Ftessera-blue.svg)](https://ghcr.io/cloudmorphai/tessera)
-[![Docker Pulls](https://img.shields.io/docker/pulls/cloudmorphai/tessera?label=Docker+Pulls)](https://ghcr.io/cloudmorphai/tessera)
+[![Docker pulls](https://img.shields.io/docker/pulls/cloudmorphai/tessera.svg)](https://github.com/CloudMorphAI/cloudmorph-tessera/pkgs/container/tessera)
 
 ---
 
