@@ -106,6 +106,38 @@ docker exec tessera tessera audit verify --scope default
 
 ---
 
+## Policy Catalog
+
+Tessera v0.1.1 ships **14 reference policies** out of the box. Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork.
+
+### Generic (7)
+
+| Policy | Effect |
+|---|---|
+| `prod-protection.yaml` | Block destructive write operations when targeting production resources (env=production/prod or resource name matching `prod-*`) |
+| `secret-leak-block.yaml` | Block tool calls where arguments appear to contain API keys or tokens |
+| `pii-block.yaml` | Block tool calls with arguments matching PII patterns (SSN, credit card numbers) |
+| `cost-cap.yaml` | Block tool calls that exceed per-request cost thresholds |
+| `read-only-mode.yaml` | Allow only read operations; block everything else |
+| `write-action-approval.yaml` | Require human approval for all write and delete operations |
+| `data-residency-eu.yaml` | Ensure data operations stay within EU regions |
+
+### Vendor-specific MCP server policies (7)
+
+| Policy | Effect |
+|---|---|
+| `github-mcp-protection.yaml` | Block destructive GitHub MCP operations on protected branches or production repos (repo deletion, force-push, branch deletion) |
+| `jira-mcp-protection.yaml` | Block Jira MCP operations on security-critical tickets and guard against the August 2025 Cursor+Jira `_meta` smuggling attack pattern |
+| `postgres-mcp-protection.yaml` | Block Postgres MCP `DROP`, `TRUNCATE`, and `ALTER` operations on critical tables |
+| `salesforce-mcp-protection.yaml` | Require approval for Salesforce MCP delete and update operations on production org IDs |
+| `slack-mcp-protection.yaml` | Block Slack MCP messages to public channels containing sensitive content (PII, secrets, API keys) |
+| `owasp-mcp-prompt-injection.yaml` | Block tool calls whose arguments contain prompt-injection patterns flagged by OWASP MCP Top 10 |
+| `owasp-mcp-tool-poisoning.yaml` | Block tool calls whose name matches known impostor namespaces or typo-squatting patterns flagged by OWASP MCP Top 10 |
+
+See [`policies/README.md`](policies/README.md) for the full schema and authoring guide.
+
+---
+
 ## How it works
 
 ```
