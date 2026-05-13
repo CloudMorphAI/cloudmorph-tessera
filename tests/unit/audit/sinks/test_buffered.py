@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from tessera.audit.sinks.buffered import BufferedSink
+from tessera.audit.sinks._buffered import BufferedSink
 
 
 class _AlwaysOkSink:
