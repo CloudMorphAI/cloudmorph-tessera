@@ -26,6 +26,28 @@ This entry tracks the in-progress v0.2.0 release.
 
 ### Features
 
+- **Management-plane SSO via Clerk (OIDC)** — per OQ-2. `OIDCAuthenticator`
+  (`tessera/auth/oidc.py`) validates JWT bearer tokens against a JWKS endpoint
+  with configurable TTL-based key caching and auto-re-fetch on unknown `kid`.
+  Configured under `auth.management_plane` in `tessera.yaml`. Supports Clerk,
+  Auth0, Cognito, and any custom OIDC provider. Exposed as
+  `app.state.management_plane_authenticator` at startup; reserved for
+  `/app/*` routes in v0.2.x. (A-2-1, A-2-2.)
+- **JWT validator mode for MCP traffic** (`tessera/auth/jwt_mcp.py`). Set
+  `auth.type: jwt` to authenticate MCP client requests with signed JWTs
+  (Entra, Okta, Cognito). Shared JWKS validation logic extracted to
+  `tessera/auth/_jwks.py`. `principal_claim` (default `sub`) and `scope_claim`
+  (default `scope`) are configurable. Requires `pip install
+  "cloudmorph-tessera[oidc]"`. (A-3-1.)
+- **Reference policy split (OQ-3)**: 7 vendor-specific policies migrated to
+  `tessera-intelligence/packs/vendor-mcp-protection/`. OSS repo now retains 7
+  generic policies + 5 new AWS-illustrative examples = 12 total. (A-9-1.)
+- **5 AWS-illustrative reference policies** (`policies/aws-*-EXAMPLE.yaml`):
+  `aws-ec2-cost-cap-EXAMPLE`, `aws-iam-blast-radius-EXAMPLE`,
+  `aws-region-allowlist-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`,
+  `aws-bedrock-cost-ceiling-EXAMPLE`. Illustrate `predicted_cost`,
+  `blast_radius`, `cumulative_spend_today` semantic conditions (full
+  implementation in Tessera Cloud `aws-cost-aware-defaults` pack). (A-9-2.)
 - **`kind: aws_mcp` upstream** (`tessera/integrations/aws/upstream.py`). AWS
   IAM-signed MCP server routing via `mcp-proxy-for-aws`. Configure with
   `kind: aws_mcp`, `aws_region`, and optionally `aws_service` /
@@ -78,6 +100,17 @@ This entry tracks the in-progress v0.2.0 release.
 
 ### Documentation
 
+- **`docs/CONFIGURATION.md`** — new "## 9. Management-plane SSO" section with
+  Clerk, Auth0, and Cognito config examples; Bearer-vs-OIDC decision matrix.
+  New "## 10. MCP traffic JWT mode" section with Entra, Okta, and Cognito
+  config snippets. (A-2-4, A-3-3.)
+- **`policies/README.md`** — rewritten for v0.2.0 catalog (12 policies: 7
+  generic + 5 AWS-illustrative). Mentions vendor-7 migration to premium pack.
+  (A-9-3.)
+- **`README.md`** — rewritten with deterministic-positioning hero paragraph
+  ("the deterministic cost and blast-radius firewall for AI agents on AWS"),
+  "What's New in v0.2.0" section, and AWS Quickstart with `tessera.yaml` sample.
+  Policy catalog updated from 14 to 12 (vendor-7 → premium pack). (A-10-5.)
 - **`docs/INTEGRATIONS.md`** — new "## AWS MCP Server" section with `kind:
   aws_mcp` config block, boto3 chain explanation, and AWS Activate link.
   (A-1-5.)
@@ -97,10 +130,18 @@ This entry tracks the in-progress v0.2.0 release.
 
 - `tessera/__init__.py:__version__` bumped to `"0.2.0"`. (A-10-6.)
 
+### CI / Build
+
+- **Dockerfile** base image pinned to SHA-256 digest for reproducible builds.
+  `pip install` now installs `[aws,gemini,oidc,intelligence,infracost]` extras
+  by default. `TODO(FOUNDER)` block removed. (A-10-2.)
+- **`release.yml`** multi-arch `linux/amd64,linux/arm64` buildx added to the
+  `sign` job. `docker/setup-qemu-action@v3` and `docker/setup-buildx-action@v3`
+  were already present; `platforms` added to `build-push-action`. SBOM job uses
+  `cyclonedx-bom==7.3.0`. Attest job uses `cosign attest`. (A-10-3, A-10-7.)
+
 ### Not yet landed (deferred to follow-up sessions)
 
-- **A-2 / A-3 series** — Clerk SSO for the management plane and JWT validator
-  mode for MCP traffic.
 - **A-5 series** — seven new semantic condition types (`predicted_cost`,
   `blast_radius`, `affected_resource_count`, `data_volume`,
   `cumulative_spend_today`, plus `time_of_day_outside` and `region_in`
