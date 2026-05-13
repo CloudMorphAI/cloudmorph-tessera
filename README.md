@@ -1,5 +1,7 @@
 # Tessera
 
+<!-- mcp-name: io.github.CloudMorphAI/tessera -->
+
 **The open-source MCP firewall for AI agents**
 
 **See Tessera block a destructive Cursor action in 60 seconds → [cursor-hooks recipe](recipes/cursor-hooks.md)**
