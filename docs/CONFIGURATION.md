@@ -15,6 +15,7 @@ schema at `schemas/config.schema.json`.
 5. [Lockdown kill switch](#5-lockdown-kill-switch)
 6. [Metrics endpoint](#6-metrics-endpoint)
 7. [Precedence rules](#7-precedence-rules)
+8. [Pluggable backends](#8-pluggable-backends)
 
 ---
 
@@ -299,5 +300,42 @@ Policies are evaluated in descending `priority` order (highest first). Ties brok
 by `id`. First match wins; no-match falls through to `policies.default_action` in enforcement mode.
 
 ---
+
+---
+
+## 8. Pluggable backends
+
+Tessera's authenticator, audit sink, and policy loader are all pluggable via
+environment variables. Each accepts a `module.path:ClassName` string resolved
+at startup by `tessera/pluggable.py`.
+
+| Env var | Default | Protocol |
+|---|---|---|
+| `TESSERA_AUTHENTICATOR` | `tessera.auth.bearer:BearerTokenAuthenticator` | `Authenticator` |
+| `TESSERA_AUDIT_SINK` | `tessera.audit.sinks.sqlite:SqliteSink` | `AuditSink` |
+| `TESSERA_POLICY_LOADER` | `tessera.policy.loader:FilesystemPolicyLoader` | `PolicyLoader` |
+
+The class is imported with `importlib.import_module` and instantiated with the
+same keyword arguments as the default class. A `ConfigError` (exit 2) is raised
+if the module cannot be imported or the attribute is missing.
+
+### Example: custom audit sink
+
+```bash
+export TESSERA_AUDIT_SINK=mypackage.sinks:PostgresSink
+tessera serve --config tessera.yaml
+```
+
+The `PostgresSink` class must implement the `AuditSink` protocol
+(`emit`, `close`, `head_hash`, `iter_events`, `iter_scopes`).
+
+### Example: test stub loader
+
+```bash
+export TESSERA_POLICY_LOADER=tests.fakes:FakePolicyLoader
+pytest tests/integration/
+```
+
+This is useful in CI to start the proxy without a real policies directory.
 
 *For policy authoring, see `docs/POLICIES.md`. For audit chain details, see `docs/AUDIT.md`.*
