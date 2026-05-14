@@ -4,6 +4,14 @@
 
 [project]
 name = "cloudmorph-tessera"
+# BEFORE TAGGING — bump the version in ALL of these places (stale version in
+# README renders on GitHub + PyPI project page and customers copy-paste the
+# wrong image tag):
+#   1. This line (version below)
+#   2. tessera/__init__.py (__version__)
+#   3. README.md — `tessera:<old>` → `tessera:<new>` AND `tessera <old>` → `tessera <new>`
+#   4. docs/INSTALL.md — same search & replace
+#   5. CHANGELOG.md — add a new section
 version = "0.2.0"
 description = "The open-source MCP firewall for AI agents"
 readme = "README.md"
