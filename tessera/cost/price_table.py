@@ -29,6 +29,7 @@ sub-millisecond lookups by turning the ``params`` dict into a frozenset of
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 from dataclasses import dataclass
@@ -37,10 +38,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Hard cap on subset enumeration to keep the fallback path bounded. With
+# typical 4-6 args per tool call this is comfortable; if a caller passes
+# more we skip Tier 2 and fall through to the Tier 3 wildcard.
+_SUBSET_MATCH_MAX_ARGS = 10
+
 # ── Index key type ────────────────────────────────────────────────────────────
 
 # Keyed (operation, realm, frozenset-of-param-pairs) → price_usd
-_IndexKey = tuple[str, str, frozenset]
+_IndexKey = tuple[str, str, frozenset[tuple[str, str]]]
 
 
 @dataclass(frozen=True)
@@ -166,23 +172,26 @@ class PriceTable:
                 confidence="exact",
             )
 
-        # --- Tier 2: subset matches (drop keys one at a time, longest match wins) ---
-        # Try all sub-frozensets in descending order of length
+        # --- Tier 2: subset matches (longest first) ---
+        # Enumerate all subsets of caller args in descending size order and
+        # return the first that maps to an indexed entry. Bounded by
+        # _SUBSET_MATCH_MAX_ARGS so a pathological 20-arg call doesn't
+        # explode the 2^N enumeration; above the cap we drop straight to
+        # the Tier 3 wildcard.
         items = list(norm_args.items())
-        for drop_count in range(1, len(items) + 1):
-            for i in range(len(items)):
-                subset = frozenset(items[:i] + items[i + 1:i + drop_count + 1 - drop_count] +
-                                   items[i + drop_count:])
-                sub_key: _IndexKey = (operation, realm, subset)
-                hit = self._index.get(sub_key)
-                if hit is not None:
-                    return CostEstimate(
-                        operation=operation,
-                        price_usd=hit[0],
-                        realm=realm,
-                        matched_params=hit[1],
-                        confidence="interpolated",
-                    )
+        if 1 <= len(items) <= _SUBSET_MATCH_MAX_ARGS:
+            for size in range(len(items) - 1, 0, -1):
+                for combo in itertools.combinations(items, size):
+                    sub_key: _IndexKey = (operation, realm, frozenset(combo))
+                    hit = self._index.get(sub_key)
+                    if hit is not None:
+                        return CostEstimate(
+                            operation=operation,
+                            price_usd=hit[0],
+                            realm=realm,
+                            matched_params=hit[1],
+                            confidence="interpolated",
+                        )
 
         # --- Tier 3: wildcard (empty params) ---
         wildcard_key: _IndexKey = (operation, realm, frozenset())

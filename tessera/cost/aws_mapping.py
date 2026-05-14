@@ -7,11 +7,12 @@ Extended/premium mappings can be loaded at runtime from a YAML cache directory.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -162,10 +163,12 @@ def _map_ec2_create_nat_gateway(tool_name: str, args: dict[str, Any]) -> Infraco
 
 
 def _map_ebs_create_volume(tool_name: str, args: dict[str, Any]) -> InfracostQuery | None:
+    # NB: Size + Iops are not Infracost attribute filters for EBS — they are
+    # usage multipliers applied to a per-GB-month / per-IOPS-month SKU. We
+    # advertise them in args_used (so the operator-facing audit log records
+    # them) but they do not enter the SKU lookup.
     region = _get_region(args)
     volume_type = str(args.get("VolumeType", args.get("volumeType", "gp3")))
-    size = str(args.get("Size", args.get("size", 20)))
-    iops = str(args.get("Iops", args.get("iops", 3000)))
     attrs: dict[str, str] = {
         "volumeApiName": volume_type,
         "storageMedia": "SSD-backed",

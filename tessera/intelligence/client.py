@@ -23,8 +23,8 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 if TYPE_CHECKING:
     from tessera.config import IntelligenceConfig
-    from tessera.intelligence.license import LicenseValidator, LicenseStatus
     from tessera.cost.price_table import PriceTable
+    from tessera.intelligence.license import LicenseStatus, LicenseValidator
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +65,9 @@ class IntelligenceClient:
         self._cache_dir = Path(config.cache_dir).expanduser()
         self._refresh_lock = asyncio.Lock()
         self._last_refresh: float = 0.0
-        self._refresh_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        self._refresh_task: asyncio.Task[None] | None = None
         # Populated by refresh() when a price-table artifact is present in the cache.
-        self._price_tables: dict[str, Any] = {}  # provider → PriceTable
+        self._price_tables: dict[str, PriceTable] = {}  # provider → PriceTable
 
     # ── Public key ────────────────────────────────────────────────────────────
 
@@ -108,7 +108,7 @@ class IntelligenceClient:
 
     # ── Catalog parsing ───────────────────────────────────────────────────────
 
-    def _parse_catalog(self, catalog_data: dict, kind: str = "pack") -> list[PackManifest]:
+    def _parse_catalog(self, catalog_data: dict[str, Any], kind: str = "pack") -> list[PackManifest]:
         """Parse a catalog JSON body into PackManifest list."""
         manifests: list[PackManifest] = []
         items = catalog_data.get("packs" if kind == "pack" else "mappings", [])
@@ -166,7 +166,7 @@ class IntelligenceClient:
         if tarball_sha256:
             try:
                 self._verify_tarball_hash(raw, tarball_sha256)
-            except Exception as exc:  # noqa: BLE001 — TamperDetected re-raised as log+skip
+            except Exception as exc:  # noqa: BLE001 — log + skip on TamperDetected
                 logger.error(
                     "event=tarball_hash_mismatch name=%s error=%s",
                     manifest.name, exc,
@@ -219,7 +219,27 @@ class IntelligenceClient:
             packs_downloaded = 0
             mappings_downloaded = 0
 
-            async with httpx.AsyncClient(timeout=30) as client:
+            # Step 0: Resolve license JWT for CDN tier-gating.
+            # The CDN's CloudFront Function reads `X-Tessera-License` and
+            # rejects with 401 when absent. Per status/intelligence-and-licensing.md
+            # the JWT must accompany every fetch.
+            current_tier = "free"
+            license_jwt: str | None = None
+            if self._license is not None:
+                try:
+                    license_status: LicenseStatus = await self._license.check()
+                    current_tier = license_status.tier
+                    license_jwt = license_status.jwt
+                except Exception as exc:  # noqa: BLE001
+                    if self._config.fail_closed_on_license_check:
+                        raise ValueError(f"License check failed (fail_closed=True): {exc}") from exc
+                    logger.warning("event=license_check_failed_fallback error=%s", exc)
+
+            cdn_headers: dict[str, str] = (
+                {"X-Tessera-License": license_jwt} if license_jwt else {}
+            )
+
+            async with httpx.AsyncClient(timeout=30, headers=cdn_headers) as client:
                 # Step 1: Fetch catalogs
                 try:
                     catalog_resp = await client.get(self._config.catalog_url)
@@ -258,18 +278,7 @@ class IntelligenceClient:
                     except Exception as exc:  # noqa: BLE001
                         raise ValueError(f"Mapping catalog signature invalid: {exc}") from exc
 
-                # Step 3: Get current tier
-                current_tier = "free"
-                if self._license is not None:
-                    try:
-                        license_status: LicenseStatus = await self._license.check()
-                        current_tier = license_status.tier
-                    except Exception as exc:  # noqa: BLE001
-                        if self._config.fail_closed_on_license_check:
-                            raise ValueError(f"License check failed (fail_closed=True): {exc}") from exc
-                        logger.warning("event=license_check_failed_fallback error=%s", exc)
-
-                # Step 4: Download eligible packs
+                # Step 3: Download eligible packs (license JWT is on the client headers)
                 packs_dir = self._cache_dir / "packs"
                 packs_dir.mkdir(parents=True, exist_ok=True)
                 pack_manifests = self._parse_catalog(catalog_data, kind="pack")
@@ -285,7 +294,7 @@ class IntelligenceClient:
                     else:
                         errors.append(f"Pack download failed: {manifest.name}")
 
-                # Step 5: Download eligible mappings
+                # Step 4: Download eligible mappings (same authenticated client)
                 mappings_dir = self._cache_dir / "mappings"
                 mappings_dir.mkdir(parents=True, exist_ok=True)
                 mapping_manifests = self._parse_catalog(mapping_data, kind="mapping")
@@ -367,9 +376,9 @@ class IntelligenceClient:
 
     # ── Public price-table accessor ───────────────────────────────────────────
 
-    def get_price_table(self, provider: str = "aws") -> "PriceTable | None":
+    def get_price_table(self, provider: str = "aws") -> PriceTable | None:
         """Return the loaded price-table for a provider, or None if not yet refreshed."""
-        return self._price_tables.get(provider)  # type: ignore[return-value]
+        return self._price_tables.get(provider)
 
     # ── Cache accessors ───────────────────────────────────────────────────────
 

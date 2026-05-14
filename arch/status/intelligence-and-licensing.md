@@ -74,7 +74,7 @@ Refresh cadence is set by `intelligence.refresh_interval_hours` (default 24). Th
 
 `tessera/intelligence/license.py:LicenseValidator` is consulted at refresh time to determine the customer's tier. It reads `TESSERA_LICENSE_KEY` from the environment (env var name configurable via `intelligence.license_key_env`), posts it to the license server at `intelligence.license_check_url` (default `https://license.tessera.cloudmorph.ai/v1/check`), and gets back a JSON response with a `token` field carrying a signed JWT.
 
-The JWT is Ed25519-verified using the bundled public key (the same key that signs intelligence content — one keypair covers both). The claims extracted: `tier`, `exp`, `seats`, `customer_id`. Tier must be in the known set or it falls back to `free`. Expiry is enforced against `time.time()`.
+The JWT is Ed25519-verified using the bundled public key (the same key that signs intelligence content — one keypair covers both). The claims extracted: `tier`, `exp`, `seats`, `customer_id`. Tier must be in the known set or it falls back to `free`. Expiry is enforced against `time.time()`. The raw JWT string is retained on `LicenseStatus.jwt` so `IntelligenceClient.refresh()` can forward it to the CDN under `X-Tessera-License`; without that forwarding the CloudFront Function returns 401 on every catalog and pack fetch.
 
 The fallback path is the durability story for spotty connectivity:
 

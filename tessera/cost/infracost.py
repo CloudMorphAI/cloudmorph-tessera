@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from gql import Client, gql
@@ -115,7 +115,7 @@ class InfracostClient:
                 ),
                 timeout=self._timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except Exception:  # noqa: BLE001
             return None
@@ -169,6 +169,6 @@ class InfracostClient:
     async def aclose(self) -> None:
         """Close the underlying GQL client transport."""
         try:
-            await self._client.close_async()
+            await self._client.close_async()  # type: ignore[no-untyped-call]
         except Exception:  # noqa: BLE001
             pass

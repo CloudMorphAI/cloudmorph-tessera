@@ -17,11 +17,11 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     """Lazy import of gql-dependent symbols to avoid ImportError at package import time."""
     if name in ("InfracostClient", "SkuResult", "CostBackendError"):
         from tessera.cost.infracost import CostBackendError, InfracostClient, SkuResult  # noqa: PLC0415
-        _symbols = {
+        _symbols: dict[str, object] = {
             "InfracostClient": InfracostClient,
             "SkuResult": SkuResult,
             "CostBackendError": CostBackendError,

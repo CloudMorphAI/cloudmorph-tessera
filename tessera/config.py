@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from tessera.errors import ConfigError

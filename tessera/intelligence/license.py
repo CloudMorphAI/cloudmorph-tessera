@@ -11,9 +11,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 
@@ -34,6 +34,11 @@ class LicenseStatus:
     seats: int
     customer_id: str | None
     from_cache: bool
+    # Raw signed JWT returned by the license server. Forwarded to the CDN under
+    # `X-Tessera-License` so the CloudFront tier-gating Function can read the
+    # tier claim. None when the validator could not reach the license server or
+    # when running unlicensed (`free` tier).
+    jwt: str | None = None
 
 
 class LicenseValidator:
@@ -80,11 +85,12 @@ class LicenseValidator:
             expires_raw = data.get("expires_at")
             expires_at = datetime.fromisoformat(expires_raw) if expires_raw else None
             status = LicenseStatus(
-                tier=tier,  # type: ignore[arg-type]
+                tier=tier,
                 expires_at=expires_at,
                 seats=int(data.get("seats", 1)),
                 customer_id=data.get("customer_id"),
                 from_cache=True,
+                jwt=data.get("jwt"),
             )
             return status, ts
         except Exception as exc:  # noqa: BLE001
@@ -93,19 +99,20 @@ class LicenseValidator:
 
     def _persist_cache(self, status: LicenseStatus, ts: float) -> None:
         """Persist license status to disk."""
-        data: dict = {
+        data: dict[str, Any] = {
             "tier": status.tier,
             "expires_at": status.expires_at.isoformat() if status.expires_at else None,
             "seats": status.seats,
             "customer_id": status.customer_id,
             "cached_at": ts,
+            "jwt": status.jwt,
         }
         try:
             self._cache_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
             logger.warning("event=license_cache_write_failed path=%s error=%s", self._cache_path, exc)
 
-    def _verify_response(self, response_data: dict) -> LicenseStatus:
+    def _verify_response(self, response_data: dict[str, Any]) -> LicenseStatus:
         """Parse and validate the license server response.
 
         The server returns a JSON body with tier, expires_at, seats, customer_id.
@@ -115,9 +122,9 @@ class LicenseValidator:
         if jwt_token:
             # Verify Ed25519 JWT signature using python-jose if available, else manual
             try:
-                from jose import jwt as jose_jwt
-                from cryptography.hazmat.primitives.serialization import load_pem_public_key
                 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                from cryptography.hazmat.primitives.serialization import load_pem_public_key
+                from jose import jwt as jose_jwt  # type: ignore[import-untyped]
 
                 pub_key = load_pem_public_key(self._public_key_pem)
                 assert isinstance(pub_key, Ed25519PublicKey)
@@ -138,7 +145,7 @@ class LicenseValidator:
                 tier = claims.get("tier", response_data.get("tier", "free"))
                 expires_at_ts = claims.get("exp")
                 expires_at = (
-                    datetime.fromtimestamp(expires_at_ts, tz=timezone.utc)
+                    datetime.fromtimestamp(expires_at_ts, tz=UTC)
                     if expires_at_ts
                     else None
                 )
@@ -162,11 +169,12 @@ class LicenseValidator:
             tier = "free"
 
         return LicenseStatus(
-            tier=tier,  # type: ignore[arg-type]
+            tier=tier,
             expires_at=expires_at,
             seats=seats,
             customer_id=customer_id,
             from_cache=False,
+            jwt=jwt_token,
         )
 
     async def check(self, force: bool = False) -> LicenseStatus:
@@ -182,9 +190,12 @@ class LicenseValidator:
         now = time.time()
 
         # Return in-memory cache if fresh
-        if not force and self._in_memory_cache is not None:
-            if now - self._in_memory_ts < self._CACHE_TTL_SECONDS:
-                return self._in_memory_cache
+        if (
+            not force
+            and self._in_memory_cache is not None
+            and now - self._in_memory_ts < self._CACHE_TTL_SECONDS
+        ):
+            return self._in_memory_cache
 
         # Try license server
         try:
