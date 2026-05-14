@@ -130,16 +130,28 @@ Both JWT-validating authenticators share a single `JWKSCache` implementation. Ca
 
 ## Resource Server surface — what's implemented
 
-### Shipped endpoints
+`tessera/auth/oauth_rs.py` registers all four endpoints via `make_metadata_route(app)` in `proxy.create_app()`.
 
-`tessera/auth/oauth_rs.py` registers two endpoints via `make_metadata_route(app)` in `proxy.create_app()`:
+### Endpoints
 
-- `GET /.well-known/oauth-protected-resource` — returns an RFC 9728 metadata document. Fields: `resource` (read from `TESSERA_OAUTH_RESOURCE_URL`), `authorization_servers` (read from `cfg.auth.jwt.issuer` or `cfg.auth.management_plane.issuer`; falls back to `TESSERA_OAUTH_AUTHORIZATION_SERVER`), `scopes_supported: ["tessera:proxy", "tessera:admin", "tessera:audit:read"]`, `bearer_methods_supported: ["header"]`, `resource_documentation`. This satisfies the discoverability requirement for OAuth 2.1 protected resources per RFC 9728.
-- `GET /.well-known/jwks.json` — stub that returns `{"keys": []}`. Tessera does not currently issue tokens and has no signing keys to publish; the endpoint exists for forward-compatibility with OAuth 2.1 validators that require the JWKS discovery surface. It will be populated if/when Tessera gains a token-issuance path (e.g., signed audit receipts).
+- `GET /.well-known/oauth-protected-resource` — RFC 9728 metadata document. Fields: `resource` (read from `TESSERA_OAUTH_RESOURCE_URL`), `authorization_servers` (read from `cfg.auth.jwt.issuer` or `cfg.auth.management_plane.issuer`; falls back to `TESSERA_OAUTH_AUTHORIZATION_SERVER`), `scopes_supported: ["tessera:proxy", "tessera:admin", "tessera:audit:read"]`, `bearer_methods_supported: ["header"]`, `resource_documentation`. Satisfies the discoverability requirement for OAuth 2.1 protected resources per RFC 9728.
+- `GET /.well-known/jwks.json` — stub that returns `{"keys": []}`. Tessera does not currently issue tokens and has no signing keys to publish; the endpoint exists for forward-compatibility with OAuth 2.1 validators that require the JWKS discovery surface. Will be populated if/when Tessera gains a token-issuance path (e.g., signed audit receipts).
+- `POST /register` — RFC 7591 Dynamic Client Registration proxy. Tessera does not issue its own client credentials; it forwards DCR requests transparently to the upstream AS configured via `TESSERA_OAUTH_AS_REGISTRATION_URL`. Returns `503 {"error":"server_error","error_description":"DCR proxy not configured"}` when the env var is unset. Returns `502` on upstream timeout or 5xx. Logs a structured `event=oauth_dcr_proxy_call` event on every call. See [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591).
+- `POST /introspect` — RFC 7662 Token Introspection. Accepts form-encoded `token=<jwt>` and returns `{"active": true, <claims>}` or `{"active": false}`. Requires HTTP Basic auth validated against `TESSERA_OAUTH_INTROSPECTION_CLIENTS`. Per RFC 7662 §2.2, `{"active": false}` carries no additional details on invalid/expired/untrusted tokens. See [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662).
 
-### Remaining work
+### Environment variables
 
-Two endpoints are deferred: `POST /oauth/introspect` (RFC 7662 token introspection) and `POST /oauth/register` (RFC 7591 Dynamic Client Registration proxy). Introspection requires deciding whether to return claims from the cached JWT validation or to call the upstream IdP for revocation status. DCR proxy requires a configured `auth.dcr.upstream_url`; without one, the correct behavior is a 501 with a message pointing to the IdP's native DCR path. Neither is a blocker for the current agent-already-has-a-JWT traffic pattern, but both are required for full spec compliance and enterprise procurement conversations about DCR-capable agents.
+| Variable | Used by | Default | Notes |
+|---|---|---|---|
+| `TESSERA_OAUTH_RESOURCE_URL` | `GET /.well-known/oauth-protected-resource` | `""` | URL of this Tessera instance |
+| `TESSERA_OAUTH_AUTHORIZATION_SERVER` | metadata + introspect | `""` | Fallback AS URL when not read from config |
+| `TESSERA_OAUTH_AS_REGISTRATION_URL` | `POST /register` | unset → 503 | Full URL of upstream AS `/register` endpoint |
+| `TESSERA_OAUTH_INTROSPECTION_CLIENTS` | `POST /introspect` | unset → 401 | Comma-separated `client_id:secret` pairs |
+
+### Deferred (v0.3.1)
+
+- **Rate limiting on `POST /register`** — per-IP token bucket, configurable via `TESSERA_OAUTH_DCR_RATE_LIMIT`. Not blocking; DCR is low-frequency by design.
+- **Bearer-auth option on `POST /introspect`** — Basic-auth only this batch. Bearer support (where the introspecting party presents its own JWT) is deferred until there is a concrete enterprise use case that requires it.
 
 ## License-JWT shape and consumption
 
