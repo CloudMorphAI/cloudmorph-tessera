@@ -352,14 +352,20 @@ def _evaluate_blast_radius(cond: BlastRadius, context: dict[str, Any]) -> bool:
     if cond.resource_types and tool_name not in cond.resource_types:
         return False
 
-    blast_radius_backend = context.get("blast_radius_backend")
-    if blast_radius_backend is None:
-        return True  # fail-closed: block on uncertainty
+    # Test/fixture hook: blast_radius_cache[tool_name] = pre-computed principal count.
+    # Lets OSS users and fixture tests exercise the condition without a live boto3 backend.
+    blast_radius_cache: dict[str, int] = context.get("blast_radius_cache") or {}
+    if tool_name in blast_radius_cache:
+        count = blast_radius_cache[tool_name]
+    else:
+        blast_radius_backend = context.get("blast_radius_backend")
+        if blast_radius_backend is None:
+            return True  # fail-closed: block on uncertainty
 
-    try:
-        count = blast_radius_backend.compute(tool_name, args)
-    except Exception:  # noqa: BLE001
-        return True  # fail-closed
+        try:
+            count = blast_radius_backend.compute(tool_name, args)
+        except Exception:  # noqa: BLE001
+            return True  # fail-closed
 
     if cond.operator == "greater_than":
         return count > cond.principal_count_threshold
@@ -484,15 +490,21 @@ def _evaluate_cumulative_spend_today(cond: CumulativeSpendToday, context: dict[s
     Fail-closed (False = don't block) when state_backend is missing.
     scope is taken from context["scope"] (set by proxy.py from auth_ctx.scope).
     """
-    state_backend = context.get("state_backend")
-    if state_backend is None:
-        return False  # fail-closed
+    # Test/fixture hook: cumulative_spend_today_usd in context for direct injection.
+    # Lets OSS users and fixture tests exercise the condition without a live state backend.
+    cached_usd = context.get("cumulative_spend_today_usd")
+    if cached_usd is not None:
+        today_usd = float(cached_usd)
+    else:
+        state_backend = context.get("state_backend")
+        if state_backend is None:
+            return False  # fail-closed
 
-    scope: str = context.get("scope", "default")
-    try:
-        today_usd = state_backend.get_today_spend(scope)
-    except Exception:  # noqa: BLE001
-        return False
+        scope: str = context.get("scope", "default")
+        try:
+            today_usd = state_backend.get_today_spend(scope)
+        except Exception:  # noqa: BLE001
+            return False
 
     if cond.operator == "greater_than":
         return today_usd > cond.usd_threshold

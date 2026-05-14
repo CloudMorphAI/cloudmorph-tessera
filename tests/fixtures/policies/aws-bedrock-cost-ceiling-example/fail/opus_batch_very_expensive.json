@@ -1,13 +1,23 @@
 {
-  "tool_call": {
-    "name": "aws_bedrock_InvokeModel",
-    "arguments": {
-      "modelId": "anthropic.claude-opus-4-5",
-      "body": "{\"max_tokens\": 64000, \"messages\": [{\"role\": \"user\", \"content\": \"Analyze 10000 records.\"}]}",
-      "max_tokens": 64000,
-      "predicted_cost_usd": 9.60
+  "policy_id": "aws-bedrock-cost-ceiling-example",
+  "context": {
+    "tool_call": {
+      "name": "aws_bedrock_InvokeModel",
+      "arguments": {
+        "modelId": "anthropic.claude-opus-4-5",
+        "body": "{\"max_tokens\": 64000, \"messages\": [{\"role\": \"user\", \"content\": \"Analyze 10000 records.\"}]}",
+        "max_tokens": 64000,
+        "predicted_cost_usd": 9.6
+      }
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {
+      "lockdown": false
+    },
+    "cost_cache": {
+      "aws_bedrock_InvokeModel": 9.6
     }
   },
-  "upstream": "aws",
   "expected_action": "block"
 }

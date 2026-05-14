@@ -1,14 +1,24 @@
 {
-  "tool_call": {
-    "name": "aws_ec2_RunInstances",
-    "arguments": {
-      "ImageId": "ami-0c55b159cbfafe1f0",
-      "InstanceType": "t3.micro",
-      "MinCount": 1,
-      "MaxCount": 1,
-      "predicted_cost_usd": 0.0104
+  "policy_id": "aws-ec2-cost-cap-example",
+  "context": {
+    "tool_call": {
+      "name": "aws_ec2_RunInstances",
+      "arguments": {
+        "ImageId": "ami-0c55b159cbfafe1f0",
+        "InstanceType": "t3.micro",
+        "MinCount": 1,
+        "MaxCount": 1,
+        "predicted_cost_usd": 0.0104
+      }
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {
+      "lockdown": false
+    },
+    "cost_cache": {
+      "aws_ec2_RunInstances": 0.0104
     }
   },
-  "upstream": "aws",
   "expected_action": "allow"
 }

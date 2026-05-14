@@ -1,13 +1,23 @@
 {
-  "tool_call": {
-    "name": "aws_iam_PutRolePolicy",
-    "arguments": {
-      "RoleName": "app-read-only-role",
-      "PolicyName": "s3-read-policy",
-      "PolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::my-bucket/*\"}]}",
-      "principal_count": 1
+  "policy_id": "aws-iam-blast-radius-example",
+  "context": {
+    "tool_call": {
+      "name": "aws_iam_PutRolePolicy",
+      "arguments": {
+        "RoleName": "app-read-only-role",
+        "PolicyName": "s3-read-policy",
+        "PolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::my-bucket/*\"}]}",
+        "principal_count": 1
+      }
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {
+      "lockdown": false
+    },
+    "blast_radius_cache": {
+      "aws_iam_PutRolePolicy": 1
     }
   },
-  "upstream": "aws",
   "expected_action": "allow"
 }

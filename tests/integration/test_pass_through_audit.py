@@ -20,7 +20,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from tessera.config import AuditConfig, TesseraConfig, UpstreamConfig
+from tessera.config import AuditConfig, PoliciesConfig, TesseraConfig, UpstreamConfig
 from tessera.proxy import _DATA_LEAK_PASSTHROUGH_METHODS, create_app
 
 
@@ -41,9 +41,12 @@ def _make_transport(resp: dict[str, Any] | None = None) -> httpx.MockTransport:
     return httpx.MockTransport(_handler)
 
 
-def _build_config(tmp_db: str, flag_data_leak: bool = True) -> TesseraConfig:
+def _build_config(tmp_db: str, flag_data_leak: bool = True, policy_dir: str | None = None) -> TesseraConfig:
     return TesseraConfig(
         audit=AuditConfig(path=tmp_db, flag_data_leak_passthrough=flag_data_leak),
+        # v0.2.0 fix: tests must point policies.dir at a tmp path; the default
+        # /etc/tessera/policies doesn't exist on dev machines (esp. Windows).
+        policies=PoliciesConfig(dir=policy_dir or tempfile.mkdtemp(prefix="tessera_policies_"), reload="none"),
         upstreams=[UpstreamConfig(name="test-upstream", url="http://mock-upstream")],
     )
 

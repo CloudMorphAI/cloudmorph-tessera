@@ -38,7 +38,8 @@ def test_defaults_when_no_file(tmp_path):
     # Patch: call with a path that does not exist *and is default* (no explicit path)
     # Simplest: use load_config_from_dict({}) which exercises all defaults
     cfg = load_config_from_dict({})
-    assert cfg.listen.host == "0.0.0.0"
+    # v0.2.0: bind default flipped to loopback (A-4-1)
+    assert cfg.listen.host == "127.0.0.1"
     assert cfg.listen.port == 8080
     assert cfg.audit.sink == "sqlite"
     assert cfg.audit.path == "/var/lib/tessera/audit.db"
@@ -319,7 +320,7 @@ def test_load_config_from_dict_partial():
     cfg = load_config_from_dict({"deployment_id": "unit-test", "listen": {"port": 7777}})
     assert cfg.deployment_id == "unit-test"
     assert cfg.listen.port == 7777
-    assert cfg.listen.host == "0.0.0.0"  # default preserved
+    assert cfg.listen.host == "127.0.0.1"  # v0.2.0 default (A-4-1 bind flip)
 
 
 def test_load_config_from_dict_upstream():
