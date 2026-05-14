@@ -8,7 +8,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 # Alias used by new condition models — keeps them consistent with existing ones.
 _ConditionBase = BaseModel
 

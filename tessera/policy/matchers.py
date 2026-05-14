@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 
 import regex as re  # type: ignore[import-untyped]
+
+logger = logging.getLogger(__name__)
 
 
 def match_upstream(policy_upstream: str, request_upstream: str) -> bool:
@@ -42,5 +45,14 @@ def match_tool(
         compiled = re.compile(policy_tool_pattern, re.VERSION1)
         result = compiled.search(tool_name, timeout=0.1)
         return result is not None
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # Pattern was already passed through regex_safety.validate_pattern at
+        # load time so reaching here is unusual; log at debug for diagnosability
+        # without spamming logs in the typical case.
+        logger.debug(
+            "event=tool_pattern_match_failed pattern=%r tool=%r error=%s",
+            policy_tool_pattern,
+            tool_name,
+            exc,
+        )
         return False

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 
 from tessera.errors import ConfigError
 
 
-def resolve(env_value: str, default: str) -> object:
+def resolve(env_value: str, default: str) -> type[Any]:
     """Resolve 'module.path:ClassName' string to a class.
 
     Returns the CLASS (not an instance). Caller instantiates with config.
@@ -24,6 +25,11 @@ def resolve(env_value: str, default: str) -> object:
     except ImportError as e:
         raise ConfigError(f"cannot import module {module_path!r}: {e}") from e
     try:
-        return getattr(module, class_name)
+        cls = getattr(module, class_name)
     except AttributeError:
         raise ConfigError(f"no attribute {class_name!r} in module {module_path!r}") from None
+    if not isinstance(cls, type):
+        raise ConfigError(
+            f"pluggable spec {spec!r} resolved to non-class {type(cls).__name__}"
+        )
+    return cls

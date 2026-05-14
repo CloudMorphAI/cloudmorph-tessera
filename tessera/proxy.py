@@ -10,13 +10,17 @@ from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from tessera.integrations.aws.upstream import AWSMcpUpstream
 
 import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from tessera import pluggable
 from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
 from tessera.audit.sinks.base import AuditSink
@@ -28,9 +32,7 @@ from tessera.intent import extract_intent
 from tessera.policy import action_verbs as _action_verbs_module
 from tessera.policy.action_verbs import load_user_mappings, verbs_for
 from tessera.policy.engine import PolicyEngine
-from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action
-from tessera import pluggable
 
 logger = logging.getLogger(__name__)
 
@@ -168,13 +170,13 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Auth — dispatch on cfg.auth.type when no TESSERA_AUTHENTICATOR override is set
         if auth_spec:
             authenticator_cls = pluggable.resolve(auth_spec, "tessera.auth.bearer:BearerTokenAuthenticator")
-            app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
+            app.state.authenticator = authenticator_cls(
                 deployment_id=cfg.deployment_id,
             )
         elif cfg.auth.type == "jwt":
             if not cfg.auth.jwt:
-                from tessera.errors import ConfigError as _CE
-                raise _CE("auth.type=jwt requires auth.jwt sub-block")
+                from tessera.errors import ConfigError
+                raise ConfigError("auth.type=jwt requires auth.jwt sub-block")
             from tessera.auth.jwt_mcp import JWTAuthenticator
             app.state.authenticator = JWTAuthenticator(
                 jwks_url=cfg.auth.jwt.jwks_url,
@@ -189,7 +191,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             authenticator_cls = pluggable.resolve(
                 "", "tessera.auth.bearer:BearerTokenAuthenticator"
             )
-            app.state.authenticator = authenticator_cls(  # type: ignore[call-arg]
+            app.state.authenticator = authenticator_cls(
                 deployment_id=cfg.deployment_id,
             )
 
@@ -211,7 +213,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Audit sink
         audit_path = cfg.audit.path
-        sink = sink_cls(path=audit_path)  # type: ignore[call-arg]
+        sink = sink_cls(path=audit_path)
         app.state.sink = sink
 
         # Hash chain (shared across scopes)
@@ -221,8 +223,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Restore hash chain heads from persisted sink for all existing scopes.
         # This ensures the chain is continuous across process restarts.
         try:
-            for scope in sink.iter_scopes():  # type: ignore[union-attr]
-                head = sink.head_hash(scope)  # type: ignore[union-attr]
+            for scope in sink.iter_scopes():
+                head = sink.head_hash(scope)
                 if head:
                     try:
                         chain.restore_head(scope, head)
@@ -235,7 +237,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         app.state.emitter_map = {}
 
         # Policy loader
-        loader = loader_cls(  # type: ignore[call-arg]
+        loader = loader_cls(
             cfg.policies.dir,
             reload_mode=cfg.policies.reload,
         )
@@ -260,7 +262,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             logger.error("event=startup_policy_load_failed error=%s", exc)
             # Best-effort cleanup of the sink we just opened, then re-raise.
             try:
-                sink.close()  # type: ignore[union-attr]
+                sink.close()
             except Exception:  # noqa: BLE001
                 pass
             raise
@@ -312,8 +314,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         infracost_url = os.environ.get("TESSERA_INFRACOST_URL")
         if infracost_url:
             try:
-                from tessera.cost.infracost import InfracostClient
                 from tessera.cost import aws_mapping as _aws_mapping_module
+                from tessera.cost.infracost import InfracostClient
                 cost_client = InfracostClient(
                     backend_url=infracost_url,
                     api_key=os.environ.get("INFRACOST_API_KEY"),
@@ -361,8 +363,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     try:
                         ver = await app.state.cost_backend.data_version()
                         _pricing_snapshot_id = ver
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("event=pricing_snapshot_refresh_failed error=%s", exc)
                     await asyncio.sleep(60)
 
             _pricing_refresh_task = asyncio.create_task(_refresh_pricing_snapshot())
@@ -372,11 +374,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         app.state.price_table = None
         if cfg.intelligence.enabled:
             try:
-                from tessera.intelligence.client import IntelligenceClient
-                from tessera.intelligence.license import LicenseValidator
-
                 # Load bundled public key for license verification
                 import importlib.resources as _ilr
+
+                from tessera.intelligence.client import IntelligenceClient
+                from tessera.intelligence.license import LicenseValidator
                 _pub_key_pem = (_ilr.files("tessera.intelligence") / "public_key.pem").read_bytes()
 
                 _license_validator = LicenseValidator(
@@ -984,7 +986,7 @@ async def _forward_upstream(
 
     match upstream_kind:
         case "aws_mcp":
-            aws_clients: dict[str, Any] = getattr(state, "aws_clients", {})
+            aws_clients: dict[str, AWSMcpUpstream] = getattr(state, "aws_clients", {})
             aws_client = aws_clients.get(upstream_name)
             if aws_client is None:
                 _METRICS["requests_total{outcome=unknown_upstream}"] += 1

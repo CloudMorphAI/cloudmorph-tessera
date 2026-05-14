@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from datetime import datetime, time
-from typing import Any, Callable
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import regex  # type: ignore[import-untyped]
@@ -21,7 +22,7 @@ import regex  # type: ignore[import-untyped]
 try:
     import boto3  # type: ignore[import-untyped]
 except ImportError:
-    boto3 = None  # type: ignore[assignment]
+    boto3 = None
 
 from tessera.policy.action_verbs import verbs_for
 from tessera.policy.schema import (
@@ -86,10 +87,14 @@ def _match_regex(pattern: str, text: str, policy_id: str | None = None) -> bool:
     try:
         compiled = regex.compile(pattern, regex.VERSION1)
         return compiled.search(text, timeout=_REGEX_TIMEOUT) is not None
-    except (TimeoutError, Exception) as e:
-        if "timeout" in str(e).lower() or isinstance(e, TimeoutError):
+    except TimeoutError:
+        _add_error(f"regex_timeout:{policy_id or 'unknown'}")
+        return False
+    except Exception as e:
+        # regex lib sometimes raises generic Exception with "timeout" in the message
+        # rather than a TimeoutError subclass; treat those as timeouts too.
+        if "timeout" in str(e).lower():
             _add_error(f"regex_timeout:{policy_id or 'unknown'}")
-            return False
         return False
 
 
@@ -258,7 +263,7 @@ def _evaluate_region_in(cond: RegionIn, context: dict[str, Any]) -> bool:
 def _evaluate_time_of_day_outside(cond: TimeOfDayOutside, context: dict[str, Any]) -> bool:
     try:
         tz = ZoneInfo(cond.tz)
-    except (ZoneInfoNotFoundError, Exception):
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
         return False
     now = _now_fn(tz).time().replace(second=0, microsecond=0)
     start_parts = cond.start.split(":")
@@ -298,39 +303,20 @@ def _evaluate_predicted_cost(cond: PredictedCost, context: dict[str, Any]) -> bo
     """Evaluate predicted_cost condition.
 
     Reads pre-fetched cost from context["cost_cache"] keyed on tool_name.
-    Falls back to a direct cost_backend query if the cache key is missing.
-    Fail-closed (False = don't block) on missing mapping or backend.
+    The proxy pre-populates this cache before invoking the engine so the
+    synchronous condition evaluator never has to bridge into async I/O.
+
+    Fail-closed (False = don't block) when no entry is present — either the
+    operation has no AWS mapping, the cost backend is unconfigured, or the
+    backend returned None. Cost-data uncertainty must not produce a block.
     """
     tool_call = context.get("tool_call", {})
     tool_name: str = tool_call.get("name", "")
-    args: dict[str, Any] = tool_call.get("arguments", {})
 
-    # Pre-fetched cost cache (populated by proxy.py before engine.evaluate())
     cost_cache: dict[str, float] = context.get("cost_cache") or {}
-    if tool_name in cost_cache:
-        raw_usd = cost_cache[tool_name]
-    else:
-        cost_backend = context.get("cost_backend")
-        aws_mapping = context.get("aws_mapping")
-        if cost_backend is None or aws_mapping is None:
-            return False  # fail-closed
-
-        query = aws_mapping.map_request(tool_name, args)
-        if query is None:
-            return False  # no mapping → don't block
-
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            sku = loop.run_until_complete(
-                cost_backend.query_sku(query.service, query.region, query.attributes)
-            )
-        except Exception:  # noqa: BLE001
-            return False
-
-        if sku is None:
-            return False
-        raw_usd = sku.usd_per_unit
+    if tool_name not in cost_cache:
+        return False
+    raw_usd = cost_cache[tool_name]
 
     # Apply band multiplier (ceiling = highest uncertainty)
     multiplier = _BAND_MULTIPLIER.get(cond.band, 1.0)

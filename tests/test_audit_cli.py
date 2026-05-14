@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import tempfile
 from pathlib import Path
 
 from tessera.audit.inspect import (
@@ -16,6 +16,9 @@ from tessera.audit.sinks.sqlite import SqliteSink
 
 
 def _make_event(event_id: str, scope: str = "default", seq: int = 1) -> dict:
+    # Derive a unique eventHash per event so fixtures with multiple events
+    # don't collide on the UNIQUE constraint in audit_events.event_hash.
+    event_hash = hashlib.sha256(event_id.encode()).hexdigest()
     return {
         "schemaVersion": "v0.1",
         "eventId": event_id,
@@ -23,7 +26,7 @@ def _make_event(event_id: str, scope: str = "default", seq: int = 1) -> dict:
         "eventType": "decision",
         "occurredAt": "2026-05-14T00:00:00Z",
         "prevEventHash": "",
-        "eventHash": "a" * 64,
+        "eventHash": event_hash,
         "payload": {"decision": "allow"},
     }
 
