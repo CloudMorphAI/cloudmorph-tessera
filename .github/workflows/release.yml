@@ -119,3 +119,32 @@ jobs:
             ghcr.io/cloudmorphai/tessera:${{ steps.version.outputs.VERSION }}
         env:
           COSIGN_EXPERIMENTAL: "1"
+
+  pypi-publish:
+    name: Publish wheel + sdist to PyPI
+    runs-on: ubuntu-latest
+    needs: sbom
+    permissions:
+      id-token: write   # required for PyPI Trusted Publisher (OIDC); no token secret needed
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tooling
+        run: pip install --upgrade build
+
+      - name: Build wheel + sdist
+        run: |
+          python -m build
+          ls -la dist/
+
+      - name: Publish to PyPI via Trusted Publisher (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No password needed — Trusted Publisher uses OIDC token from id-token: write above.
+        # One-time setup at https://pypi.org/manage/project/cloudmorph-tessera/settings/publishing/
+        # Owner: CloudMorphAI · Repo: cloudmorph-tessera · Workflow: release.yml · Environment: (blank)
+        # Until configured, this step will fail; founder can twine-upload manually with a token instead.
