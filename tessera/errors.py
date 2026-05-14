@@ -32,5 +32,5 @@ class UnauthorizedError(TesseraError):
     """Raised when a request lacks valid authentication."""
 
 
-class TamperDetected(TesseraError):
+class TamperDetected(TesseraError):  # noqa: N818 — public API name; renaming would break callers
     """Raised when a downloaded artifact's hash or signature does not match the manifest."""
