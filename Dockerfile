@@ -1,10 +1,10 @@
 # Base image pinned to digest for reproducible builds.
-# Founder: update the digest by running:
-#   docker manifest inspect python:3.12-slim --verbose | grep digest
+# Resolved 2026-05-14 from `docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim`.
+# To refresh: docker pull python:3.12-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
 # Global ARG — re-declared inside each stage that uses it.
 ARG SOURCE_DATE_EPOCH
 
-FROM python:3.12-slim@sha256:2c4769e1e2a7ff7af3c8a8e8c4a3b3c8e4d5a6b7c8d9e0f1a2b3c4d5e6f7a8b9 AS builder
+FROM python:3.12-slim@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461 AS builder
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 WORKDIR /build
@@ -15,10 +15,10 @@ RUN mkdir tessera && touch tessera/__init__.py
 COPY tessera/ ./tessera/
 RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir --upgrade "pip>=26.1.1" && \
-    /venv/bin/pip install --no-deps -e ".[aws,gemini,oidc,intelligence,infracost]" && \
+    /venv/bin/pip install --no-cache-dir ".[aws,gemini,oidc,intelligence,infracost]" && \
     /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
-FROM python:3.12-slim@sha256:2c4769e1e2a7ff7af3c8a8e8c4a3b3c8e4d5a6b7c8d9e0f1a2b3c4d5e6f7a8b9
+FROM python:3.12-slim@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 # Upgrade runtime pip too — Tessera never invokes it but pip-audit / scanners
