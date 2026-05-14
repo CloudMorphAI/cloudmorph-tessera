@@ -446,6 +446,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
     app = FastAPI(title="Tessera MCP Proxy", version=_tessera_version, lifespan=_lifespan)
 
+    # ── OAuth 2.1 Resource Server routes ─────────────────────────────────────
+    from tessera.auth.oauth_rs import make_metadata_route
+    make_metadata_route(app)
+
     # ── Routes ────────────────────────────────────────────────────────────────
 
     @app.get("/healthz")

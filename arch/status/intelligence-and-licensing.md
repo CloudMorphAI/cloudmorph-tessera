@@ -128,11 +128,18 @@ Reserved for `/app/*` routes (not yet wired in v0.2.x but present at `app.state.
 
 Both JWT-validating authenticators share a single `JWKSCache` implementation. Cache TTL defaults to 3600s; on unknown `kid` (key rotation) the cache is refreshed eagerly. The validator uses `python-jose` (`pip install cloudmorph-tessera[oidc]`) and enforces `verify_aud`, `verify_iss`, `verify_exp` with a configurable leeway (default 60s).
 
-## The OAuth 2.1 Resource Server gap
+## Resource Server surface — what's implemented
 
-What's present in v0.2.0 is a JWT validator — incoming MCP requests carry a JWT, the validator confirms its signature against a JWKS, the claims become the `AuthContext`. What's **not** present is a full OAuth 2.1 Resource Server: no Dynamic Client Registration endpoint, no token-introspection endpoint, no PKCE handling in this repo (PKCE is the agent client's responsibility today), no `.well-known/oauth-protected-resource` metadata, and no JWKS published by Tessera itself.
+### Shipped endpoints
 
-For the spec-compliant Resource Server, see `improvements/v0.3.0-oauth-full-resource-server.md`. The current implementation is sufficient for the consumer/agent → Tessera traffic pattern where the agent already has a JWT in hand; it's not sufficient for the use case where Tessera itself participates in the OAuth 2.1 dance as a protected resource that agents discover dynamically.
+`tessera/auth/oauth_rs.py` registers two endpoints via `make_metadata_route(app)` in `proxy.create_app()`:
+
+- `GET /.well-known/oauth-protected-resource` — returns an RFC 9728 metadata document. Fields: `resource` (read from `TESSERA_OAUTH_RESOURCE_URL`), `authorization_servers` (read from `cfg.auth.jwt.issuer` or `cfg.auth.management_plane.issuer`; falls back to `TESSERA_OAUTH_AUTHORIZATION_SERVER`), `scopes_supported: ["tessera:proxy", "tessera:admin", "tessera:audit:read"]`, `bearer_methods_supported: ["header"]`, `resource_documentation`. This satisfies the discoverability requirement for OAuth 2.1 protected resources per RFC 9728.
+- `GET /.well-known/jwks.json` — stub that returns `{"keys": []}`. Tessera does not currently issue tokens and has no signing keys to publish; the endpoint exists for forward-compatibility with OAuth 2.1 validators that require the JWKS discovery surface. It will be populated if/when Tessera gains a token-issuance path (e.g., signed audit receipts).
+
+### Remaining work
+
+Two endpoints are deferred: `POST /oauth/introspect` (RFC 7662 token introspection) and `POST /oauth/register` (RFC 7591 Dynamic Client Registration proxy). Introspection requires deciding whether to return claims from the cached JWT validation or to call the upstream IdP for revocation status. DCR proxy requires a configured `auth.dcr.upstream_url`; without one, the correct behavior is a 501 with a message pointing to the IdP's native DCR path. Neither is a blocker for the current agent-already-has-a-JWT traffic pattern, but both are required for full spec compliance and enterprise procurement conversations about DCR-capable agents.
 
 ## License-JWT shape and consumption
 
