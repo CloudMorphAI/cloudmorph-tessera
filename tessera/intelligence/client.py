@@ -15,7 +15,7 @@ import tarfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 if TYPE_CHECKING:
     from tessera.config import IntelligenceConfig
     from tessera.intelligence.license import LicenseValidator, LicenseStatus
+    from tessera.cost.price_table import PriceTable
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class IntelligenceClient:
         self._refresh_lock = asyncio.Lock()
         self._last_refresh: float = 0.0
         self._refresh_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Populated by refresh() when a price-table artifact is present in the cache.
+        self._price_tables: dict[str, Any] = {}  # provider → PriceTable
 
     # ── Public key ────────────────────────────────────────────────────────────
 
@@ -93,6 +96,15 @@ class IntelligenceClient:
         """Return True if SHA-256 of data matches expected_hash (hex digest)."""
         actual = hashlib.sha256(data).hexdigest()
         return actual == expected_hash
+
+    def _verify_tarball_hash(self, tarball_bytes: bytes, expected_sha256: str) -> None:
+        """Raise TamperDetected when SHA-256 of tarball_bytes != expected_sha256."""
+        from tessera.errors import TamperDetected
+        actual = hashlib.sha256(tarball_bytes).hexdigest()
+        if actual != expected_sha256:
+            raise TamperDetected(
+                f"Tarball hash mismatch: expected {expected_sha256!r}, got {actual!r}"
+            )
 
     # ── Catalog parsing ───────────────────────────────────────────────────────
 
@@ -146,6 +158,20 @@ class IntelligenceClient:
                 manifest.name, manifest.content_hash,
             )
             return False
+
+        # Verify tarball-level SHA-256 if the manifest carries tarball_sha256.
+        # This is separate from content_hash — content_hash covers the extracted
+        # payload; tarball_sha256 binds the transport artifact to the signed manifest.
+        tarball_sha256 = getattr(manifest, "tarball_sha256", None)
+        if tarball_sha256:
+            try:
+                self._verify_tarball_hash(raw, tarball_sha256)
+            except Exception as exc:  # noqa: BLE001 — TamperDetected re-raised as log+skip
+                logger.error(
+                    "event=tarball_hash_mismatch name=%s error=%s",
+                    manifest.name, exc,
+                )
+                return False
 
         # Extract tar archive
         dest = dest_parent / manifest.name / manifest.version
@@ -275,7 +301,10 @@ class IntelligenceClient:
                     else:
                         errors.append(f"Mapping download failed: {manifest.name}")
 
-            # Step 6: Persist last_known_good
+            # Step 6: Load price-table artifacts from the mappings cache
+            self._load_price_tables_from_cache()
+
+            # Step 7: Persist last_known_good
             self._persist_last_known_good(current_tier)
             self._last_refresh = time.time()
 
@@ -303,6 +332,44 @@ class IntelligenceClient:
 
         self._refresh_task = asyncio.create_task(_loop())
         logger.info("event=intelligence_refresh_task_started interval_hours=%d", self._config.refresh_interval_hours)
+
+    # ── Price-table loading ───────────────────────────────────────────────────
+
+    def _load_price_tables_from_cache(self) -> None:
+        """Scan the mappings cache for price-table JSON artifacts and load them.
+
+        Files matching ``*-prices-*.json`` in any mappings subdirectory are
+        treated as price-table artifacts.  Each is loaded into a ``PriceTable``
+        instance and stored in ``self._price_tables`` keyed by provider.
+        """
+        from tessera.cost.price_table import PriceTable
+
+        mappings_dir = self._cache_dir / "mappings"
+        if not mappings_dir.exists():
+            return
+
+        for json_path in mappings_dir.rglob("*-prices-*.json"):
+            try:
+                pt = PriceTable(json_path, signature_verified=False)
+                provider = pt.provider
+                self._price_tables[provider] = pt
+                logger.info(
+                    "event=price_table_loaded provider=%s version=%s ops=%d path=%s",
+                    provider,
+                    pt.bundle_version,
+                    pt.operation_count,
+                    json_path,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "event=price_table_load_failed path=%s error=%s", json_path, exc
+                )
+
+    # ── Public price-table accessor ───────────────────────────────────────────
+
+    def get_price_table(self, provider: str = "aws") -> "PriceTable | None":
+        """Return the loaded price-table for a provider, or None if not yet refreshed."""
+        return self._price_tables.get(provider)  # type: ignore[return-value]
 
     # ── Cache accessors ───────────────────────────────────────────────────────
 

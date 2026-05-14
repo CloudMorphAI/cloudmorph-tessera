@@ -167,10 +167,13 @@ The producer-side verification flow is detailed in `tessera-intelligence/arch/st
 
 1. Load `tessera/intelligence/public_key.pem` from the installed wheel (cached on the `IntelligenceClient` instance).
 2. Fetch the catalog (`pack-index.json`).
-3. For each tier-eligible manifest, fetch the pack tarball.
-4. Compute `SHA-256(tarball_bytes)` and compare to `manifest.content_hash`.
-5. (Today) Trust the manifest content directly. (Planned v0.3.0) Ed25519-verify the manifest's `signature` field against the public key — closing the per-tarball binding gap described in `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`.
-6. Extract into `cache_dir/packs/<name>/<version>/`.
+3. When the catalog includes `signature` + `body_bytes_hex`, Ed25519-verify the catalog body before parsing.
+4. For each tier-eligible manifest, fetch the pack tarball.
+5. If the manifest carries `tarball_sha256`, compute `SHA-256(tarball_bytes)` and compare — raising `TamperDetected` on mismatch. This tarball-level binding check is the transport-artifact integrity step; it complements (not replaces) the content-hash check.
+6. Compute `SHA-256(content_bytes)` and compare to `manifest.content_hash` (payload-level integrity).
+7. Extract into `cache_dir/packs/<name>/<version>/`.
+
+After all packs and mappings are extracted, `_load_price_tables_from_cache()` scans `cache_dir/mappings/` for `*-prices-*.json` artifacts and loads each into a `PriceTable` instance (see `integrations-and-cost.md`).
 
 The current verification depth is content-hash check only; signature verification on the manifest is implemented but manifests today ship without a real `signature` field on the catalog inline. The full signed-manifest path activates when the producer-side improvement lands (see `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`); the consumer side is wired and waiting.
 

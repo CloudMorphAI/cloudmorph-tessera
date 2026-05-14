@@ -369,6 +369,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # ── Optional: Intelligence client (pack downloads + license check) ────
         app.state.intelligence_client = None
+        app.state.price_table = None
         if cfg.intelligence.enabled:
             try:
                 from tessera.intelligence.client import IntelligenceClient
@@ -389,6 +390,12 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 await intel_client.refresh()
                 await intel_client.start_refresh_task()
                 app.state.intelligence_client = intel_client
+                app.state.price_table = intel_client.get_price_table("aws")
+                if app.state.price_table is not None:
+                    logger.info(
+                        "event=price_table_loaded_from_intelligence ops=%d",
+                        app.state.price_table.operation_count,
+                    )
                 logger.info("event=intelligence_client_initialized")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("event=intelligence_client_init_failed error=%s", exc)
@@ -618,7 +625,18 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         cost_cache: dict[str, float] = {}
         cost_backend = getattr(app.state, "cost_backend", None)
         aws_mapping_mod = getattr(app.state, "aws_mapping", None)
-        if cost_backend is not None and aws_mapping_mod is not None:
+
+        # Price-table-first: consult the in-memory table before hitting Infracost.
+        # Avoids the 100–300ms live GraphQL call when the operation is already indexed.
+        _price_table = getattr(app.state, "price_table", None)
+        if _price_table is not None:
+            region_arg: str | None = arguments.get("region") if isinstance(arguments, dict) else None
+            estimate = _price_table.cost_for_call(tool_name, arguments, region=region_arg)
+            if estimate is not None:
+                cost_cache[tool_name] = estimate.price_usd
+
+        # Fall back to live Infracost when price-table has no entry for this operation.
+        if tool_name not in cost_cache and cost_backend is not None and aws_mapping_mod is not None:
             query = aws_mapping_mod.map_request(tool_name, arguments)
             if query is not None:
                 try:

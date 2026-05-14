@@ -30,3 +30,7 @@ class UpstreamError(TesseraError):
 
 class UnauthorizedError(TesseraError):
     """Raised when a request lacks valid authentication."""
+
+
+class TamperDetected(TesseraError):
+    """Raised when a downloaded artifact's hash or signature does not match the manifest."""

@@ -117,15 +117,16 @@ Operational properties:
 
 The client is initialized only when `TESSERA_INFRACOST_URL` is set. No client = no cost backend = `predicted_cost` conditions silently skip.
 
-## The price-table consumer pattern (target architecture)
+## The price-table consumer pattern (active architecture)
 
-The current Infracost-backend pattern (live GraphQL call per `tools/call`) is the v0.2.0 fallback. The target architecture (Option A in `tessera-intelligence/arch/status/aws-mappings.md`) is build-time price materialization:
+The cost-resolution architecture (Option A in `tessera-intelligence/arch/status/aws-mappings.md`) is build-time price materialization, active as of v0.3.0:
 
 1. The producer (`tessera-intelligence`) runs every mapping YAML's `infracost_query` once per release, materializes results into `aws-prices-<version>.json`, signs the artifact with the Ed25519 key, ships it alongside the mapping bundle.
-2. This repo's `IntelligenceClient` fetches the price-table artifact at refresh time, verifies the signature, builds an in-memory lookup keyed `(operation, args_signature, region) → {unit_cost_usd, currency, price_realm}`.
-3. The `predicted_cost` condition consults the in-memory table — sub-millisecond, no external dependency at call time, no Infracost-availability dependency, offline-friendly.
+2. This repo's `IntelligenceClient` fetches the price-table artifact at refresh time, scans the mappings cache for `*-prices-*.json` files, and loads each into a `PriceTable` instance via `tessera/cost/price_table.py`.
+3. The proxy pre-fetch step consults `PriceTable.cost_for_call()` first. On a hit, the result populates `context["cost_cache"][tool_name]` and the live Infracost call is skipped. On a miss, the proxy falls back to `InfracostClient.query_sku()`.
+4. The `predicted_cost` condition reads `context["cost_cache"]` — unchanged contract, sub-millisecond at call time when the price table is loaded, no external dependency.
 
-Until that improvement ships on the producer side (`tessera-intelligence/arch/improvements/v0.3.0-price-table-materialization.md`), this repo's cost path runs through the live Infracost client. When it lands, the consumer-side wiring described in `improvements/v0.3.0-price-table-consumer.md` activates. The two improvements are paired and ship together as v0.3.0.
+Falls back to live Infracost on cache miss (operation in mappings but not yet in price table — a transitional state when the producer hasn't materialized that operation yet). Infracost remains as the fallback; it is not deprecated.
 
 Ceiling-band cost handling (the Bedrock case) is part of the price-table contract. `price_realm: per_token` entries are multiplied at runtime by `args.maxTokens` to produce a ceiling estimate. Today the InfracostClient stores per-call rates as USD/unit and the band multiplier (3.0 for ceiling) is applied in the condition evaluator; the price-table architecture moves this into the artifact format itself. Same numerical outcome at the policy decision point; cleaner separation between content and evaluator.
 
@@ -149,7 +150,7 @@ The intelligence-content consumer architecture and the producer architecture are
 | `tessera/integrations/aws/blast_radius.py:BlastRadiusBackend` | `tests/blast_radius_stub.py` — share algorithm contract |
 | `tessera/cost/aws_mapping.py:map_request` (10 builtins) | `mappings/aws/v1.0.0/*.yaml` (37 ops; richer schema) |
 | `tessera/cost/aws_mapping.py:load_extended_mappings` | `mappings/aws/v1.0.0/*.yaml` shipped via pack |
-| (planned) `tessera/cost/*price_table_loader.py` | (planned) `aws-prices-v1.0.0.json` signed artifact |
+| `tessera/cost/price_table.py:PriceTable` | `aws-prices-v1.0.0.json` signed artifact |
 | Catalog fetcher trusts edge tier gate as opportunistic | CloudFront Function does structural-only JWT parse |
 | Vendor-MCP policies loaded as pack from cache dir | `vendor-mcp-protection` pack — 7 policies migrated from OSS |
 
