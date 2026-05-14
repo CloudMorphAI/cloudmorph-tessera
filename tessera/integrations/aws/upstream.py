@@ -101,7 +101,7 @@ class AWSMcpUpstream:
                 self._client.post(self.endpoint, json=jsonrpc_body),
                 timeout=self.timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("event=aws_upstream_timeout upstream=%s", self.name)
             return _aws_error(jsonrpc_body.get("id", 1), "AWS upstream timeout")
         except httpx.HTTPStatusError as exc:

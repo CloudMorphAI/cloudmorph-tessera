@@ -8,7 +8,7 @@ BlastRadiusBackend requires boto3 at runtime only.
 __all__ = ["AWSMcpUpstream", "BlastRadiusBackend"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> object:
     if name == "AWSMcpUpstream":
         from tessera.integrations.aws.upstream import AWSMcpUpstream  # noqa: PLC0415
         return AWSMcpUpstream

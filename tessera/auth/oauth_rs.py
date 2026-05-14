@@ -26,15 +26,13 @@ import secrets
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import Request  # noqa: TC002 — used at runtime for FastAPI dependency injection
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
 
-
-def _build_metadata(config: Any) -> dict:
+def _build_metadata(config: Any) -> dict[str, Any]:
     """Build the RFC 9728 oauth-protected-resource metadata document.
 
     Values are read from TesseraConfig when available, with env-var fallbacks.
@@ -51,9 +49,12 @@ def _build_metadata(config: Any) -> dict:
             if jwt_cfg is not None and jwt_cfg.issuer:
                 authorization_servers.append(jwt_cfg.issuer)
             mp_cfg = getattr(auth, "management_plane", None)
-            if mp_cfg is not None and mp_cfg.issuer:
-                if mp_cfg.issuer not in authorization_servers:
-                    authorization_servers.append(mp_cfg.issuer)
+            if (
+                mp_cfg is not None
+                and mp_cfg.issuer
+                and mp_cfg.issuer not in authorization_servers
+            ):
+                authorization_servers.append(mp_cfg.issuer)
 
     if not authorization_servers:
         env_as = os.environ.get("TESSERA_OAUTH_AUTHORIZATION_SERVER", "")
@@ -133,7 +134,7 @@ def _decode_token_claims(token: str) -> dict[str, Any] | None:
             options={"verify_signature": False},
             algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "HS256"],
         )
-        return result.get("payload")  # type: ignore[return-value]
+        return result.get("payload")
     except Exception:  # noqa: BLE001
         return None
 
@@ -173,26 +174,6 @@ def _validate_token_for_introspection(
         return None
 
     return claims
-
-
-@router.get("/.well-known/oauth-protected-resource")
-async def oauth_protected_resource_metadata() -> JSONResponse:
-    """RFC 9728 — OAuth 2.0 Protected Resource Metadata."""
-    # Config is not available at route-definition time; routes are registered
-    # inside create_app where app.state will hold the config after startup.
-    # At request time the state is populated, but we don't have a reference here
-    # without a Request param.  Import lazily to avoid circular deps.
-    from fastapi import Request as _Request  # noqa: F401
-    # Re-implement as a proper Request-accepting endpoint below.
-    # This placeholder is superseded by the one below.
-    return JSONResponse({"error": "use_request_endpoint"}, status_code=500)
-
-
-# Override with the real implementation that reads app.state
-@router.get("/.well-known/oauth-protected-resource", include_in_schema=False)
-async def _oauth_metadata_with_state() -> JSONResponse:
-    """Superseded — real implementation is registered in create_app."""
-    return JSONResponse({}, status_code=500)
 
 
 def make_metadata_route(app_ref: Any) -> None:
@@ -259,8 +240,8 @@ def make_metadata_route(app_ref: Any) -> None:
             )
 
         try:
-            with httpx.Client(timeout=10.0) as client:
-                upstream_resp = client.post(
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                upstream_resp = await client.post(
                     upstream_url,
                     json=body,
                     headers={"Content-Type": "application/json", "Accept": "application/json"},
@@ -371,9 +352,12 @@ def make_metadata_route(app_ref: Any) -> None:
                 if jwt_sub is not None and jwt_sub.issuer:
                     trusted_issuers.append(jwt_sub.issuer)
                 mp_sub = getattr(auth_cfg, "management_plane", None)
-                if mp_sub is not None and mp_sub.issuer:
-                    if mp_sub.issuer not in trusted_issuers:
-                        trusted_issuers.append(mp_sub.issuer)
+                if (
+                    mp_sub is not None
+                    and mp_sub.issuer
+                    and mp_sub.issuer not in trusted_issuers
+                ):
+                    trusted_issuers.append(mp_sub.issuer)
         if not trusted_issuers:
             env_as = os.environ.get("TESSERA_OAUTH_AUTHORIZATION_SERVER", "").strip()
             if env_as:

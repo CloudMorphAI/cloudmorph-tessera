@@ -78,7 +78,18 @@ class AnthropicPolicyAuthor:
                     system=self._system_prompt,
                     messages=[{"role": "user", "content": user_text}],
                 )
-                text = response.content[0].text
+                # Modern Claude responses interleave thinking/tool/text blocks;
+                # grab the first text block rather than assuming content[0] is one.
+                text = next(
+                    (
+                        block.text
+                        for block in response.content
+                        if isinstance(block, anthropic.types.TextBlock)
+                    ),
+                    None,
+                )
+                if text is None:
+                    raise ValueError("Anthropic response contained no text block")
                 return self._parse_and_validate_response(text)
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)
@@ -127,7 +138,18 @@ class AnthropicPolicyAuthor:
                     system=self._system_prompt,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                text = response.content[0].text
+                # Modern Claude responses interleave thinking/tool/text blocks;
+                # grab the first text block rather than assuming content[0] is one.
+                text = next(
+                    (
+                        block.text
+                        for block in response.content
+                        if isinstance(block, anthropic.types.TextBlock)
+                    ),
+                    None,
+                )
+                if text is None:
+                    raise ValueError("Anthropic response contained no text block")
                 return self._parse_and_validate_response(text)
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)

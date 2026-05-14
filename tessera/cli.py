@@ -363,10 +363,10 @@ def audit_inspect(
 @policy_app.command("test")
 def policy_test(
     policy_dir: str = typer.Option("policies/", "--policy-dir"),
-    fixture_dir: str = typer.Option(None, "--fixture-dir"),
-    fixture: str = typer.Option(None, "--fixture"),
+    fixture_dir: str | None = typer.Option(None, "--fixture-dir"),
+    fixture: str | None = typer.Option(None, "--fixture"),
     json_output: bool = typer.Option(False, "--json"),
-    default_action: str = typer.Option(
+    default_action: str | None = typer.Option(
         None,
         "--default-action",
         help="Default action when no policy matches: allow|block|log_only|require_approval. "
@@ -898,7 +898,7 @@ def analyze(
         raise typer.Exit(1) from exc
 
     result = data.get("result", {})
-    tools: list[dict] = result.get("tools", []) if isinstance(result, dict) else []
+    tools: list[dict[str, Any]] = result.get("tools", []) if isinstance(result, dict) else []
 
     if not tools:
         typer.echo("No tools found in catalog.", err=True)
@@ -936,7 +936,7 @@ def analyze(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_llm_provider(model: str):  # type: ignore[return]
+def _resolve_llm_provider(model: str) -> Any:
     """Instantiate the correct LLM provider from a short name."""
     model_lower = model.lower()
     if model_lower == "gemini":
@@ -990,7 +990,9 @@ def pricing_serve(
     if api_key:
         cmd.extend(["-e", f"INFRACOST_API_KEY={api_key}"])
     cmd.append("infracost/cloud-pricing-api:latest")
-    sys.exit(subprocess.call(cmd))
+    # Inputs come from the local CLI invoker (port + their own API key); cmd is
+    # a list (no shell expansion). S603 false positive in this context.
+    sys.exit(subprocess.call(cmd))  # noqa: S603
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -74,11 +74,11 @@ def test_dcr_proxy_forwards_to_upstream(client: TestClient, monkeypatch) -> None
     mock_resp.status_code = 201
     mock_resp.json.return_value = upstream_payload
 
-    with patch("tessera.auth.oauth_rs.httpx.Client") as mock_client_cls:
+    with patch("tessera.auth.oauth_rs.httpx.AsyncClient") as mock_client_cls:
         mock_client_instance = MagicMock()
-        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
-        mock_client_instance.__exit__ = MagicMock(return_value=False)
-        mock_client_instance.post.return_value = mock_resp
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+        mock_client_instance.post = AsyncMock(return_value=mock_resp)
         mock_client_cls.return_value = mock_client_instance
 
         response = client.post(

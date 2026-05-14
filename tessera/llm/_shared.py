@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 
 def build_system_prompt() -> str:
     """Build a system prompt for policy authoring by introspecting the schema.
@@ -43,7 +41,7 @@ def build_system_prompt() -> str:
 
     conditions_block = "\n".join(condition_descriptions) if condition_descriptions else "  (see schema)"
 
-    system_prompt = f"""You are a Tessera MCP firewall policy author. You generate YAML policy files that conform exactly to the Tessera policy schema.
+    return f"""You are a Tessera MCP firewall policy author. You generate YAML policy files that conform exactly to the Tessera policy schema.
 
 ## Policy Schema
 
@@ -171,4 +169,3 @@ Return a JSON array of objects, each with:
 
 The yaml_body must parse as valid Tessera policy YAML. All condition discriminators must match exactly the known condition type names listed above.
 """
-    return system_prompt

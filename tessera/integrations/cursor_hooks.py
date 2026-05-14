@@ -60,8 +60,7 @@ def _resolve_bearer_token() -> str:
         tokens = _parse_token_file(tokens_file)
         return _pick_token(tokens, token_name)
 
-    single = os.environ.get("TESSERA_BEARER_TOKEN", "")
-    return single
+    return os.environ.get("TESSERA_BEARER_TOKEN", "")
 
 
 def _parse_inline_tokens(raw: str) -> dict[str, str]:

@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 from google import genai
 from google.genai import types as genai_types
 
@@ -63,7 +64,7 @@ class GeminiPolicyAuthor:
     def propose_policies(
         self,
         intent: str,
-        condition_catalog: dict | None = None,
+        condition_catalog: dict[str, Any] | None = None,
         max_retries: int = 3,
     ) -> list[PolicyRecommendation]:
         """Generate draft policies from a natural-language intent description.
@@ -109,6 +110,8 @@ class GeminiPolicyAuthor:
                         response_mime_type="application/json",
                     ),
                 )
+                if response.text is None:
+                    raise ValueError("Gemini returned empty response")
                 return self._parse_and_validate_response(response.text)
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)
@@ -128,7 +131,7 @@ class GeminiPolicyAuthor:
 
     def analyze_tools(
         self,
-        tools: list[dict],
+        tools: list[dict[str, Any]],
         upstream_name: str | None = None,
     ) -> list[PolicyRecommendation]:
         """Analyze an MCP server's tool catalog and recommend policies.
@@ -177,6 +180,8 @@ class GeminiPolicyAuthor:
                         response_mime_type="application/json",
                     ),
                 )
+                if response.text is None:
+                    raise ValueError("Gemini returned empty response")
                 return self._parse_and_validate_response(response.text)
             except Exception as exc:  # noqa: BLE001
                 last_error = str(exc)

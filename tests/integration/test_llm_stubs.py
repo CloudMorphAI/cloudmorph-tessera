@@ -37,11 +37,16 @@ _VALID_ITEM = {
 @patch("tessera.llm.anthropic.anthropic.Anthropic")
 def test_anthropic_instantiates_and_proposes(mock_anthropic_cls):
     """AnthropicPolicyAuthor instantiates and propose_policies returns a list."""
+    import anthropic as _anthropic_sdk
+
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
 
     mock_msg = MagicMock()
-    mock_msg.content = [MagicMock(text=json.dumps([_VALID_ITEM]))]
+    # Use spec=TextBlock so isinstance() in production code matches the mock.
+    text_block = MagicMock(spec=_anthropic_sdk.types.TextBlock)
+    text_block.text = json.dumps([_VALID_ITEM])
+    mock_msg.content = [text_block]
     mock_client.messages.create.return_value = mock_msg
 
     from tessera.llm.anthropic import AnthropicPolicyAuthor
