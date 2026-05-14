@@ -15,6 +15,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import regex  # type: ignore[import-untyped]
 
+# Optional dep: boto3 (in [aws] extras). Module-level reference enables
+# `unittest.mock.patch("tessera.policy.conditions.boto3", ...)` in tests AND
+# avoids per-call import overhead in the hot path for data_volume evaluator.
+try:
+    import boto3  # type: ignore[import-untyped]
+except ImportError:
+    boto3 = None  # type: ignore[assignment]
+
 from tessera.policy.action_verbs import verbs_for
 from tessera.policy.schema import (
     ActionClassIn,
@@ -436,8 +444,9 @@ def _estimate_s3_object_size(args: dict[str, Any], context: dict[str, Any]) -> i
     if cache_key in size_cache:
         return size_cache[cache_key]
 
+    if boto3 is None:
+        return len(json.dumps(args).encode("utf-8"))
     try:
-        import boto3
         s3 = boto3.client("s3")
         head = s3.head_object(Bucket=bucket, Key=key)
         size = int(head.get("ContentLength", 0))
@@ -462,8 +471,9 @@ def _estimate_rds_query_size(args: dict[str, Any], context: dict[str, Any]) -> i
         # Insufficient params for EXPLAIN — fall back
         return len(json.dumps(args).encode("utf-8"))
 
+    if boto3 is None:
+        return len(json.dumps(args).encode("utf-8"))
     try:
-        import boto3
         rds_data = boto3.client("rds-data")
         explain_stmt = f"EXPLAIN {statement}"
         resp = rds_data.execute_statement(

@@ -99,12 +99,9 @@ def test_max_retries_exhausted_returns_empty(mock_client_cls):
     # Always returns invalid YAML
     mock_client.models.generate_content.return_value = _make_mock_response([_INVALID_YAML_RECOMMENDATION])
 
-    import logging
     author = GeminiPolicyAuthor(api_key="fake-key")
 
-    with patch.object(author.__class__.__module__, None, create=True):
-        pass  # noop — just ensuring no exception raised
-
+    # Drive the retry loop to exhaustion against invalid YAML
     results = author.propose_policies("Do something", max_retries=3)
 
     assert results == []
@@ -146,7 +143,11 @@ def test_temperature_and_top_k_passed_correctly(mock_client_cls):
     author.propose_policies("Block deletes")
 
     call_kwargs = mock_client.models.generate_content.call_args
-    config_arg = call_kwargs.kwargs.get("config") or call_kwargs.args[2] if len(call_kwargs.args) > 2 else None
+    # Precedence fix: the ternary used to bind to the whole expression including
+    # the `or` — turning a kwargs-only call into None. Use explicit parens.
+    config_arg = call_kwargs.kwargs.get("config") or (
+        call_kwargs.args[2] if len(call_kwargs.args) > 2 else None
+    )
 
     assert config_arg is not None
     # The config object should carry our temperature and top_k

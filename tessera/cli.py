@@ -173,13 +173,15 @@ def policy_test(
     from tessera.policy.loader import FilesystemPolicyLoader
     from tessera.policy.schema import Action
 
-    # Warn if --default-action not explicitly set (production usually defaults block)
+    # Warn if --default-action not explicitly set (production usually defaults block).
+    # Suppress in --json mode so the stdout stream stays parseable.
     if default_action is None:
-        typer.echo(
-            'WARN: --default-action defaults to "allow"; production server typically defaults "block". '
-            'Pass --default-action block to match production behavior.',
-            err=True,
-        )
+        if not json_output:
+            typer.echo(
+                'WARN: --default-action defaults to "allow"; production server typically defaults "block". '
+                'Pass --default-action block to match production behavior.',
+                err=True,
+            )
         _resolved_default_action = Action.allow
     else:
         valid_actions = {"allow", "block", "log_only", "require_approval"}

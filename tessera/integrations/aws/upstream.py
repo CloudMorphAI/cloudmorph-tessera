@@ -15,7 +15,9 @@ import httpx
 from fastapi.responses import JSONResponse
 
 # Resolved when the `aws` optional-dependency group is installed.
-from mcp_proxy_for_aws import aws_iam_streamablehttp_client  # type: ignore[import-not-found]
+# mcp_proxy_for_aws v1.4.x exports aws_iam_streamablehttp_client from .client submodule
+# (not the top-level package). Imported here so attribute access still works.
+from mcp_proxy_for_aws.client import aws_iam_streamablehttp_client  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 

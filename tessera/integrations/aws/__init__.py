@@ -15,4 +15,12 @@ def __getattr__(name: str):
     if name == "BlastRadiusBackend":
         from tessera.integrations.aws.blast_radius import BlastRadiusBackend  # noqa: PLC0415
         return BlastRadiusBackend
-    raise AttributeError(f"module 'tessera.integrations.aws' has no attribute {name!r}")
+    # Fall through for submodule attribute access (e.g., `tessera.integrations.aws.upstream`
+    # used by tests via unittest.mock.patch). importlib resolves this lazily — we
+    # just need to import the named submodule and return it. AttributeError remains
+    # the right signal if the name is neither a known class nor a real submodule.
+    import importlib
+    try:
+        return importlib.import_module(f"tessera.integrations.aws.{name}")
+    except ImportError as exc:
+        raise AttributeError(f"module 'tessera.integrations.aws' has no attribute {name!r}") from exc

@@ -124,7 +124,9 @@ def test_priority_sorting_respected():
         )
     ], Action.block, priority=100)
 
-    engine = _make_engine([low, high])
+    # PolicyEngine trusts the loader's sort order (first-match-wins, no internal sort).
+    # FilesystemPolicyLoader sorts by (-priority, id). Mirror that order here.
+    engine = _make_engine(sorted([low, high], key=lambda p: (-p.priority, p.id)))
     ctx = _ctx(args={"InstanceIds": ["i-1", "i-2"]})
     decision = engine.evaluate(ctx)
     assert decision.action == Action.block

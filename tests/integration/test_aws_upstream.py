@@ -57,6 +57,7 @@ async def test_tools_list_happy_path() -> None:
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = response_body
+    mock_response.headers = {}  # AWSMcpUpstream.forward reads response.headers for aws_context enrichment
     mock_client.post.return_value = mock_response
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -84,6 +85,7 @@ async def test_tools_call_routes_through_aws_kind() -> None:
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
     mock_response.json.return_value = response_body
+    mock_response.headers = {}  # AWSMcpUpstream.forward reads response.headers for aws_context enrichment
     mock_client.post.return_value = mock_response
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)

@@ -109,9 +109,8 @@ def test_valid_entra_jwt(test_jwk):
     ctx = auth.authenticate(_req(token))
 
     assert ctx.principal_id == "entra-user-abc123"
-    assert ctx.scope == "tessera"  # first space-delimited token of "tessera.read"... wait, dot is ok
-    # "tessera.read" — split on space gives ["tessera.read"]; SCOPE_RE requires [a-z0-9_-]
-    # "tessera.read" has a dot so falls back to deployment_id
+    # The Entra scope claim "tessera.read" contains a dot which fails SCOPE_RE
+    # ([a-z0-9_-]). The OIDC validator falls back to deployment_id in that case.
     assert ctx.scope == "default"
     assert ctx.metadata["jwt_provider"] == "external"
 
