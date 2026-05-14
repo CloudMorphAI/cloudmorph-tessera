@@ -834,7 +834,7 @@ def install_claude_code(
 @policy_app.command("author")
 def policy_author(
     intent: str = typer.Option(..., "--intent", help="Free-text customer intent"),
-    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai"),
+    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai|mistral|cohere"),
     output: str = typer.Option("-", "--output", help="- for stdout, or directory path to write files"),
 ) -> None:
     """Generate draft policies from natural-language intent. Human review required."""
@@ -875,7 +875,7 @@ def policy_author(
 @app.command("analyze")
 def analyze(
     mcp_url: str = typer.Option(..., "--mcp", help="MCP server URL to introspect"),
-    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai"),
+    model: str = typer.Option("gemini", "--model", help="LLM provider: gemini|anthropic|openai|bedrock|azure-openai|mistral|cohere"),
     output: str = typer.Option("-", "--output", help="- for stdout JSON, or file path"),
     token: str | None = typer.Option(None, "--token", envvar="TESSERA_BEARER_TOKEN", help="Bearer token"),
 ) -> None:
@@ -954,7 +954,13 @@ def _resolve_llm_provider(model: str):  # type: ignore[return]
     if model_lower in ("azure-openai", "azure_openai", "azure"):
         from tessera.llm.azure_openai import AzureOpenAIPolicyAuthor
         return AzureOpenAIPolicyAuthor()
-    typer.echo(f"Unknown model provider: {model!r}. Choose from: gemini, anthropic, openai, bedrock, azure-openai", err=True)
+    if model_lower == "mistral":
+        from tessera.llm.mistral import MistralPolicyAuthor
+        return MistralPolicyAuthor()
+    if model_lower == "cohere":
+        from tessera.llm.cohere import CoherePolicyAuthor
+        return CoherePolicyAuthor()
+    typer.echo(f"Unknown model provider: {model!r}. Choose from: gemini, anthropic, openai, bedrock, azure-openai, mistral, cohere", err=True)
     raise typer.Exit(2)
 
 

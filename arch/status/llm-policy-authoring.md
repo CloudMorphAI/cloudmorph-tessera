@@ -52,7 +52,7 @@ The prompt structure:
 
 The shared builder is consumed by every provider's `__init__`. There is no per-provider variation of the system prompt in v0.2.0; if a provider needs a tweak it would specialize the builder. Today none do.
 
-## The 5 v0.2.0 provider implementations
+## The seven provider implementations
 
 Each provider is a single Python file at `tessera/llm/<name>.py` and implements both `PolicyAuthor` and `ToolCatalogAnalyzer`:
 
@@ -61,10 +61,12 @@ Each provider is a single Python file at `tessera/llm/<name>.py` and implements 
 - **`openai.py:OpenAIPolicyAuthor`** — uses `openai`. The OpenAI chat-completions API.
 - **`azure_openai.py:AzureOpenAIPolicyAuthor`** — uses `openai` + `azure-identity`. Same chat-completions interface, Azure-routed.
 - **`bedrock.py:BedrockPolicyAuthor`** — uses `boto3` to call Bedrock's `InvokeModel`. The model defaults to a Claude variant available through Bedrock.
+- **`mistral.py:MistralPolicyAuthor`** — thin `httpx` wrapper around `https://api.mistral.ai/v1/chat/completions`. Default model `mistral-large-latest`. Auth via `MISTRAL_API_KEY`. Uses `response_format={"type": "json_object"}` for structured output. EU-resident inference endpoint — suitable for customers who cannot send tool catalogs to non-EU endpoints. Unwraps top-level dict wrapping before parsing the policy array, matching the OpenAI json_object pattern.
+- **`cohere.py:CoherePolicyAuthor`** — thin `httpx` wrapper around `https://api.cohere.com/v2/chat`. Default model `command-r-plus-08-2024`. Auth via `COHERE_API_KEY`. Response text is extracted from `message.content[0].text` (Cohere v2 shape). Cost-competitive at enterprise volume; strong structured-output quality via `command-r-plus`.
 
 Each provider is behind a pip extras group (`[anthropic]`, `[openai]`, `[bedrock]`, `[azure-openai]`, `[gemini]`, or the `[all-llm]` aggregate). The default `pip install cloudmorph-tessera` brings in none of them. The Docker image ships with `[aws,gemini,oidc,intelligence,infracost]` extras pre-installed (see the Dockerfile at line 18), so the container has Gemini available by default but not the other four.
 
-## Why these 5 specifically
+## Why these seven specifically
 
 The provider set was chosen as a cost-and-coverage decision, not a technical preference for any model family:
 
@@ -72,8 +74,8 @@ The provider set was chosen as a cost-and-coverage decision, not a technical pre
 - **Anthropic + OpenAI** — the two dominant enterprise-default providers. Customer expectations are that "the LLM in my stack" is one of these two.
 - **Bedrock** — for AWS-native customers who can't (or won't) send tool catalogs to a non-AWS endpoint. Cost-bills against the same AWS account that already pays for the firewall.
 - **Azure OpenAI** — same logic, Azure-native customers.
-
-Mistral and Cohere are deliberately out of current scope. See `arch/improvements/v0.4.0-llm-providers-mistral-cohere.md`. They are credible alternatives — Mistral on EU-resident-data grounds, Cohere on cost-per-token for enterprise — but adding them requires implementing two more provider classes, two more SDK dependencies, and (more importantly) two more rounds of "how does this provider handle structured JSON output." The founder's funding stack has Mistralship (€30K cohort) and Cohere startup program (~25% off enterprise) in the AI-credit acquisition pipeline; adding them after the credit footprint is acquired matches the cost-discipline pattern that drove the original 5.
+- **Mistral** — for customers with EU-resident-data requirements. `mistral-large-latest` runs on EU-hosted infrastructure; customers who cannot send tool catalogs to non-EU endpoints (GDPR-constrained or contractually restricted) can use Mistral without leaving EU data-residency boundaries. Enabled by the Mistralship €30K cohort credit program.
+- **Cohere** — `command-r-plus-08-2024` offers a competitive cost-per-token ratio at enterprise volume with strong structured-output discipline. Cohere's retrieval-augmented generation capabilities are a differentiator for customers building RAG pipelines alongside their MCP stack. Enabled by the Cohere startup program (~25% off enterprise pricing).
 
 ## Cost-discipline default
 
@@ -112,12 +114,11 @@ This is the "I just installed a new MCP server, what should my policy set look l
 
 ## Where this subsystem doesn't fit
 
-The `_shared.build_system_prompt()` is a single function. The 5 provider classes share that prompt verbatim; no per-provider scaffolding exists today. If a provider needs structural differences (e.g., Mistral's tokenizer requiring tighter prompt budget, Cohere's structured-output API differing from OpenAI's), the prompt builder gets a provider-arg parameter. Today it has none.
+The `_shared.build_system_prompt()` is a single function. All seven provider classes share that prompt verbatim; no per-provider scaffolding exists today. If a provider needs structural differences (e.g., a tighter prompt budget, or a structured-output API that diverges from the OpenAI shape), the prompt builder gets a provider-arg parameter. Today it has none.
 
 Per-condition prompt guidance — "for `predicted_cost`, prefer 'high' band when the operator is concerned about underestimating; prefer 'ceiling' for Bedrock" — does not appear in the prompt. The schema lists the fields; the LLM picks values based on the example block. Adding richer per-condition guidance is a prompt-engineering exercise that hasn't been needed in practice: Gemini's schema-driven outputs have been good enough that the bake-time gains aren't yet worth the prompt-bloat cost.
 
 ## Cross-references
 
 - For where authored policies eventually land (the engine they're validated against): `policy-engine.md`.
-- For the v0.4.0 expansion to Mistral and Cohere: `improvements/v0.4.0-llm-providers-mistral-cohere.md`.
 - For the CLI surface (`tessera policy author`, `tessera analyze`): `tessera/cli.py:policy_author` and `tessera/cli.py:analyze`.

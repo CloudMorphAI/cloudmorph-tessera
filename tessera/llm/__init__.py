@@ -29,6 +29,14 @@ try:
     from tessera.llm import gemini as gemini  # noqa: F401
 except ImportError:
     pass
+try:
+    from tessera.llm import mistral as mistral  # noqa: F401
+except ImportError:
+    pass
+try:
+    from tessera.llm import cohere as cohere  # noqa: F401
+except ImportError:
+    pass
 
 __all__ = [
     "PolicyAuthor",
