@@ -177,6 +177,33 @@ After all packs and mappings are extracted, `_load_price_tables_from_cache()` sc
 
 The current verification depth is content-hash check only; signature verification on the manifest is implemented but manifests today ship without a real `signature` field on the catalog inline. The full signed-manifest path activates when the producer-side improvement lands (see `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`); the consumer side is wired and waiting.
 
+### CDN integration smoke test: 8-scenario tier matrix
+
+`tests/integration_cdn_smoke.py` exercises the production CDN license gate across the full tier matrix. The suite covers free / developer / team / enterprise tiers, expired-JWT rejection, and missing-header rejection — 8 scenarios in total:
+
+| Scenario | License header | Path | Expected |
+|---|---|---|---|
+| no header → catalog | (none) | `/v1.0.0/catalogs/pack-index.json` | 401 |
+| no header → pack | (none) | `/v1.0.0/packs/aws-cost-aware-defaults.tar.gz` | 401 |
+| developer → catalog | `TESSERA_DEV_JWT` | `/v1.0.0/catalogs/pack-index.json` | 200 |
+| developer → in-tier pack | `TESSERA_DEV_JWT` | `/v1.0.0/packs/aws-cost-aware-defaults.tar.gz` | 200 |
+| developer → above-tier pack | `TESSERA_DEV_JWT` | `/v1.0.0/packs/hipaa-guardrails.tar.gz` | 403 |
+| team → team pack | `TESSERA_TEAM_JWT` | `/v1.0.0/packs/hipaa-guardrails.tar.gz` | 200 |
+| enterprise → enterprise pack | `TESSERA_ENTERPRISE_JWT` | `/v1.0.0/packs/fintech-pack.tar.gz` | 200 |
+| expired JWT | `TESSERA_EXPIRED_JWT` | `/v1.0.0/packs/aws-cost-aware-defaults.tar.gz` | 401 |
+
+Each test is marked `@pytest.mark.cdn_integration` and skips via `pytest.skip()` when its required env var is absent — so the file is committed but the suite is inert until JWTs are minted. Run the full matrix after exporting JWTs from `admin.cloudmorph.io`:
+
+```bash
+export TESSERA_DEV_JWT=<developer JWT>
+export TESSERA_TEAM_JWT=<team JWT>
+export TESSERA_ENTERPRISE_JWT=<enterprise JWT>
+export TESSERA_EXPIRED_JWT=<any expired JWT>
+pytest -m cdn_integration tests/integration_cdn_smoke.py -v
+```
+
+Execution is gated on the admin license-issuance UI (B-5) being live and test JWTs minted at each tier.
+
 ## Cache layout
 
 `cache_dir` (default `~/.tessera/intelligence/`) holds:
