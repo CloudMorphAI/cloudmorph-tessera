@@ -30,7 +30,7 @@ LABEL org.opencontainers.image.title="Tessera"
 LABEL org.opencontainers.image.description="The open-source MCP firewall for AI agents"
 
 RUN groupadd -g 10001 tessera && \
-    useradd  -u 10001 -g 10001 -M -s /usr/sbin/nologin tessera && \
+    useradd  -u 10001 -g 10001 -m -d /home/tessera -s /usr/sbin/nologin tessera && \
     mkdir -p /etc/tessera/policies /var/lib/tessera && \
     chown -R tessera:tessera /etc/tessera /var/lib/tessera
 
