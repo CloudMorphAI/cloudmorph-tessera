@@ -119,7 +119,7 @@ The client is initialized only when `TESSERA_INFRACOST_URL` is set. No client = 
 
 ## The price-table consumer pattern (active architecture)
 
-The cost-resolution architecture (Option A in `tessera-intelligence/arch/status/aws-mappings.md`) is build-time price materialization, active as of v0.3.0:
+The cost-resolution architecture (Option A in `tessera-intelligence/arch/status/cloud-mappings.md`) is build-time price materialization, active as of v0.3.0:
 
 1. The producer (`tessera-intelligence`) runs every mapping YAML's `infracost_query` once per release, materializes results into `aws-prices-<version>.json`, signs the artifact with the Ed25519 key, ships it alongside the mapping bundle.
 2. This repo's `IntelligenceClient` fetches the price-table artifact at refresh time, scans the mappings cache for `*-prices-*.json` files, and loads each into a `PriceTable` instance via `tessera/cost/price_table.py`.
@@ -156,7 +156,7 @@ The intelligence-content consumer architecture and the producer architecture are
 
 The producer side of the cost/blast-radius/policy-pack chain is the load-bearing source-of-truth; this repo's role is verify-then-consume. Detailed producer-side architecture lives in `tessera-intelligence/arch/status/`:
 
-- Mapping schema + cost-resolution architecture: `aws-mappings.md`
+- Mapping schema + cost-resolution architecture: `cloud-mappings.md`
 - Pack file conventions + manifest + tier model: `policy-packs.md`
 - Signing chain end-to-end: `signing-and-trust.md`
 - Blast-radius rules + stub algorithm: `blast-radius.md`

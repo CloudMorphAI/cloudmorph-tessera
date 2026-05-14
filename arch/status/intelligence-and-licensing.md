@@ -239,4 +239,4 @@ Closing the boundary cleanly: the OSS package's view of the world is "I have a p
 - For the producer-side signing chain: `tessera-intelligence/arch/status/signing-and-trust.md`.
 - For the CDN's edge license gating: `tessera-intelligence/arch/status/distribution-cdn.md`.
 - For where intelligence-fetched policies plug into the policy loader: `policy-engine.md`.
-- For pack and mapping schemas: `tessera-intelligence/arch/status/policy-packs.md` and `aws-mappings.md`.
+- For pack and mapping schemas: `tessera-intelligence/arch/status/policy-packs.md` and `cloud-mappings.md`.
