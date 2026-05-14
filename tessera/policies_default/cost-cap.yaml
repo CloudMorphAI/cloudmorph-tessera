@@ -1,0 +1,18 @@
+id: cost-cap
+name: Cost Cap
+description: Block tool calls that exceed per-request cost thresholds.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_greater_than
+        arg: max_tokens
+        value: 100000
+      - condition: arg_greater_than
+        arg: estimated_cost_usd
+        value: 1.0
+action: block
+reason: "Request exceeds cost threshold"
+priority: 50

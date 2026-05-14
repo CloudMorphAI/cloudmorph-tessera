@@ -1,0 +1,20 @@
+id: data-residency-eu
+name: EU Data Residency
+description: Ensure data operations stay within EU regions.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: action_class_in
+    values: ["write.create", "write.update", "read.get"]
+  - condition: none_of
+    conditions:
+      - condition: region_in
+        arg: region
+        regions: ["eu-", "europe-"]
+      - condition: region_in
+        arg: location
+        regions: ["eu-", "europe-"]
+action: block
+reason: "Data operation outside EU residency boundary"
+priority: 80

@@ -1,0 +1,12 @@
+id: write-action-approval
+name: Write Action Approval
+description: Require human approval for all write and delete operations.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: action_class_in
+    values: ["write.create", "write.update", "write.delete"]
+action: require_approval
+reason: "Write operation requires human approval"
+priority: 70

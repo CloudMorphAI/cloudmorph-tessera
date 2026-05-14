@@ -95,7 +95,11 @@ where = ["."]
 include = ["tessera*"]
 
 [tool.setuptools.package-data]
-tessera = ["intelligence/*.pem", "intelligence/*.json"]
+tessera = [
+    "intelligence/*.pem",
+    "intelligence/*.json",
+    "policies_default/*.yaml",
+]
 
 [tool.ruff]
 line-length = 110

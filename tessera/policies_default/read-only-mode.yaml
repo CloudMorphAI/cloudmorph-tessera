@@ -1,0 +1,14 @@
+id: read-only-mode
+name: Read-Only Mode
+description: Allow only read operations; block everything else.
+match:
+  upstream: "*"
+  tool: "*"
+when:
+  - condition: none_of
+    conditions:
+      - condition: action_class_in
+        values: ["read.list", "read.describe", "read.get", "read.search", "read.aggregate"]
+action: block
+reason: "System is in read-only mode — only read operations are permitted"
+priority: 60
