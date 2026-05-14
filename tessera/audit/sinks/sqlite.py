@@ -53,6 +53,17 @@ _ITER_SCOPED = "SELECT payload_json FROM audit_events WHERE scope=? ORDER BY sco
 
 _ITER_SCOPES = "SELECT DISTINCT scope FROM audit_events"
 
+_FETCH_BY_ID = "SELECT payload_json FROM audit_events WHERE event_id=? LIMIT 1"
+
+_ITER_RECENT = (
+    "SELECT payload_json FROM audit_events WHERE scope=? "
+    "ORDER BY seq DESC LIMIT ?"
+)
+
+_ITER_RECENT_ALL = (
+    "SELECT payload_json FROM audit_events ORDER BY scope, seq DESC LIMIT ?"
+)
+
 
 class SqliteSink:
     name: str = "sqlite"
@@ -130,3 +141,21 @@ class SqliteSink:
         cursor = self._conn.execute(_ITER_SCOPES)
         for row in cursor:
             yield str(row[0])
+
+    def fetch_by_id(self, event_id: str) -> dict[str, Any] | None:
+        """Return a single event by event_id, or None if not found."""
+        row = self._conn.execute(_FETCH_BY_ID, (event_id,)).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["payload_json"])
+
+    def iter_recent(self, scope: str | None = None, limit: int = 20) -> Iterator[dict[str, Any]]:
+        """Yield the most recent N events for a scope (desc seq), or across all scopes."""
+        if scope is None:
+            cursor = self._conn.execute(_ITER_RECENT_ALL, (limit,))
+        else:
+            cursor = self._conn.execute(_ITER_RECENT, (scope, limit))
+        rows = list(cursor)
+        # Reverse so output is chronological (oldest-first within the window)
+        for row in reversed(rows):
+            yield json.loads(row["payload_json"])

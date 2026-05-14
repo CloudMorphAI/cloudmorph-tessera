@@ -151,6 +151,211 @@ def audit_verify(
 
 
 # ---------------------------------------------------------------------------
+# audit tail
+# ---------------------------------------------------------------------------
+
+
+@audit_app.command("tail")
+def audit_tail(
+    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
+    scope: str = typer.Option(None, "--scope"),
+    follow: bool = typer.Option(False, "--follow", help="Poll for new events."),
+    n: int = typer.Option(20, "-n", "--limit", help="Number of recent events to show."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Print recent audit events; --follow polls for new ones."""
+    from tessera.audit.inspect import tail_events
+    from tessera.audit.sinks.sqlite import SqliteSink
+
+    db_path = Path(audit_path)
+    if not db_path.exists():
+        typer.echo("No audit database found at: " + audit_path, err=True)
+        raise typer.Exit(1)
+
+    sink = SqliteSink(audit_path)
+    try:
+        for event in tail_events(sink, scope=scope, limit=n, follow=follow):
+            if json_output:
+                typer.echo(json.dumps(event))
+            else:
+                occurred_at = event.get("occurredAt", "")
+                event_id = event.get("eventId", "")
+                event_type = event.get("eventType", "")
+                tenant = event.get("tenantId", "")
+                payload = event.get("payload", {})
+                detail = ""
+                if event_type == "decision":
+                    detail = (
+                        f"policy={payload.get('policy_id', '-')} "
+                        f"reason={payload.get('reason', '-')}"
+                    )
+                elif event_type == "passthrough":
+                    detail = f"method={payload.get('method', '-')}"
+                elif event_type == "intent_derivation":
+                    detail = f"principal={payload.get('principal_id', '-')}"
+                typer.echo(
+                    f"[{occurred_at}] {event_id} scope={tenant}  {event_type:<30} {detail}"
+                )
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sink.close()
+
+
+# ---------------------------------------------------------------------------
+# audit verify-chain
+# ---------------------------------------------------------------------------
+
+
+@audit_app.command("verify-chain")
+def audit_verify_chain(
+    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
+    scope: str = typer.Option(None, "--scope"),
+    all_scopes: bool = typer.Option(False, "--all"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Walk the audit hash chain and print first broken link or OK."""
+    from tessera.audit.sinks.sqlite import SqliteSink
+    from tessera.audit.verifier import verify_chain
+
+    db_path = Path(audit_path)
+    if not db_path.exists():
+        results: list[dict[str, Any]] = [
+            {
+                "scope": scope or "default",
+                "events_checked": 0,
+                "first_event_at": None,
+                "last_event_at": None,
+                "ok": True,
+                "first_failure": None,
+            }
+        ]
+        if json_output:
+            typer.echo(json.dumps(results))
+        else:
+            typer.echo(f"scope={results[0]['scope']}  events=0  ok=true")
+        return
+
+    sink = SqliteSink(audit_path)
+    try:
+        if all_scopes:
+            scopes = list(sink.iter_scopes()) or ["default"]
+        elif scope:
+            scopes = [scope]
+        else:
+            scopes = ["default"]
+
+        results = [verify_chain(sink, s) for s in scopes]
+    finally:
+        sink.close()
+
+    if json_output:
+        typer.echo(json.dumps(results))
+    else:
+        for r in results:
+            status = "ok" if r["ok"] else "FAILED"
+            typer.echo(
+                f"scope={r['scope']}  events={r['events_checked']}  status={status}"
+            )
+            if r.get("first_event_at"):
+                typer.echo(f"  first event: {r['first_event_at']}")
+            if r.get("last_event_at"):
+                typer.echo(f"  last event:  {r['last_event_at']}")
+            if not r["ok"] and r.get("first_failure"):
+                f = r["first_failure"]
+                typer.echo(
+                    f"  FAILED at seq={f['seq']} event_id={f['event_id']}", err=True
+                )
+                typer.echo(
+                    f"  kind: {f['kind']}", err=True
+                )
+                typer.echo(
+                    f"  expected: {f.get('expected_event_hash', '')}", err=True
+                )
+                typer.echo(
+                    f"  computed: {f.get('computed_event_hash', '')}", err=True
+                )
+
+    any_failed = any(not r["ok"] for r in results)
+    if any_failed:
+        raise typer.Exit(3)
+
+
+# ---------------------------------------------------------------------------
+# audit export
+# ---------------------------------------------------------------------------
+
+
+@audit_app.command("export")
+def audit_export(
+    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
+    scope: str = typer.Option(None, "--scope"),
+    fmt: str = typer.Option("jsonl", "--format", help="jsonl or csv"),
+    output: str = typer.Option("-", "--output", help="Output path or - for stdout"),
+) -> None:
+    """Bulk export the audit log in JSONL or CSV format."""
+    from tessera.audit.inspect import export_csv, export_jsonl
+    from tessera.audit.sinks.sqlite import SqliteSink
+
+    db_path = Path(audit_path)
+    if not db_path.exists():
+        typer.echo("No audit database found at: " + audit_path, err=True)
+        raise typer.Exit(1)
+
+    if fmt not in ("jsonl", "csv"):
+        typer.echo(f"Unknown format: {fmt!r}. Choose jsonl or csv.", err=True)
+        raise typer.Exit(2)
+
+    sink = SqliteSink(audit_path)
+    try:
+        rows = export_jsonl(sink, scope=scope) if fmt == "jsonl" else export_csv(sink, scope=scope)
+        if output == "-":
+            for row in rows:
+                typer.echo(row, nl=fmt == "jsonl")
+        else:
+            with open(output, "w", encoding="utf-8") as fh:
+                for row in rows:
+                    fh.write(row)
+                    if fmt == "jsonl":
+                        fh.write("\n")
+            typer.echo(f"Exported to {output}")
+    finally:
+        sink.close()
+
+
+# ---------------------------------------------------------------------------
+# audit inspect
+# ---------------------------------------------------------------------------
+
+
+@audit_app.command("inspect")
+def audit_inspect(
+    event_id: str = typer.Argument(..., help="Event ID to inspect (evt_...)"),
+    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
+) -> None:
+    """Fetch and pretty-print a single audit event by ID."""
+    from tessera.audit.inspect import fetch_event_by_id
+    from tessera.audit.sinks.sqlite import SqliteSink
+
+    db_path = Path(audit_path)
+    if not db_path.exists():
+        typer.echo("No audit database found at: " + audit_path, err=True)
+        raise typer.Exit(1)
+
+    sink = SqliteSink(audit_path)
+    try:
+        event = fetch_event_by_id(sink, event_id)
+    finally:
+        sink.close()
+
+    if event is None:
+        typer.echo(f"Event not found: {event_id}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(json.dumps(event, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # policy test
 # ---------------------------------------------------------------------------
 
