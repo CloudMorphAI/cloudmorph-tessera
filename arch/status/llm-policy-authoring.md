@@ -56,7 +56,7 @@ The shared builder is consumed by every provider's `__init__`. There is no per-p
 
 Each provider is a single Python file at `tessera/llm/<name>.py` and implements both `PolicyAuthor` and `ToolCatalogAnalyzer`:
 
-- **`gemini.py:GeminiPolicyAuthor`** — uses `google.genai`. Default model `gemini-2.0-flash-exp`. Sets `response_mime_type="application/json"` so the SDK returns structured JSON natively. `temperature=0.1`, `top_k=20` for low-variance output. **This is the v0.2.0 primary** — the production-tested provider. Other providers are "Alpha. v0.2.0 stub — production-tested only against Gemini" (per the docstring in `anthropic.py`).
+- **`gemini.py:GeminiPolicyAuthor`** — uses `google.genai`. Default model `gemini-2.0-flash-exp`. Sets `response_mime_type="application/json"` so the SDK returns structured JSON natively. `temperature=0.1`, `top_k=20` for low-variance output. **This is the primary, production-tested provider.** Other providers are "Alpha. stub — production-tested only against Gemini" (per the docstring in `anthropic.py`).
 - **`anthropic.py:AnthropicPolicyAuthor`** — uses `anthropic`. Default model `claude-3-5-sonnet-20241022`. Standard messages API with the system prompt and a single user message.
 - **`openai.py:OpenAIPolicyAuthor`** — uses `openai`. The OpenAI chat-completions API.
 - **`azure_openai.py:AzureOpenAIPolicyAuthor`** — uses `openai` + `azure-identity`. Same chat-completions interface, Azure-routed.
@@ -73,7 +73,7 @@ The provider set was chosen as a cost-and-coverage decision, not a technical pre
 - **Bedrock** — for AWS-native customers who can't (or won't) send tool catalogs to a non-AWS endpoint. Cost-bills against the same AWS account that already pays for the firewall.
 - **Azure OpenAI** — same logic, Azure-native customers.
 
-Mistral and Cohere are deliberately out of v0.2.0 scope. They are credible alternatives — Mistral on EU-resident-data grounds, Cohere on cost-per-token for enterprise — but adding them requires implementing two more provider classes, two more SDK dependencies, and (more importantly) two more rounds of "how does this provider handle structured JSON output." The founder's funding stack has Mistralship (€30K cohort) and Cohere startup program (~25% off enterprise) in the AI-credit acquisition pipeline; integration is captured as `improvements/v0.4.0-llm-providers-mistral-cohere.md`. Adding them after the credit footprint is acquired matches the cost-discipline pattern that drove the original 5.
+Mistral and Cohere are deliberately out of current scope. See `arch/improvements/v0.4.0-llm-providers-mistral-cohere.md`. They are credible alternatives — Mistral on EU-resident-data grounds, Cohere on cost-per-token for enterprise — but adding them requires implementing two more provider classes, two more SDK dependencies, and (more importantly) two more rounds of "how does this provider handle structured JSON output." The founder's funding stack has Mistralship (€30K cohort) and Cohere startup program (~25% off enterprise) in the AI-credit acquisition pipeline; adding them after the credit footprint is acquired matches the cost-discipline pattern that drove the original 5.
 
 ## Cost-discipline default
 

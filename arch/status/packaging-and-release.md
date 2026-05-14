@@ -63,7 +63,7 @@ RUN groupadd -g 10001 tessera && \
     chown -R tessera:tessera /etc/tessera /var/lib/tessera
 ```
 
-The `-m -d /home/tessera` flag is the v0.2.1 HOME-directory fix. The previous shape was `useradd -M -d /home/tessera` (capital `M` — "do not create home"), which left `/home/tessera` non-existent. Inside the container, `Path.home()` returns `/home/tessera`, and several subsystems (`DailySpendState` defaulting to `~/.tessera/state/`, `IntelligenceClient` defaulting to `~/.tessera/intelligence/`, `LicenseValidator` writing to `cache_dir/license.json`) attempt to `mkdir(parents=True)` under that path. Without the home directory, the `mkdir` succeeded but on a path with no owner-write permission for the `tessera` user, then subsequent writes failed.
+The `-m -d /home/tessera` flag ensures `useradd` creates the home directory; without it, libraries calling `Path.home()` fail EACCES. The previous shape was `useradd -M -d /home/tessera` (capital `M` — "do not create home"), which left `/home/tessera` non-existent. Inside the container, `Path.home()` returns `/home/tessera`, and several subsystems (`DailySpendState` defaulting to `~/.tessera/state/`, `IntelligenceClient` defaulting to `~/.tessera/intelligence/`, `LicenseValidator` writing to `cache_dir/license.json`) attempt to `mkdir(parents=True)` under that path. Without the home directory, the `mkdir` succeeded but on a path with no owner-write permission for the `tessera` user, then subsequent writes failed.
 
 Fixing this required swapping `-M` (don't create) for `-m` (do create) and adding the explicit `-d /home/tessera`. The lowercase `m` is the load-bearing letter. The fix is captured in the Dockerfile already; it's a v0.2.1 ship-out item.
 
@@ -78,7 +78,7 @@ Other runtime properties:
 - `ENV TESSERA_POLICY_DIR=/etc/tessera/policies` — policy directory bind-mount point.
 - `ENV TESSERA_AUDIT_PATH=/var/lib/tessera/audit.db` — SQLite audit DB; intended to be a named volume so the chain survives container replacement.
 
-The pip-CVE remediation (v0.1.1) lives in both stages: `RUN pip install --no-cache-dir --upgrade "pip>=26.1.1"` to close CVE-2026-6357. The CVE is dormant in the running container (Tessera never invokes `pip install` at runtime) but image scanners flag the dormant finding; upgrading removes the noise.
+The pip-CVE remediation lives in both stages: `RUN pip install --no-cache-dir --upgrade "pip>=26.1.1"` to close CVE-2026-6357. The CVE is dormant in the running container (Tessera never invokes `pip install` at runtime) but image scanners flag the dormant finding; upgrading removes the noise.
 
 ## Release workflow: `.github/workflows/release.yml`
 

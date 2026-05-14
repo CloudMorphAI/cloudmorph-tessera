@@ -46,7 +46,7 @@ Resolution is `module.path:ClassName` via `tessera/pluggable.py:resolve()`. Pure
 9. **Honor decision.**
    - `allow` / `log_only` action — forward to upstream, audit success, return upstream response with `tessera_audit_event_id` injected at `result._meta` or `error.data._meta`.
    - `block` — emit audit event, return JSON-RPC error `-32603` ("Internal error") with the policy's `reason` field at `error.data.reason`.
-   - `require_approval` — emit audit event with `decision: require_approval`, return JSON-RPC error `-32604` ("Approval required") with `reason = approval_required: <policy reason>`. v0.2.0 does not include the approval-fulfillment surface; the error returns to the agent unchanged and the human-approval workflow is the operator's responsibility.
+   - `require_approval` — emit audit event with `decision: require_approval`, return JSON-RPC error `-32604` ("Approval required") with `reason = approval_required: <policy reason>`. There is no approval-fulfillment surface today; the JSON-RPC error returns to the agent unchanged and the human-approval workflow is the operator's responsibility.
 
 Steps 1–9 are sequential. The only concurrency is the optional pre-fetch (step 5) which `await`s the cost backend before the engine runs synchronously.
 
@@ -64,7 +64,7 @@ Every decision (and most pass-throughs) is written to an audit event. The audit 
 
 - **`HashChain` (`tessera/audit/chain.py`)** — in-memory per-scope rolling SHA-256 bookkeeping. `head(scope)` returns the most-recent event hash; `stamp(event)` sets `prevEventHash`, computes a new `eventHash` over the canonical JSON of the stamped event, advances the head, and returns the result. Thread-safe via `RLock`. Persistence is the sink's concern.
 - **`AuditEmitter` (`tessera/audit/emitter.py`)** — fan-out to ≥1 sink with per-sink failure isolation. Builds the event dict (`schemaVersion`, `eventId`, `tenantId`, `eventType`, `payload`, `occurredAt`), routes it through `HashChain.stamp()`, then calls `sink.emit(stamped)` on every sink. A sink that raises `AuditSinkError` is logged; other sinks continue. `TESSERA_DEBUG=1` runs each event through `schemas/audit_event.schema.json` for development-time schema validation.
-- **`AuditSink` Protocol (`tessera/audit/sinks/base.py`)** — `emit(event)`, `close()`, `head_hash(scope)`, `iter_events(scope)`. Default impl `SqliteSink` uses WAL journal mode and `PRAGMA synchronous=NORMAL`; schema in `tessera/audit/sinks/sqlite.py:_CREATE_TABLE`. `StdoutSink` (for Docker log collection) and a `_buffered` internal wrapper round out the bundled set. Per A-4-9 (v0.2.0 breaking change), `BufferedSink` is no longer in the public `tessera.audit` exports.
+- **`AuditSink` Protocol (`tessera/audit/sinks/base.py`)** — `emit(event)`, `close()`, `head_hash(scope)`, `iter_events(scope)`. Default impl `SqliteSink` uses WAL journal mode and `PRAGMA synchronous=NORMAL`; schema in `tessera/audit/sinks/sqlite.py:_CREATE_TABLE`. `StdoutSink` (for Docker log collection) and a `_buffered` internal wrapper round out the bundled set. `BufferedSink` is internal and not exported in the public `tessera.audit` namespace.
 
 The event-schema contract is `schemas/audit_event.schema.json`. Required fields: `schemaVersion` (literal `v0.1`), `eventId` (`evt_<urlsafe-base64>`), `tenantId`, `eventType`, `occurredAt` (RFC 3339), `prevEventHash` (64-char hex or empty), `eventHash` (64-char hex), `payload`. Optional: `sessionId`, `actorId`, `pricingSnapshotId`.
 
@@ -94,7 +94,7 @@ State survival across restarts is by virtue of SQLite persistence; the connectio
 
 ## Pass-through audit emissions
 
-Pass-through methods (the 11-method set) emit a `passthrough` audit event for visibility without going through the engine. The five data-exfil-risk methods additionally emit a `passthrough_data_leak_candidate` event with the method name, truncated params (string values > 1 KB are replaced with `<truncated N chars>`), principal_id, scope, upstream, and request_id. This audit-only handling is the v0.2.0 compromise (OQ-1): real-world traffic patterns for these methods aren't yet understood, so policy evaluation is deferred, but operators get visibility without an explicit policy opt-in.
+Pass-through methods (the 11-method set) emit a `passthrough` audit event for visibility without going through the engine. The five data-exfil-risk methods additionally emit a `passthrough_data_leak_candidate` event with the method name, truncated params (string values > 1 KB are replaced with `<truncated N chars>`), principal_id, scope, upstream, and request_id. This audit-only handling is a deliberate compromise (per OQ-1): real-world traffic patterns for these methods aren't yet understood, so policy evaluation is deferred, but operators get visibility without an explicit policy opt-in.
 
 The truncation marker bounds audit-row size at ~1 KB per param value, which keeps the SQLite WAL from ballooning on long completion arguments.
 

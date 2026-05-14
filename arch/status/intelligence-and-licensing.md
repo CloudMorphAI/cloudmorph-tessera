@@ -172,7 +172,7 @@ The producer-side verification flow is detailed in `tessera-intelligence/arch/st
 5. (Today) Trust the manifest content directly. (Planned v0.3.0) Ed25519-verify the manifest's `signature` field against the public key — closing the per-tarball binding gap described in `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`.
 6. Extract into `cache_dir/packs/<name>/<version>/`.
 
-The current verification depth is content-hash check only; signature verification on the manifest is implemented but the v0.2.0 manifests ship without a real `signature` field on the catalog inline. The full signed-manifest path activates when the v0.3.0 producer-side improvement lands; the consumer side is wired and waiting.
+The current verification depth is content-hash check only; signature verification on the manifest is implemented but manifests today ship without a real `signature` field on the catalog inline. The full signed-manifest path activates when the producer-side improvement lands (see `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`); the consumer side is wired and waiting.
 
 ## Cache layout
 

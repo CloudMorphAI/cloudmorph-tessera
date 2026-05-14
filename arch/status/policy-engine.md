@@ -51,7 +51,7 @@ Pydantic models reject extra keys (`extra="forbid"`) — a typo in a condition d
 | `data_volume` | Byte estimate > / < threshold | Three estimators: `static_arg_size`, `s3_get_byte_estimate`, `rds_query_result_estimate` |
 | `cumulative_spend_today` | Per-scope daily spend > / < threshold | Requires `state_backend` (`DailySpendState`) |
 
-The first 16 ship in v0.1; the last five are v0.2.0 semantic conditions that unlock cost-aware and blast-radius policies. The numbers in the v0.2.0 CHANGELOG entry for "5 new semantic conditions" enumerate `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, and `data_volume` — `time_of_day_outside` was already in v0.1 despite the CHANGELOG line that bundles it with the new five.
+Sixteen are basic condition types; the remaining five are semantic conditions that unlock cost-aware and blast-radius policies. The five semantic conditions are `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, and `data_volume` — `time_of_day_outside` is a basic condition despite being thematically adjacent to the semantic set.
 
 Dispatch is a single dict lookup in `_DISPATCH` keyed on `type(cond)`. Unknown condition types return `False` (fail-closed) rather than raising — defensive against engine/schema version skew during a rolling upgrade.
 
@@ -174,7 +174,7 @@ Alongside the 7 production defaults, the package ships 5 AWS-illustrative exampl
 
 These illustrate, not enforce. They require the cost / blast-radius / state backends to be wired; when those backends are absent the fail-closed-for-cost rule keeps them inert (fail in the don't-block direction). Operators copy them, tune thresholds, and deploy.
 
-The 7 vendor-specific policies that shipped in v0.1.x (`github-mcp-protection`, `jira-mcp-protection`, `owasp-mcp-prompt-injection`, `owasp-mcp-tool-poisoning`, `postgres-mcp-protection`, `salesforce-mcp-protection`, `slack-mcp-protection`) migrated to the Tessera Cloud premium pack `vendor-mcp-protection` per the OQ-3 decision (described in `tessera-intelligence/arch/status/policy-packs.md`). Customers reach them via `tessera intelligence pull vendor-mcp-protection` once their license JWT validates.
+The seven vendor-specific reference policies (`github-mcp-protection`, `jira-mcp-protection`, `owasp-mcp-prompt-injection`, `owasp-mcp-tool-poisoning`, `postgres-mcp-protection`, `salesforce-mcp-protection`, `slack-mcp-protection`) live in the Tessera Cloud premium pack `vendor-mcp-protection` (per the OQ-3 decision described in `tessera-intelligence/arch/status/policy-packs.md`). Customers reach them via `tessera intelligence pull vendor-mcp-protection` once their license JWT validates.
 
 ## Decision payload and audit linkage
 
