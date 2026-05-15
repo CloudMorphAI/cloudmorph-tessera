@@ -88,9 +88,31 @@ On process restart, every scope's head needs to be restored before new events ar
 
 `tessera/state/daily_spend.py:DailySpendState` is the sole stateful backend in the OSS package today. It's a thread-safe SQLite store keyed `(scope, day)` → `cumulative_usd`, used by the `cumulative_spend_today` condition (described in `policy-engine.md`). The DB lives at `~/.tessera/state/daily_spend.db` by default, overridable via `TESSERA_STATE_DIR`. Day boundaries are UTC; `add_spend()` uses `INSERT ... ON CONFLICT DO UPDATE` to accumulate.
 
-The proxy does not automatically write to `DailySpendState` on every allowed call — that would require deciding what counts as "the cost of the call," which depends on operation, region, and call-shape specifics that vary per upstream. Today the state backend is read-only from the engine's POV; writing is the responsibility of an operator-supplied audit-stream consumer that converts `decision.allow` events into spend deltas. Closing this loop (auto-write spend on allowed cost-aware calls) is a v0.3.0 candidate that has not been committed yet.
+Cost write-back is wired into the proxy's success path (P0-18, shipped 2026-05). After an `allow` or `observation`-mode forward, the proxy calls `_record_daily_spend(state, scope, tool_name, cost_cache)` which reads the prefetched cost estimate (from `cost_cache[tool_name]`, populated by the price-table or Infracost prefetch in step 5 of the interception flow) and schedules `state_backend.add_spend(scope, usd)` via `asyncio.create_task` + `asyncio.to_thread`. The write is fire-and-forget so the SQLite WAL fsync never blocks the customer's response; failures bump `daily_spend_write_failures_total` and are logged at WARN. The write uses the pre-call estimate (not the actual post-call cost) — for usage-priced ops (Bedrock token-spend, S3 GET egress) the estimate is a ceiling. Post-call usage-based reconciliation is a future enhancement.
 
-State survival across restarts is by virtue of SQLite persistence; the connection is opened lazily on first lookup, schema is created if absent.
+State survival across restarts is by virtue of SQLite persistence; the connection is opened lazily on first lookup, schema is created if absent. Regression coverage lives in `tests/unit/state/test_daily_spend.py` — it pins the contract that `add_spend()` actually persists to disk and survives a re-open.
+
+## Async audit emit (P0-13)
+
+The audit emit path used to be synchronous: the request handler called `_emit(...)`, which acquired an `RLock`, computed a SHA-256 over canonical JSON, then called `SqliteSink.emit()` (a WAL-mode INSERT with `synchronous=NORMAL`). Total cost: 0.5–5 ms per call inside `async def proxy(...)`, with a worst-case 10 ms when the WAL fsync hit a slow disk. At 50 rps × 3 emits per request that's 15–75% of an event-loop worker spent in audit emit.
+
+The current shape moves the stamp + sink work off the hot path:
+
+- **`AuditEmitter.emit_with_id(...)`** — variant that uses a caller-supplied `event_id`. The hot path allocates the ID synchronously (cheap — `secrets.token_urlsafe` only), injects it into the response immediately, and defers stamp + persist.
+- **`AsyncAuditQueue` (`tessera/audit/async_emit.py`)** — single-consumer `asyncio.Queue` with a background task that drains via `asyncio.to_thread(emitter.emit_with_id, ...)`. Soft-bounded at 10k in-flight jobs; on overflow, drops the oldest event and bumps `audit_emit_dropped_total`. A single consumer is intentional: the chain still goes through `HashChain.stamp()`'s `RLock`, but consumer FIFO order is deterministic and matches enqueue order.
+- **`_emit(...)` in `proxy.py`** — allocates the event_id, calls `audit_queue.enqueue(...)` (cheap `put_nowait`), and returns `{"eventId": event_id}` immediately. Two override paths:
+  - `TESSERA_AUDIT_SYNC=1` — fully synchronous emit (legacy behaviour, used by tests that need deterministic flush before assertions).
+  - `audit_queue is None` — pre-lifespan emits (startup audit event) fall back to a sync emit so the chain still starts cleanly.
+- **Lifespan integration** — `audit_queue.start()` fires after the sink + emitter map are constructed; `await audit_queue.drain()` runs in lifespan shutdown before `sink.close()` so any in-flight events flush against a live SQLite handle. Drain has a 10s timeout; on overshoot the consumer is cancelled and the warning is logged.
+
+Failure modes:
+- Sink raises mid-stamp → consumer logs `audit_emit_failed_async`, bumps `audit_emit_failures_total`, continues draining the queue.
+- Queue overflow → event dropped, `audit_emit_dropped_total` bumped.
+- Drain timeout → cancelled, `audit_drain_timeout` logged with the residual queue depth.
+
+Chain integrity is preserved: `HashChain.stamp()` is still called once per event under the per-scope `RLock`, so even concurrent enqueues from multiple `asyncio.to_thread` workers (none in the single-consumer design, but defensive) cannot interleave stamping. The chain order matches consumer-drain order, which matches enqueue order, which matches request-arrival order.
+
+Regression coverage: `tests/unit/audit/test_async_emit.py` covers `emit_with_id`, drain semantics, sync-fallback, and consumer-survives-sink-failure.
 
 ## Pass-through audit emissions
 

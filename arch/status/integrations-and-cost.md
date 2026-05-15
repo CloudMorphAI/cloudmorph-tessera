@@ -81,6 +81,15 @@ The backend is opt-in via `TESSERA_BLAST_RADIUS_ENABLED=1`. When unset, `context
 
 The 300-second cache TTL is uniform with the producer-side rule YAMLs (every rule in `blast-radius/aws/v1.0.0/` declares `cache_ttl_seconds: 300`). Principal expansion is expensive (live IAM reads) but IAM topology changes slowly; 5-minute caching balances freshness against API cost.
 
+**Async prefetch (P0-14).** `BlastRadiusBackend.compute(tool_name, args)` is synchronous boto3 — calling it from inside `async def proxy(...)` would block the event loop for the duration of the IAM round-trip (200–2000 ms for a slow `iam:GetRole`). The proxy now prefetches the count at the start of the hot path, off the event loop:
+
+1. `PolicyEngine.policies_need_blast_radius(tool_name, upstream_name)` walks the loaded policies and returns True only if some matching policy uses a `BlastRadius` condition that targets this tool. When False, the IAM call is skipped entirely.
+2. When True, the proxy runs `count = await asyncio.to_thread(blast_radius_backend.compute, tool_name, arguments)` and stores the result in `context["blast_radius_cache"][tool_name]`.
+3. The condition evaluator (`_evaluate_blast_radius` in `tessera/policy/conditions.py`) consults `context["blast_radius_cache"]` first and only calls `compute()` synchronously if the cache is empty (fixture/test path; in production every gated request hits the cache).
+4. Prefetch failures bump `blast_radius_prefetch_failures_total` and leave the cache empty, which makes the evaluator's `blast_radius_backend is None` branch fail-closed — same semantics as a missing backend.
+
+Concurrent requests for `aws_iam_PutRolePolicy` now run their IAM reads in worker threads, so two parallel requests complete in ~max(t1, t2) instead of ~t1+t2.
+
 Cross-references: producer-side rules and algorithm rationale live in `tessera-intelligence/arch/status/blast-radius.md`.
 
 ## Cost: AWS mapping shim
@@ -130,15 +139,30 @@ Falls back to live Infracost on cache miss (operation in mappings but not yet in
 
 Ceiling-band cost handling (the Bedrock case) is part of the price-table contract. `price_realm: per_token` entries are multiplied at runtime by `args.maxTokens` to produce a ceiling estimate. Today the InfracostClient stores per-call rates as USD/unit and the band multiplier (3.0 for ceiling) is applied in the condition evaluator; the price-table architecture moves this into the artifact format itself. Same numerical outcome at the policy decision point; cleaner separation between content and evaluator.
 
+## DataVolume async prefetch (P0-15)
+
+`_evaluate_data_volume` in `tessera/policy/conditions.py` supports three estimators: `static_arg_size` (in-memory, free), `s3_get_byte_estimate` (boto3 `s3.head_object`), and `rds_query_result_estimate` (boto3 `rds-data.execute_statement` with an EXPLAIN). The S3/RDS estimators are synchronous boto3 calls — running them inline inside `async def proxy(...)` blocks the event loop for the round-trip (~50–500 ms typical, multi-second on throttling).
+
+The current shape (P0-15) mirrors the blast-radius pattern: prefetch into a per-request cache at the start of the hot path.
+
+- **Gate** — `PolicyEngine.policies_need_data_volume(tool_name, upstream_name)` returns the set of estimators in use by matching policies (or empty set if none). The proxy only prefetches `s3_get_byte_estimate` / `rds_query_result_estimate`; `static_arg_size` doesn't need any I/O.
+- **Pure-sync helpers** — `tessera.policy.conditions.s3_head_size_sync(args)` and `rds_explain_size_sync(args)` are top-level functions that take only the tool args and return `(cache_key, size_or_None)`. They are designed to be wrapped in `asyncio.to_thread` and populate the cross-request `_DATA_VOL_LRU` (a `cachetools.TTLCache` of 1000 entries × 300s TTL).
+- **Two-tier cache** — Per-request `_data_vol_cache` (dict in `context`, populated by prefetch and consulted by the evaluator first), plus the module-level `_DATA_VOL_LRU` (consulted next, so two concurrent requests for the same `(bucket, key)` make exactly one HeadObject). Both layers fall back to the live boto3 path only when prefetch was bypassed (fixture/test or moto).
+- **Failure isolation** — Prefetch exceptions bump `data_volume_prefetch_failures_total` and leave the cache empty; the evaluator falls back to the static-byte-size approximation (`len(json.dumps(args).encode())`) so the call still gets a decision.
+
+The optional `cachetools` dependency is soft: when missing (lean install), `_DATA_VOL_LRU` falls back to a plain dict with no TTL. That's fine for tests; production deployments should install `cachetools` for the eviction semantics.
+
 ## Daily-spend state backend
 
 `tessera/state/daily_spend.py:DailySpendState` is the data source for the `cumulative_spend_today` condition. SQLite-backed, per-scope, day-keyed (UTC). The proxy reads it at evaluation time via `context["state_backend"].get_today_spend(scope)`; the engine compares against the policy's `usd_threshold`.
 
 The backend is initialized at lifespan startup and persists across restarts. State directory defaults to `~/.tessera/state/` with override via `TESSERA_STATE_DIR`.
 
-The piece intentionally **missing** in v0.2.0 is the auto-write path: a successful allowed cost-aware call does not automatically increment the per-scope daily spend. Adding this requires deciding "what counts as the cost of this call" (per-instance-hour for EC2, per-token for Bedrock, per-request for S3) — that decision belongs in the price-table contract, not in the daily-spend backend. Closing the loop is a v0.3.0 candidate that hasn't been committed yet.
+**Auto-write integration (P0-18, shipped 2026-05).** The proxy now writes back per-call cost after a successful allow / observation forward. `_record_daily_spend(state, scope, tool_name, cost_cache)` in `tessera/proxy.py` reads the prefetched estimate from `cost_cache[tool_name]` and schedules `state_backend.add_spend(scope, usd)` via `asyncio.create_task` + `asyncio.to_thread`. The write is non-blocking — the customer's response returns before the SQLite WAL fsync completes. Failures bump `daily_spend_write_failures_total` and never affect the response.
 
-Today, operators wire daily-spend via an external audit-stream consumer (e.g., a script reading the SQLite audit log and applying spend deltas through `DailySpendState.add_spend()`). This works but is operator-supplied glue rather than first-party Tessera plumbing.
+The estimate semantics: for fixed-rate ops (EC2 `RunInstances` $/hr × hours, RDS `CreateDBInstance` $/hr × hours), the pre-fetched value is a good post-call approximation. For usage-priced ops (Bedrock `InvokeModel` $/token, S3 GET egress $/GB), the estimate is a ceiling — the actual cost depends on what the upstream returns. Post-call usage-based reconciliation (reading `response.usage` blocks) is a v0.4.0 candidate; today the v1 write-back uses the pre-call estimate.
+
+Before this wire-up landed, `add_spend()` had zero callers in audited scope — every `cumulative_spend_today` policy silently no-opped. The verification was the P0-18 task body; the gap is now closed. Regression coverage in `tests/unit/state/test_daily_spend.py` pins the persistence contract (scan → record → re-scan → row count + total grow as expected; survives a backend re-open).
 
 ## Cross-repo coupling map
 

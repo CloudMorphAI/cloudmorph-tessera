@@ -7,6 +7,7 @@ return False (fail-closed).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from collections.abc import Callable
@@ -23,6 +24,18 @@ try:
     import boto3  # type: ignore[import-untyped]
 except ImportError:
     boto3 = None
+
+# Optional dep: cachetools (for the cross-request DataVolume LRU below). Falls
+# back to an unbounded dict when missing — fine for tests; production should
+# install cachetools.
+try:
+    from cachetools import TTLCache  # type: ignore[import-untyped]
+except ImportError:
+    class TTLCache(dict):  # type: ignore[no-redef]
+        """Trivial fallback when cachetools is missing — unbounded dict, no TTL."""
+
+        def __init__(self, maxsize: int = 1000, ttl: float = 300.0) -> None:
+            super().__init__()
 
 from tessera.policy.action_verbs import verbs_for
 from tessera.policy.schema import (
@@ -49,6 +62,13 @@ from tessera.policy.schema import (
     TimeOfDayOutside,
     ToolNameIn,
 )
+
+# ── Cross-request DataVolume cache (P0-15) ────────────────────────────────────
+# Module-level TTL cache shared across requests. Two concurrent requests against
+# the same S3 (bucket, key) or RDS (cluster, statement-hash) tuple should hit
+# this cache rather than each spawn its own HeadObject / EXPLAIN.
+_DATA_VOL_LRU: TTLCache = TTLCache(maxsize=1000, ttl=300.0)
+_DATA_VOL_LRU_LOCK = threading.Lock()
 
 # Patchable in tests: replace with a lambda returning a fixed datetime
 _now_fn = datetime.now
@@ -418,10 +438,100 @@ def _evaluate_data_volume(cond: DataVolume, context: dict[str, Any]) -> bool:
     return byte_count < cond.bytes_threshold
 
 
+def _s3_head_cache_key(args: dict[str, Any]) -> tuple[str, str]:
+    """Return (bucket, key) for the S3 args, or ("", "") if missing."""
+    bucket = str(args.get("Bucket", args.get("bucket", "")) or "")
+    key = str(args.get("Key", args.get("key", "")) or "")
+    return bucket, key
+
+
+def _rds_explain_cache_key(args: dict[str, Any]) -> tuple[str, str, str]:
+    """Return (cluster_arn, secret_arn, stmt_hash) for the RDS args."""
+    statement = str(args.get("Statement", args.get("statement", "")) or "")
+    cluster_arn = str(args.get("resourceArn", args.get("ResourceArn", "")) or "")
+    secret_arn = str(args.get("secretArn", args.get("SecretArn", "")) or "")
+    if not statement or not cluster_arn or not secret_arn:
+        return "", "", ""
+    stmt_hash = hashlib.sha256(statement.encode("utf-8")).hexdigest()[:16]
+    return cluster_arn, secret_arn, stmt_hash
+
+
+def s3_head_size_sync(args: dict[str, Any]) -> tuple[str, int | None]:
+    """Synchronous body of S3 head_object lookup (P0-15).
+
+    Returns (cache_key, size_or_None). Designed to be wrapped in
+    `asyncio.to_thread` from the proxy hot path. Populates the cross-request
+    `_DATA_VOL_LRU`. Returns None on missing args or boto3 failure so the
+    caller can fall back to the static estimator.
+    """
+    bucket, key = _s3_head_cache_key(args)
+    if not bucket or not key:
+        return "", None
+    cache_key = f"s3_head:{bucket}/{key}"
+    with _DATA_VOL_LRU_LOCK:
+        cached = _DATA_VOL_LRU.get(cache_key)
+    if cached is not None:
+        return cache_key, int(cached)
+    if boto3 is None:
+        return cache_key, None
+    try:
+        s3 = boto3.client("s3")
+        head = s3.head_object(Bucket=bucket, Key=key)
+        size = int(head.get("ContentLength", 0))
+    except Exception:  # noqa: BLE001
+        return cache_key, None
+    with _DATA_VOL_LRU_LOCK:
+        _DATA_VOL_LRU[cache_key] = size
+    return cache_key, size
+
+
+def rds_explain_size_sync(args: dict[str, Any]) -> tuple[str, int | None]:
+    """Synchronous body of RDS Data-API EXPLAIN lookup (P0-15)."""
+    cluster_arn, secret_arn, stmt_hash = _rds_explain_cache_key(args)
+    if not cluster_arn or not secret_arn or not stmt_hash:
+        return "", None
+    cache_key = f"rds_explain:{cluster_arn}:{stmt_hash}"
+    with _DATA_VOL_LRU_LOCK:
+        cached = _DATA_VOL_LRU.get(cache_key)
+    if cached is not None:
+        return cache_key, int(cached)
+    if boto3 is None:
+        return cache_key, None
+    statement = str(args.get("Statement", args.get("statement", "")) or "")
+    database = str(args.get("database", args.get("Database", "")) or "")
+    try:
+        rds_data = boto3.client("rds-data")
+        explain_stmt = f"EXPLAIN {statement}"
+        resp = rds_data.execute_statement(
+            resourceArn=cluster_arn,
+            secretArn=secret_arn,
+            database=database,
+            sql=explain_stmt,
+        )
+        rows = resp.get("records", [])
+        total_bytes = sum(
+            len(str(field.get("stringValue", "")))
+            for row in rows
+            for field in row
+        )
+    except Exception:  # noqa: BLE001
+        return cache_key, None
+    size = total_bytes if total_bytes > 0 else None
+    if size is not None:
+        with _DATA_VOL_LRU_LOCK:
+            _DATA_VOL_LRU[cache_key] = size
+    return cache_key, size
+
+
 def _estimate_s3_object_size(args: dict[str, Any], context: dict[str, Any]) -> int:
-    """Use boto3 s3.head_object() to get the ContentLength of the target object."""
-    bucket = args.get("Bucket", args.get("bucket", ""))
-    key = args.get("Key", args.get("key", ""))
+    """Use boto3 s3.head_object() to get the ContentLength of the target object.
+
+    Consults the per-request cache (populated by the proxy P0-15 prefetch),
+    then the cross-request _DATA_VOL_LRU, before falling back to a live
+    boto3 call. The boto3 fallback only fires when prefetch is bypassed (e.g.,
+    in unit tests that drive the evaluator directly).
+    """
+    bucket, key = _s3_head_cache_key(args)
     if not bucket or not key:
         return len(json.dumps(args).encode("utf-8"))
 
@@ -429,6 +539,11 @@ def _estimate_s3_object_size(args: dict[str, Any], context: dict[str, Any]) -> i
     size_cache: dict[str, int] = context.setdefault("_data_vol_cache", {})
     if cache_key in size_cache:
         return size_cache[cache_key]
+    with _DATA_VOL_LRU_LOCK:
+        cached = _DATA_VOL_LRU.get(cache_key)
+    if cached is not None:
+        size_cache[cache_key] = int(cached)
+        return int(cached)
 
     if boto3 is None:
         return len(json.dumps(args).encode("utf-8"))
@@ -440,25 +555,35 @@ def _estimate_s3_object_size(args: dict[str, Any], context: dict[str, Any]) -> i
         size = len(json.dumps(args).encode("utf-8"))
 
     size_cache[cache_key] = size
+    with _DATA_VOL_LRU_LOCK:
+        _DATA_VOL_LRU[cache_key] = size
     return size
 
 
 def _estimate_rds_query_size(args: dict[str, Any], context: dict[str, Any]) -> int:
-    """Attempt an RDS EXPLAIN to estimate result row bytes. Falls back to static."""
-    statement = args.get("Statement", args.get("statement", ""))
-    if not statement:
+    """Attempt an RDS EXPLAIN to estimate result row bytes. Falls back to static.
+
+    Consults the per-request cache (proxy prefetch) and the cross-request LRU
+    before falling back to a live boto3 call.
+    """
+    cluster_arn, secret_arn, stmt_hash = _rds_explain_cache_key(args)
+    if not cluster_arn or not secret_arn or not stmt_hash:
         return len(json.dumps(args).encode("utf-8"))
 
-    cluster_arn = args.get("resourceArn", args.get("ResourceArn", ""))
-    secret_arn = args.get("secretArn", args.get("SecretArn", ""))
-    database = args.get("database", args.get("Database", ""))
-
-    if not cluster_arn or not secret_arn:
-        # Insufficient params for EXPLAIN — fall back
-        return len(json.dumps(args).encode("utf-8"))
+    cache_key = f"rds_explain:{cluster_arn}:{stmt_hash}"
+    size_cache: dict[str, int] = context.setdefault("_data_vol_cache", {})
+    if cache_key in size_cache:
+        return size_cache[cache_key]
+    with _DATA_VOL_LRU_LOCK:
+        cached = _DATA_VOL_LRU.get(cache_key)
+    if cached is not None:
+        size_cache[cache_key] = int(cached)
+        return int(cached)
 
     if boto3 is None:
         return len(json.dumps(args).encode("utf-8"))
+    statement = str(args.get("Statement", args.get("statement", "")) or "")
+    database = str(args.get("database", args.get("Database", "")) or "")
     try:
         rds_data = boto3.client("rds-data")
         explain_stmt = f"EXPLAIN {statement}"
@@ -475,9 +600,14 @@ def _estimate_rds_query_size(args: dict[str, Any], context: dict[str, Any]) -> i
             for row in rows
             for field in row
         )
-        return total_bytes if total_bytes > 0 else len(json.dumps(args).encode("utf-8"))
+        size = total_bytes if total_bytes > 0 else len(json.dumps(args).encode("utf-8"))
     except Exception:  # noqa: BLE001
         return len(json.dumps(args).encode("utf-8"))
+
+    size_cache[cache_key] = size
+    with _DATA_VOL_LRU_LOCK:
+        _DATA_VOL_LRU[cache_key] = size
+    return size
 
 
 def _evaluate_cumulative_spend_today(cond: CumulativeSpendToday, context: dict[str, Any]) -> bool:

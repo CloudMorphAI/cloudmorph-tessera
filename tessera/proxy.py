@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from tessera import pluggable
+from tessera.audit.async_emit import AsyncAuditQueue, sync_mode_enabled
 from tessera.audit.chain import HashChain
 from tessera.audit.emitter import AuditEmitter
 from tessera.audit.sinks.base import AuditSink
@@ -236,6 +237,21 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Emitter map: scope → AuditEmitter (created on demand)
         app.state.emitter_map = {}
 
+        # Async audit emit queue (P0-13): drains stamp+sink off the hot path.
+        # Started here so the request handlers can enqueue() safely.
+        def _on_audit_dropped(_job: Any) -> None:
+            _METRICS["audit_emit_dropped_total"] += 1
+
+        def _on_audit_failure(_exc: BaseException) -> None:
+            _METRICS["audit_emit_failures_total"] += 1
+
+        audit_queue = AsyncAuditQueue(
+            on_dropped=_on_audit_dropped,
+            on_failure=_on_audit_failure,
+        )
+        await audit_queue.start()
+        app.state.audit_queue = audit_queue
+
         # Policy loader
         loader = loader_cls(
             cfg.policies.dir,
@@ -442,6 +458,14 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             state_bk = getattr(app.state, "state_backend", None)
             if state_bk is not None:
                 state_bk.close()
+            # Drain the async audit queue (P0-13) before closing the sink so any
+            # pending stamp+persist completes against a live SQLite handle.
+            audit_q = getattr(app.state, "audit_queue", None)
+            if audit_q is not None:
+                try:
+                    await audit_q.drain()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("event=audit_queue_drain_failed error=%s", exc)
             # Close audit sink
             sink = getattr(app.state, "sink", None)
             if sink is not None:
@@ -650,6 +674,51 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # Step 6b — Pre-fetch blast-radius when any matching policy needs it (P0-14).
+        # Wraps the synchronous boto3 IAM/S3/KMS call in asyncio.to_thread to avoid
+        # blocking the event loop during the round-trip. Result populates the
+        # per-request cache that the condition evaluator consults first.
+        blast_radius_cache: dict[str, int] = {}
+        engine_for_prefetch: PolicyEngine | None = getattr(app.state, "engine", None)
+        blast_radius_backend = getattr(app.state, "blast_radius_backend", None)
+        if (
+            blast_radius_backend is not None
+            and engine_for_prefetch is not None
+            and engine_for_prefetch.policies_need_blast_radius(tool_name, upstream_name)
+        ):
+            try:
+                count = await asyncio.to_thread(
+                    blast_radius_backend.compute, tool_name, arguments
+                )
+                blast_radius_cache[tool_name] = int(count)
+            except Exception:  # noqa: BLE001
+                # Leave cache empty so the evaluator takes its fail-closed branch.
+                _METRICS["blast_radius_prefetch_failures_total"] += 1
+
+        # Step 6c — Pre-fetch DataVolume sizes for matching policies (P0-15).
+        data_vol_cache: dict[str, int] = {}
+        needed_estimators: set[str] = (
+            engine_for_prefetch.policies_need_data_volume(tool_name, upstream_name)
+            if engine_for_prefetch is not None
+            else set()
+        )
+        if "s3_get_byte_estimate" in needed_estimators:
+            try:
+                from tessera.policy.conditions import s3_head_size_sync as _s3_sync
+                cache_key, size = await asyncio.to_thread(_s3_sync, arguments)
+                if size is not None and cache_key:
+                    data_vol_cache[cache_key] = size
+            except Exception:  # noqa: BLE001
+                _METRICS["data_volume_prefetch_failures_total"] += 1
+        if "rds_query_result_estimate" in needed_estimators:
+            try:
+                from tessera.policy.conditions import rds_explain_size_sync as _rds_sync
+                cache_key, size = await asyncio.to_thread(_rds_sync, arguments)
+                if size is not None and cache_key:
+                    data_vol_cache[cache_key] = size
+            except Exception:  # noqa: BLE001
+                _METRICS["data_volume_prefetch_failures_total"] += 1
+
         context: dict[str, Any] = {
             "tool_call": {"name": tool_name, "arguments": arguments, "_meta": meta},
             "intent": intent,
@@ -661,8 +730,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             "cost_backend": cost_backend,
             "cost_cache": cost_cache,
             "aws_mapping": aws_mapping_mod,
-            "blast_radius_backend": getattr(app.state, "blast_radius_backend", None),
+            "blast_radius_backend": blast_radius_backend,
+            "blast_radius_cache": blast_radius_cache,
             "state_backend": getattr(app.state, "state_backend", None),
+            "_data_vol_cache": data_vol_cache,
         }
 
         # Step 7 — Lockdown check (before mode branch)
@@ -705,6 +776,15 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
+
+            # P0-18 — write back daily spend in observation mode too, so caps
+            # that operators configure later have meaningful history.
+            _record_daily_spend(
+                app.state,
+                scope=auth_ctx.scope,
+                tool_name=tool_name,
+                cost_cache=cost_cache,
+            )
 
             audit_event = _emit(
                 app.state,
@@ -783,6 +863,18 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
+
+            # P0-18 — daily-spend write-back so cumulative_spend_today caps enforce.
+            # Uses the pre-fetched cost estimate (cost_cache) since we don't have
+            # an actual post-call cost from most upstreams. Offloaded to a thread
+            # so the SQLite WAL fsync never blocks the event loop. Failures bump
+            # a counter but never affect the customer's response.
+            _record_daily_spend(
+                app.state,
+                scope=auth_ctx.scope,
+                tool_name=tool_name,
+                cost_cache=cost_cache,
+            )
 
             audit_event = _emit(
                 app.state,
@@ -951,19 +1043,101 @@ def _emit(state: Any, scope: str, event_type: str, payload: dict[str, Any]) -> d
     """Emit an audit event for the given scope. Swallows sink errors.
 
     Automatically attaches the current pricing_snapshot_id when available.
+
+    P0-13: allocates the event_id synchronously so the response can inject it
+    immediately, then offloads the SHA-256 stamp + sink writes to the async
+    queue (`AsyncAuditQueue`). The hot path returns in ~µs — only the ID
+    allocation + a queue put_nowait happens inline.
+
+    TESSERA_AUDIT_SYNC=1 env var restores fully synchronous behaviour for
+    tests that need deterministic ordering and immediate persistence.
     """
     emitter = _get_or_create_emitter(state, scope)
+    event_id = AuditEmitter._new_event_id()
+
+    audit_queue: AsyncAuditQueue | None = getattr(state, "audit_queue", None)
+
+    if sync_mode_enabled() or audit_queue is None:
+        # Synchronous fallback (tests, or startup-time emits before queue exists).
+        try:
+            return emitter.emit_with_id(
+                event_id=event_id,
+                event_type=event_type,
+                payload=payload,
+                pricing_snapshot_id=_pricing_snapshot_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("event=audit_emit_failed scope=%s error=%s", scope, exc)
+            _METRICS["audit_emit_failures_total"] += 1
+            return {"eventId": f"evt_failed_{uuid.uuid4().hex[:10]}"}
+
+    audit_queue.enqueue(
+        emitter=emitter,
+        event_id=event_id,
+        event_type=event_type,
+        payload=payload,
+        pricing_snapshot_id=_pricing_snapshot_id,
+    )
+    return {"eventId": event_id}
+
+
+def _record_daily_spend(
+    state: Any,
+    *,
+    scope: str,
+    tool_name: str,
+    cost_cache: dict[str, float],
+) -> None:
+    """Write back per-call cost to the daily-spend state backend (P0-18).
+
+    The proxy's `cumulative_spend_today` condition reads from this backend; if
+    no caller writes to it, every cap silently no-ops. We use the pre-fetched
+    cost estimate (`cost_cache[tool_name]`) — the actual post-call cost is
+    usually not knowable until the upstream returns usage metadata, which is
+    P2 work. For most AWS operations the estimate is fixed-per-call and a
+    good approximation.
+
+    Fires-and-forgets via `asyncio.create_task` + `asyncio.to_thread` so the
+    SQLite WAL fsync never blocks the event loop. Failures bump a counter
+    but never affect the customer's response.
+    """
+    state_backend = getattr(state, "state_backend", None)
+    if state_backend is None:
+        return
     try:
-        return emitter.emit(
-            event_type,
-            payload=payload,
-            pricing_snapshot_id=_pricing_snapshot_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("event=audit_emit_failed scope=%s error=%s", scope, exc)
-        _METRICS["audit_emit_failures_total"] += 1
-        # Return a stub so callers can still inject an event id
-        return {"eventId": f"evt_failed_{uuid.uuid4().hex[:10]}"}
+        est_usd = float(cost_cache.get(tool_name, 0.0))
+    except (TypeError, ValueError):
+        return
+    if est_usd <= 0:
+        return
+
+    async def _spend_async() -> None:
+        try:
+            await asyncio.to_thread(state_backend.add_spend, scope, est_usd)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "event=daily_spend_write_failed scope=%s tool=%s error=%s",
+                scope,
+                tool_name,
+                exc,
+            )
+            _METRICS["daily_spend_write_failures_total"] += 1
+
+    try:
+        asyncio.create_task(_spend_async())
+    except RuntimeError:
+        # No running event loop (rare; sync test harness). Fall back to a sync
+        # write so the spend still lands somewhere.
+        try:
+            state_backend.add_spend(scope, est_usd)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "event=daily_spend_write_failed_sync scope=%s tool=%s error=%s",
+                scope,
+                tool_name,
+                exc,
+            )
+            _METRICS["daily_spend_write_failures_total"] += 1
 
 
 async def _forward_upstream(

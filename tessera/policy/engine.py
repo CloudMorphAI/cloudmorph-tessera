@@ -10,7 +10,16 @@ from tessera.policy.conditions import (
     get_decision_errors,
 )
 from tessera.policy.matchers import match_tool, match_upstream
-from tessera.policy.schema import Action, Decision, Policy
+from tessera.policy.schema import (
+    Action,
+    AnyOf,
+    BlastRadius,
+    ConditionType,
+    DataVolume,
+    Decision,
+    NoneOf,
+    Policy,
+)
 
 
 class PolicyEngine:
@@ -70,3 +79,66 @@ class PolicyEngine:
 
         # 3. No match
         return Decision(self._default_action, "default", None)
+
+    # ── Pre-fetch helpers (P0-14, P0-15) ──────────────────────────────────────
+    # The proxy hot path calls these before building the request context. When
+    # they return True / a non-empty set, the proxy runs the matching boto3
+    # call(s) via asyncio.to_thread so the event loop stays free during the
+    # network round-trip.
+
+    def policies_need_blast_radius(
+        self, tool_name: str, upstream_name: str
+    ) -> bool:
+        """Return True if any matching policy uses a BlastRadius condition that
+        targets `tool_name`. Used by proxy.py to gate the IAM-read prefetch.
+        """
+        for policy in self._policies:
+            if not match_upstream(policy.match.upstream, upstream_name):
+                continue
+            if not match_tool(policy.match.tool, policy.match.tool_pattern, tool_name):
+                continue
+            for cond in policy.when:
+                if self._has_blast_radius_for(cond, tool_name):
+                    return True
+        return False
+
+    def _has_blast_radius_for(
+        self, cond: ConditionType, tool_name: str
+    ) -> bool:
+        """Recursively check a condition tree for a BlastRadius targeting tool_name."""
+        if isinstance(cond, BlastRadius):
+            resource_types = getattr(cond, "resource_types", None)
+            if not resource_types:
+                return True
+            return tool_name in resource_types
+        if isinstance(cond, (AnyOf, NoneOf)):
+            return any(
+                self._has_blast_radius_for(c, tool_name) for c in cond.conditions
+            )
+        return False
+
+    def policies_need_data_volume(
+        self, tool_name: str, upstream_name: str
+    ) -> set[str]:
+        """Return the set of DataVolume estimators used by any matching policy.
+
+        Empty set means no DataVolume prefetch is required for this request.
+        """
+        estimators: set[str] = set()
+        for policy in self._policies:
+            if not match_upstream(policy.match.upstream, upstream_name):
+                continue
+            if not match_tool(policy.match.tool, policy.match.tool_pattern, tool_name):
+                continue
+            for cond in policy.when:
+                self._collect_data_volume_estimators(cond, estimators)
+        return estimators
+
+    def _collect_data_volume_estimators(
+        self, cond: ConditionType, out: set[str]
+    ) -> None:
+        if isinstance(cond, DataVolume):
+            out.add(cond.estimator)
+        elif isinstance(cond, (AnyOf, NoneOf)):
+            for c in cond.conditions:
+                self._collect_data_volume_estimators(c, out)

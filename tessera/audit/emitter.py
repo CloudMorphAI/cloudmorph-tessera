@@ -78,10 +78,61 @@ class AuditEmitter:
         tenant_id: str | None = None,
         pricing_snapshot_id: str | None = None,
     ) -> dict[str, Any]:
-        """Emit an event. Returns the stamped event."""
+        """Synchronous emit — legacy entry point.
+
+        Allocates a fresh event_id internally. Returns the stamped event.
+        """
+        event_id = self._new_event_id()
+        return self._emit_internal(
+            event_id=event_id,
+            event_type=event_type,
+            payload=payload,
+            session_id=session_id,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            pricing_snapshot_id=pricing_snapshot_id,
+        )
+
+    def emit_with_id(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        actor_id: str | None = None,
+        tenant_id: str | None = None,
+        pricing_snapshot_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Variant that uses a caller-supplied event_id.
+
+        The hot path uses this so it can inject the ID into the response
+        BEFORE the SHA-256 + sink writes complete (P0-13: async audit emit).
+        """
+        return self._emit_internal(
+            event_id=event_id,
+            event_type=event_type,
+            payload=payload,
+            session_id=session_id,
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            pricing_snapshot_id=pricing_snapshot_id,
+        )
+
+    def _emit_internal(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None,
+        session_id: str | None,
+        actor_id: str | None,
+        tenant_id: str | None,
+        pricing_snapshot_id: str | None,
+    ) -> dict[str, Any]:
         event: dict[str, Any] = {
             "schemaVersion": self.SCHEMA_VERSION,
-            "eventId": self._new_event_id(),
+            "eventId": event_id,
             "tenantId": tenant_id or self.tenant_id,
             "eventType": event_type,
             "payload": payload or {},
