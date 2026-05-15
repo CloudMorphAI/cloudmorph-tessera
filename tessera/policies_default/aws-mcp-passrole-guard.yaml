@@ -1,0 +1,51 @@
+id: aws-mcp-passrole-guard
+name: AWS IAM PassRole — Admin-Tier Approval Gate
+description: |
+  Require human approval for any iam:PassRole call whose RoleArn or RoleName
+  matches an AWS-managed admin-tier policy or a name that strongly suggests
+  admin privileges (admin, administrator, full-access, power-user, root).
+
+  PassRole is the canonical AWS privilege-escalation primitive: an agent that
+  can PassRole into a Lambda function or EC2 instance profile effectively
+  inherits all permissions of the target role at runtime. Combined with one
+  service call (CreateFunction, RunInstances IamInstanceProfile, RunTask
+  TaskRoleArn) this yields full account compromise.
+
+  The default action is require_approval (not block) so legitimate operator-
+  driven flows can proceed with explicit sign-off. Customers with zero
+  legitimate PassRole-into-admin scenarios should fork this policy and switch
+  the action to block.
+
+  Default match is by RoleArn/RoleName regex against well-known admin names;
+  a tenant pre-call resolver (blast-radius integration) can extend this by
+  populating blast_radius_cache or via a custom mapping.
+priority: 95
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_iam_(PassRole|pass_role)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: RoleArn
+        pattern: "(?i)(administrator|adminaccess|admin-?role|full-?access|power-?user|root|iam-?full|ec2-?full|s3-?full|lambda-?full)"
+      - condition: arg_matches_regex
+        arg: RoleName
+        pattern: "(?i)(administrator|adminaccess|admin-?role|full-?access|power-?user|root|iam-?full|ec2-?full|s3-?full|lambda-?full)"
+      - condition: blast_radius
+        principal_count_threshold: 50
+        resource_types:
+          - "aws_iam_PassRole"
+          - "aws_iam_pass_role"
+        operator: greater_than
+
+action: require_approval
+reason: |
+  iam:PassRole into the target role is gated. The RoleArn/RoleName matches an
+  AWS-managed admin-tier policy or carries a name strongly associated with
+  admin privileges; passing it into a Lambda function, EC2 instance profile,
+  or ECS task would grant caller-equivalent privileges to the receiving
+  service. Approve via the configured human-approval channel, or fork the
+  policy and add a tenant-specific allow-list pattern.

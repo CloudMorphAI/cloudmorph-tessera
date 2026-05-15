@@ -1,0 +1,47 @@
+id: aws-mcp-create-access-key-deny
+name: AWS IAM CreateAccessKey — Block Admin Users, Approval Otherwise
+description: |
+  Defend against one-call credential exfiltration via iam:CreateAccessKey.
+  The classic abuse pattern: an MCP agent calls CreateAccessKey on a
+  privileged user, captures the AccessKeyId + SecretAccessKey in the
+  conversation/log, and an attacker tails the log to harvest credentials.
+
+  Behaviour:
+    - If UserName matches an admin-tier name pattern (administrator, root,
+      admin-*, *-admin, etc.) → action: block. There is no legitimate reason
+      for an automated MCP agent to mint a long-lived static key for an
+      admin user.
+    - Otherwise → action: require_approval. Long-lived static credentials
+      should be exceptional, not routine. Approval forces a human in the
+      loop and creates an audit trail.
+
+  Tenants who routinely use static keys for non-admin service accounts
+  (e.g. CI deployer accounts) should fork this policy and add an explicit
+  allow-list of UserName regex patterns to the require_approval branch.
+priority: 97
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_iam_(CreateAccessKey|create_access_key)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: UserName
+        pattern: "(?i)(^|[-_])admin(istrator)?($|[-_])"
+      - condition: arg_matches_regex
+        arg: UserName
+        pattern: "(?i)(^|[-_])root($|[-_])"
+      - condition: arg_matches_regex
+        arg: UserName
+        pattern: "(?i)(^|[-_])(full-?access|power-?user|super-?user)($|[-_])"
+
+action: block
+reason: |
+  CreateAccessKey for an admin-tier user is denied outright. Long-lived
+  static credentials for an admin identity issued via an MCP agent are a
+  credential-exfiltration vector with no legitimate use case. Rotate
+  using short-lived STS sessions (sts:AssumeRole) or perform the operation
+  from a human-operator session. For non-admin service accounts, fork
+  this policy and add an explicit allow-list pattern.

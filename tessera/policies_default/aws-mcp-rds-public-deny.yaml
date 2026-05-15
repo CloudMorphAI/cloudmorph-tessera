@@ -1,0 +1,46 @@
+id: aws-mcp-rds-public-deny
+name: AWS RDS Public Access — Hard Deny
+description: |
+  Hard-deny rds:CreateDBInstance / rds:ModifyDBInstance /
+  rds:CreateDBCluster / rds:ModifyDBCluster calls that set
+  PubliclyAccessible = true. A publicly-accessible RDS instance is
+  reachable from any internet IP that knows the endpoint hostname.
+  Combined with a weak master password or a leaked credential, this is
+  a one-call data-breach setup.
+
+  There is effectively no legitimate scenario where an MCP agent should
+  toggle PubliclyAccessible to true — public exposure should be a
+  deliberate human network-architecture decision, never an agent default
+  or convenience override. Customers that genuinely need a public RDS
+  endpoint should perform the change from a human-operator session, not
+  via an automated agent.
+
+  Boolean PubliclyAccessible may arrive as the JSON literal `true`, the
+  string `"true"`, or 1 — all three patterns are matched.
+priority: 97
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_rds_(CreateDBInstance|create_db_instance|ModifyDBInstance|modify_db_instance|CreateDBCluster|create_db_cluster|ModifyDBCluster|modify_db_cluster)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_equals
+        arg: PubliclyAccessible
+        value: true
+      - condition: arg_equals
+        arg: PubliclyAccessible
+        value: "true"
+      - condition: arg_equals
+        arg: PubliclyAccessible
+        value: 1
+
+action: block
+reason: |
+  RDS instance/cluster with PubliclyAccessible=true is denied. Public
+  exposure of a database server is almost never the correct default;
+  place the instance in a private subnet and front it with a VPC
+  endpoint, bastion, or application-layer proxy if external access is
+  required. If a public endpoint is genuinely needed, perform the
+  change from a human-operator session, not via MCP.

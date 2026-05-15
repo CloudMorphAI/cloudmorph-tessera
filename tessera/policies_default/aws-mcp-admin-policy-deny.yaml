@@ -1,0 +1,54 @@
+id: aws-mcp-admin-policy-deny
+name: AWS IAM Admin Policy Grant — Hard Deny
+description: |
+  Hard-deny three IAM operations that create or attach an admin-equivalent
+  policy in a single call:
+    1. iam:AttachRolePolicy with PolicyArn = AWS-managed admin-tier policy
+       (AdministratorAccess, PowerUserAccess, IAMFullAccess)
+    2. iam:PutRolePolicy with a PolicyDocument containing
+       "Effect":"Allow","Action":"*","Resource":"*"
+    3. iam:CreatePolicy with a PolicyDocument containing the same wildcard
+
+  These three patterns each grant the equivalent of root-level access in their
+  affected scope. Attaching any of the AWS-managed admin policies, or putting
+  a wildcard Action+Resource statement on a role accessible by an agent, is a
+  one-call full-admin grant regardless of how many principals trust the
+  target role. This policy is intentionally stricter than the
+  blast-radius-EXAMPLE threshold (>100 principals): a single trust principal
+  with Action:* is still effectively root.
+priority: 99
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_iam_(AttachRolePolicy|attach_role_policy|PutRolePolicy|put_role_policy|CreatePolicy|create_policy)$"
+
+when:
+  - condition: any_of
+    conditions:
+      # AttachRolePolicy with admin-tier managed PolicyArn
+      - condition: arg_in_set
+        arg: PolicyArn
+        values:
+          - "arn:aws:iam::aws:policy/AdministratorAccess"
+          - "arn:aws:iam::aws:policy/PowerUserAccess"
+          - "arn:aws:iam::aws:policy/IAMFullAccess"
+      # PutRolePolicy / CreatePolicy with inline Action:* Resource:* statement.
+      # We pattern-match on the serialized PolicyDocument JSON; a hot-path
+      # structural scan in BlastRadiusBackend._policy_doc_has_wildcard is the
+      # canonical implementation (see P0-7 in tessera-cost-awsmcp.md).
+      - condition: arg_matches_regex
+        arg: PolicyDocument
+        pattern: '"Effect"\s*:\s*"Allow"[^}]{0,300}"Action"\s*:\s*"\*"[^}]{0,300}"Resource"\s*:\s*"\*"'
+      - condition: arg_matches_regex
+        arg: PolicyDocument
+        pattern: '"Effect"\s*:\s*"Allow"[^}]{0,300}"Resource"\s*:\s*"\*"[^}]{0,300}"Action"\s*:\s*"\*"'
+
+action: block
+reason: |
+  IAM admin-policy grant is denied. The request either attaches an
+  AWS-managed admin-tier policy (AdministratorAccess / PowerUserAccess /
+  IAMFullAccess) or puts/creates an inline policy with
+  Action:"*"/Resource:"*". These grant root-equivalent access and cannot
+  be safely issued by an automated MCP agent. If the change is genuinely
+  required, perform it from a human-operator session with explicit
+  change-management approval.

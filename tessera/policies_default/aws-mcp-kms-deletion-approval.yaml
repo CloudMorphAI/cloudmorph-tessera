@@ -1,0 +1,36 @@
+id: aws-mcp-kms-deletion-approval
+name: AWS KMS ScheduleKeyDeletion — Require Approval (Irreversible)
+description: |
+  Require explicit human approval for every kms:ScheduleKeyDeletion call,
+  regardless of cost / blast-radius / key sensitivity. KMS key deletion is
+  irreversible once the 7-30 day pending window expires: any ciphertext
+  encrypted under the key becomes permanently unreadable, and there is no
+  recovery path.
+
+  This policy intentionally defaults to require_approval (not block) so
+  legitimate operator-driven key rotation can proceed with explicit
+  sign-off. Tenants with strict zero-deletion policies should fork this
+  policy and switch action to block.
+
+  Tessera does not enforce a minimum PendingWindowInDays in this default —
+  add an arg_less_than condition on PendingWindowInDays if you want to
+  reject sub-30-day deletions.
+priority: 98
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_kms_(ScheduleKeyDeletion|schedule_key_deletion)$"
+
+when:
+  - condition: arg_matches_regex
+    arg: KeyId
+    pattern: ".+"
+
+action: require_approval
+reason: |
+  ScheduleKeyDeletion is gated for approval. KMS key deletion is
+  irreversible after the pending window (7-30 days) expires: any
+  ciphertext encrypted under the key becomes permanently unreadable
+  and there is no recovery mechanism. If this is part of a planned
+  key rotation, confirm all dependent workloads have been migrated to
+  a new key and approve via the configured human-approval channel.

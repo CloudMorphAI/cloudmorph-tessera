@@ -1,0 +1,58 @@
+id: aws-mcp-ec2-imdsv1-deny
+name: AWS EC2 IMDSv1 Enabled — Hard Deny
+description: |
+  Hard-deny ec2:RunInstances / ec2:ModifyInstanceAttribute calls that
+  would leave Instance Metadata Service v1 enabled (HttpTokens=optional
+  on RunInstances; HttpTokens=optional on ModifyInstanceAttribute when
+  Attribute=metadataOptions).
+
+  IMDSv1 is vulnerable to SSRF-based credential theft: any unauthenticated
+  HTTP call from inside the instance to
+  169.254.169.254/latest/meta-data/iam/security-credentials/<role>
+  returns the role credentials. IMDSv2 (HttpTokens=required) requires a
+  session token from a PUT request, which is incompatible with classic
+  SSRF and forces a deliberate exploit chain that is far harder to
+  achieve via a generic web-app vulnerability.
+
+  AWS has been recommending IMDSv2-only since 2019 and made it the
+  account-wide default in 2024. There is no legitimate reason for an
+  MCP agent to set HttpTokens=optional in 2026+.
+
+  Match strategy:
+    - tool: aws_ec2_RunInstances|aws_ec2_ModifyInstanceAttribute
+    - regex-detect HttpTokens=optional inside any argument value
+      (handles the case where MetadataOptions is a nested dict on
+      RunInstances or a top-level HttpTokens on ModifyInstanceAttribute).
+
+  Note: this policy does NOT fire on RunInstances when MetadataOptions
+  is omitted entirely — that is an account-default decision and modern
+  accounts default to IMDSv2. Tenants with legacy-default accounts
+  should fork this policy and add an arg_matches_regex on RunInstances
+  to also flag absence of HttpTokens.
+priority: 96
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_ec2_(RunInstances|run_instances|ModifyInstanceAttribute|modify_instance_attribute)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_matches_regex
+        arg: "*"
+        pattern: '"HttpTokens"\s*:\s*"optional"'
+      - condition: arg_matches_regex
+        arg: "*"
+        pattern: "HttpTokens['\"]?\\s*[:=]\\s*['\"]?optional['\"]?"
+      - condition: arg_equals
+        arg: HttpTokens
+        value: "optional"
+
+action: block
+reason: |
+  EC2 RunInstances/ModifyInstanceAttribute would leave Instance Metadata
+  Service v1 enabled (HttpTokens=optional). IMDSv1 is vulnerable to
+  SSRF-based credential theft of the attached IAM role. Set
+  MetadataOptions.HttpTokens="required" to enforce IMDSv2. AWS has
+  defaulted accounts to IMDSv2-only since 2024 — there is no legitimate
+  reason for an MCP agent to opt back in to IMDSv1.

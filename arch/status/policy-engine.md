@@ -174,6 +174,40 @@ Alongside the 7 production defaults, the package ships 5 AWS-illustrative exampl
 
 These illustrate, not enforce. They require the cost / blast-radius / state backends to be wired; when those backends are absent the fail-closed-for-cost rule keeps them inert (fail in the don't-block direction). Operators copy them, tune thresholds, and deploy.
 
+## The 6 bundled AWS-MCP security defaults (P0-1..6, v0.2.1)
+
+Distinct from the 5 `-EXAMPLE` policies, the package now also ships 6 AWS-MCP-server-specific security defaults. They are enabled out-of-the-box (no `-EXAMPLE` suffix, no opt-in required) and target the canonical privilege-escalation / credential-exfil / blast-radius primitives exposed by the public `iam-mcp-server`, `kms-mcp-server`, `rds-mcp-server`, and `ec2-mcp-server` projects. The scope decision per `plan/details/tessera-cost-awsmcp.md` §4.10 / P0-19 is: ship these as OSS bundled defaults (loss-leader for adoption); reserve cost-tier customization (per-tenant thresholds, regex tuning) for paid packs.
+
+| Policy | Priority | Action | Defends |
+|--------|----------|--------|---------|
+| `aws-mcp-admin-policy-deny` | 99 | block | `iam:AttachRolePolicy` with AWS-managed admin-tier `PolicyArn` (AdministratorAccess/PowerUserAccess/IAMFullAccess) **OR** `iam:PutRolePolicy`/`iam:CreatePolicy` with inline `Action:"*"+Resource:"*"`. One-call full-admin grant. |
+| `aws-mcp-kms-deletion-approval` | 98 | require_approval | Every `kms:ScheduleKeyDeletion`. Irreversible after 7-30 day window. |
+| `aws-mcp-create-access-key-deny` | 97 | block | `iam:CreateAccessKey` targeting an admin-tier `UserName` regex (administrator, root, full-access, power-user). Credential-exfil one-call vector. |
+| `aws-mcp-rds-public-deny` | 97 | block | `rds:CreateDBInstance` / `ModifyDBInstance` / `CreateDBCluster` / `ModifyDBCluster` with `PubliclyAccessible: true` (bool, "true", or 1). One-call data-breach setup. |
+| `aws-mcp-ec2-imdsv1-deny` | 96 | block | `ec2:RunInstances` / `ModifyInstanceAttribute` leaving IMDSv1 enabled (`HttpTokens=optional`). SSRF → role-credential theft. |
+| `aws-mcp-passrole-guard` | 95 | require_approval | `iam:PassRole` whose `RoleArn`/`RoleName` matches admin-tier names, OR (fail-closed) when no `blast_radius_backend` is configured. Canonical AWS privesc primitive. |
+
+Design notes:
+
+- **No `metadata` block.** The strict `Policy` schema (`extra="forbid"`) does not accept tier/compliance metadata as top-level YAML; the original detail-file templates assumed a richer schema. All bundled defaults are `tier_required: free` implicitly (they live in `policies_default/`); compliance/governance tags are documented in the policy `description` rather than as structured metadata. A future schema bump (`schema_version: 2`) could introduce a typed metadata field if customers need to filter by compliance tag.
+- **No `approval_channels` block.** Same reason — the bundled defaults rely on the proxy's globally-configured human-approval channel (`tessera.yaml: policies.approval.*`). Per-policy approval routing would require a schema extension.
+- **Regex-driven, not boto3-driven.** The original detail templates referenced `resolved_role_attached_policies_include` and similar conditions that require pre-call AWS API lookups. Those conditions do not exist in the v0.2.x schema. The bundled defaults use the existing condition vocabulary (`arg_matches_regex`, `arg_in_set`, `arg_equals`, `any_of`, `blast_radius`) so they evaluate without any AWS API call. Adding `resolved_role_*` conditions is tracked as a follow-up in `arch/improvements/` (not yet filed; the regex defaults are sufficient for the OSS loss-leader and the boto3-grade refinement belongs in a paid pack).
+- **PassRole fail-closed posture.** When no `blast_radius_backend` is configured, the `blast_radius` branch of `aws-mcp-passrole-guard` fails-closed (the policy fires → require_approval). This is documented in the policy `description` and exercised in `tests/test_policies_default.py::test_passrole_guard_fail_closed_when_no_blast_radius_backend`. Tenants who consider this too aggressive should fork and remove the blast-radius branch.
+- **EC2 IMDSv1 detection uses arg-spanning regex.** `MetadataOptions` is a nested dict on `RunInstances` and a top-level `HttpTokens` on `ModifyInstanceAttribute`. The v0.2.x schema does not support dot-path argument access for `arg_matches_regex` (only `_meta.<key>` via `meta_field_equals`). The bundled policy works around this by using `arg: "*"` to iterate every top-level argument value and apply the `"HttpTokens":"optional"` regex against the JSON-serialized form. This is a slight over-match (any arg value containing that JSON fragment fires) which is acceptable for a default.
+- **Action verb safety.** Every bundled YAML uses one of the schema-enum action verbs (`block`, `require_approval`, `log_only`, `allow`); the corpus test `tests/test_policies_default.py::test_all_default_policy_actions_in_schema_enum` enforces this for every file shipped in `policies_default/`.
+
+The hierarchy across the now-18-strong default set: PII (100) > admin-policy (99) > KMS deletion (98) > CreateAccessKey (97) = RDS public (97) > IMDSv1 (96) > cost-runaway (95) = PassRole (95) = secret-leak (95) > blast-radius (90) = prod-protection (90) > region-allowlist / approval (80–70) > read-only (60) > cost-cap (50). Security-critical policies fire before resource-protection policies fire before cost policies. The AWS-MCP defaults occupy the 95–99 band because they each represent a single-call full-account-compromise primitive.
+
+## P0-12 — `bucket_region_lookup` audit-false-positive resolution
+
+The dossier audit at `plan/details/tessera-content.md` §3.10 flagged the string `bucket_region_lookup` as a possible invalid action verb appearing in `tessera-intelligence/packs/aws-cost-aware-defaults/v1.0.0/policies/s3-cross-region-replication-guard.yaml`. The audit grep `grep -rohE "^\s*action:\s+[a-z_]+" packs/` picked up the string from line 19.
+
+**Resolution (verified 2026-05-15):** false positive. The file's `action:` is `block` (line 26) — a valid schema-enum verb. The `bucket_region_lookup` value at line 19 is the value of `target_region_extraction:`, a data-resolution attribute inside a `when[*]` condition (NOT an enforcement action). A repo-wide grep `grep -rohE "^\s*action:\s+[a-zA-Z_]+" packs/` confirms only `block` / `require_approval` / `log_only` appear as `action:` values across all paid packs.
+
+**Action taken:** to prevent the false-positive recurring, the misleading value name has been renamed in-place: `target_region_extraction: bucket_region_lookup` → `target_region_extraction: bucket_region_resolve_via_head_bucket`. The new name is unambiguous (it cannot scan as an action verb), and an explanatory comment in the YAML records the rename rationale and date. The engine-side resolver does NOT dispatch on this value — `grep -rn "bucket_region_lookup" cloudmorph-tessera/` returns no Python references — so the rename is purely a documentation/scan-clarity fix, not coupled to the runtime evaluator.
+
+The change is content-only; no schema migration, no pack-manifest revision required.
+
 The seven vendor-specific reference policies (`github-mcp-protection`, `jira-mcp-protection`, `owasp-mcp-prompt-injection`, `owasp-mcp-tool-poisoning`, `postgres-mcp-protection`, `salesforce-mcp-protection`, `slack-mcp-protection`) live in the Tessera Cloud premium pack `vendor-mcp-protection` (per the OQ-3 decision described in `tessera-intelligence/arch/status/policy-packs.md`). Customers reach them via `tessera intelligence pull vendor-mcp-protection` once their license JWT validates.
 
 ## Decision payload and audit linkage
