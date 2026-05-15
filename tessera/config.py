@@ -161,6 +161,14 @@ class IntelligenceConfig(BaseModel):
     refresh_interval_hours: int = 24
     license_cache_fallback_days: int = 7
     fail_closed_on_license_check: bool = False
+    # P0-16: fire an immediate refresh inside start_refresh_task so the cache
+    # is populated before the proxy starts serving traffic. Disable to keep
+    # the old "wait one full interval" behaviour (mostly useful in tests).
+    prewarm_on_start: bool = True
+    # P0-17: when False (default), a catalog missing signature/body_bytes_hex
+    # is rejected — fail-closed. Set True only for explicit opt-in fail-open
+    # against unsigned catalogs (CI fixtures, air-gapped self-hosted CDNs).
+    allow_unsigned_catalog: bool = False
 
 
 class TesseraConfig(BaseModel):

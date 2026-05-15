@@ -60,7 +60,7 @@ There is **no automated cross-repo check** that the two PEM copies agree. The in
 `tessera/intelligence/client.py:IntelligenceClient` is the runtime fetcher. Lifecycle is `__init__` → `refresh()` → `start_refresh_task()` (background loop, default every 24 hours). On each refresh:
 
 1. **Fetch catalogs**. GET `catalog_url` (default `https://intelligence.tessera.cloudmorph.ai/catalogs/pack-index.json`) and `mapping_url`, with the license JWT under `X-Tessera-License`. The CloudFront license gate enforces tier visibility — `401` for missing license, `403` for above-tier paths.
-2. **Verify catalog signatures**. When the catalog body includes `signature` + `body_bytes_hex`, the client Ed25519-verifies before parsing. Today catalogs ship unsigned (per the producer-side design in `tessera-intelligence/arch/status/policy-packs.md`); when the v0.3.0 catalog-signing improvement lands, this code path activates without API change.
+2. **Verify catalog signatures — mandatory by default (P0-17)**. The client invokes `_require_or_skip_catalog_sig("pack", catalog_data)` (and the mapping equivalent when a mapping catalog was fetched). Default behaviour is fail-closed: if either `signature` or `body_bytes_hex` is missing or empty, the helper raises `ValueError` and the entire refresh aborts. If both are present but Ed25519 verification fails, the helper raises with a `<kind> catalog signature invalid` message. The only escape hatch is `IntelligenceConfig.allow_unsigned_catalog=True` (default `False`) — when set, missing signatures log a single `event=catalog_unsigned_accepted` warning and proceed. This is reserved for self-hosted CDN scenarios and CI fixtures; production deployments leave it off. The previous v0.2.x behaviour (silently skip verification when fields are absent) is gone.
 3. **Resolve current tier**. If a `LicenseValidator` is wired, call `license.check()` to determine the customer's tier (`free` / `developer` / `team` / `enterprise`). On license-check failure, `fail_closed_on_license_check: true` raises; otherwise the client downgrades to `free` and continues.
 4. **Tier-filter manifests**. For each manifest in the catalog, drop entries where `_tier_allowed(manifest.min_tier, current_tier)` returns false. The tier rank ordering is `free=0 < developer=1 < team=2 < enterprise=3`.
 5. **Download + verify + extract**. For each surviving manifest, GET the `pack_url`, recompute `SHA-256(content) == manifest.content_hash`, then untar into `cache_dir/packs/<name>/<version>/`. Hash mismatches log + skip the pack. The tar extraction uses `filter="data"` (Python 3.12 secure mode) to reject symlinks and absolute paths.
@@ -69,6 +69,16 @@ There is **no automated cross-repo check** that the two PEM copies agree. The in
 The default cache directory is `~/.tessera/intelligence/` (expanduser-resolved). Cache is persistent across restarts; a customer can run with `enabled: false` after first refresh and still serve from cache.
 
 Refresh cadence is set by `intelligence.refresh_interval_hours` (default 24). The background task simply sleeps and re-runs `refresh(force=True)` in a loop; failures log but don't stop the loop.
+
+### Startup pre-warm (P0-16)
+
+`start_refresh_task()` fires an immediate `refresh(force=True)` before scheduling the background loop, gated on `IntelligenceConfig.prewarm_on_start` (default `True`). The motivation is the cold-start gap: with a 24-hour refresh interval and an empty `cache_dir/packs/`, the previous behaviour was zero enforced packs and an empty price-table for up to a full day after first install. Pre-warm closes that window:
+
+- **On success** — `event=intelligence_prewarm_complete packs=N mappings=M` is logged before the proxy accepts traffic. The cache is populated with whatever the customer's tier entitles.
+- **On partial success** (catalog fetched, some pack downloads failed) — `event=intelligence_prewarm_partial` is logged at WARNING. Whichever packs did land are usable; the next interval retries the rest.
+- **On total failure** (CDN unreachable, license-check fail-closed raise, signature verification raise) — `event=intelligence_prewarm_failed error=<reason>` is logged at ERROR. The pre-warm exception is swallowed and `start_refresh_task()` proceeds to create the background loop. The proxy starts with whatever is already on disk (typically nothing on a true cold start) and the background loop retries on the regular cadence.
+
+The fail-open-but-loud posture is deliberate: a transient CDN outage at customer startup must not prevent the proxy from running, but the operator must be able to see in their logs that they started without policies. Set `prewarm_on_start: false` to keep the legacy "wait one interval" behaviour — useful in test environments where the lifespan startup hook would otherwise make a network call.
 
 ## License validator: JWT verify + 7-day fallback
 
@@ -179,7 +189,7 @@ The producer-side verification flow is detailed in `tessera-intelligence/arch/st
 
 1. Load `tessera/intelligence/public_key.pem` from the installed wheel (cached on the `IntelligenceClient` instance).
 2. Fetch the catalog (`pack-index.json`).
-3. When the catalog includes `signature` + `body_bytes_hex`, Ed25519-verify the catalog body before parsing.
+3. Ed25519-verify the catalog body before parsing — **mandatory by default** (P0-17). Missing `signature` or `body_bytes_hex` fields raise `ValueError` unless `IntelligenceConfig.allow_unsigned_catalog=True` is explicitly set.
 4. For each tier-eligible manifest, fetch the pack tarball.
 5. If the manifest carries `tarball_sha256`, compute `SHA-256(tarball_bytes)` and compare — raising `TamperDetected` on mismatch. This tarball-level binding check is the transport-artifact integrity step; it complements (not replaces) the content-hash check.
 6. Compute `SHA-256(content_bytes)` and compare to `manifest.content_hash` (payload-level integrity).
@@ -187,7 +197,7 @@ The producer-side verification flow is detailed in `tessera-intelligence/arch/st
 
 After all packs and mappings are extracted, `_load_price_tables_from_cache()` scans `cache_dir/mappings/` for `*-prices-*.json` artifacts and loads each into a `PriceTable` instance (see `integrations-and-cost.md`).
 
-The current verification depth is content-hash check only; signature verification on the manifest is implemented but manifests today ship without a real `signature` field on the catalog inline. The full signed-manifest path activates when the producer-side improvement lands (see `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`); the consumer side is wired and waiting.
+Verification depth as of this batch: catalog-level Ed25519 signature is mandatory (the F2 / P0-17 fix shipped); per-pack content-hash is enforced; tarball-level SHA-256 is enforced when `tarball_sha256` is declared on the manifest. The per-pack detached signature path remains a producer-side improvement (see `tessera-intelligence/arch/improvements/v0.3.0-pack-content-hash-recompute.md`); the consumer side is wired and waiting.
 
 ### CDN integration smoke test: 8-scenario tier matrix
 

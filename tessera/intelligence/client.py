@@ -92,6 +92,43 @@ class IntelligenceClient:
         sig_bytes = bytes.fromhex(signature_hex)
         self._public_key.verify(sig_bytes, data)
 
+    def _require_or_skip_catalog_sig(
+        self,
+        kind: str,
+        catalog_data: dict[str, Any],
+    ) -> None:
+        """Enforce mandatory catalog signature verification (P0-17).
+
+        Behaviour:
+          * Both ``signature`` and ``body_bytes_hex`` present and valid → return silently.
+          * Signature present but invalid → raise ``ValueError``.
+          * Either field missing → raise ``ValueError`` unless
+            ``IntelligenceConfig.allow_unsigned_catalog`` is True, in which case
+            a warning is logged and verification is skipped.
+
+        The fail-closed default plugs the F2 gap where empty
+        ``signature`` / ``body_bytes_hex`` fields silently disabled signature
+        verification for the entire catalog.
+        """
+        sig = catalog_data.get("signature", "") or ""
+        body = catalog_data.get("body_bytes_hex", "") or ""
+        if sig and body:
+            try:
+                self._verify_signature(bytes.fromhex(body), sig)
+            except Exception as exc:  # noqa: BLE001 — re-raised below with context
+                raise ValueError(f"{kind} catalog signature invalid: {exc}") from exc
+            return
+        if self._config.allow_unsigned_catalog:
+            logger.warning(
+                "event=catalog_unsigned_accepted kind=%s allow_unsigned_catalog=true",
+                kind,
+            )
+            return
+        raise ValueError(
+            f"{kind} catalog is missing signature/body_bytes_hex and "
+            f"allow_unsigned_catalog is False — refusing to fail-open"
+        )
+
     def _verify_content_hash(self, data: bytes, expected_hash: str) -> bool:
         """Return True if SHA-256 of data matches expected_hash (hex digest)."""
         actual = hashlib.sha256(data).hexdigest()
@@ -261,22 +298,15 @@ class IntelligenceClient:
                     errors.append(msg)
                     mapping_data = {}
 
-                # Step 2: Verify catalog signatures
-                catalog_sig = catalog_data.get("signature", "")
-                catalog_body = catalog_data.get("body_bytes_hex", "")
-                if catalog_sig and catalog_body:
-                    try:
-                        self._verify_signature(bytes.fromhex(catalog_body), catalog_sig)
-                    except Exception as exc:  # noqa: BLE001
-                        raise ValueError(f"Pack catalog signature invalid: {exc}") from exc
-
-                mapping_sig = mapping_data.get("signature", "")
-                mapping_body = mapping_data.get("body_bytes_hex", "")
-                if mapping_sig and mapping_body:
-                    try:
-                        self._verify_signature(bytes.fromhex(mapping_body), mapping_sig)
-                    except Exception as exc:  # noqa: BLE001
-                        raise ValueError(f"Mapping catalog signature invalid: {exc}") from exc
+                # Step 2: Verify catalog signatures (P0-17: mandatory by default).
+                # Missing signature or body_bytes_hex raises unless
+                # IntelligenceConfig.allow_unsigned_catalog is True. The mapping
+                # catalog is only checked when it was actually fetched —
+                # mapping fetch failure earlier sets mapping_data = {} and we
+                # tolerate that path without forcing a signature on an empty doc.
+                self._require_or_skip_catalog_sig("pack", catalog_data)
+                if mapping_data:
+                    self._require_or_skip_catalog_sig("mapping", mapping_data)
 
                 # Step 3: Download eligible packs (license JWT is on the client headers)
                 packs_dir = self._cache_dir / "packs"
@@ -330,7 +360,48 @@ class IntelligenceClient:
     # ── Background task ───────────────────────────────────────────────────────
 
     async def start_refresh_task(self) -> None:
-        """Start the background refresh loop. Fires every refresh_interval_hours."""
+        """Start the background refresh loop. Fires every refresh_interval_hours.
+
+        P0-16: when ``IntelligenceConfig.prewarm_on_start`` is True (default),
+        an immediate refresh is fired before scheduling the background loop so
+        the cache is populated before the proxy starts serving traffic. The
+        pre-warm is bounded by ``refresh()``'s own 30 s per-request timeout and
+        is best-effort: a CDN unreachable at startup is logged loudly but does
+        NOT block startup — the proxy runs with whatever is already in
+        ``cache_dir`` (or with no policies on a true cold start) and the
+        background loop will retry on the regular cadence.
+        """
+        if self._config.prewarm_on_start:
+            try:
+                # force=True so the very first cold-start refresh proceeds even
+                # though _last_refresh is still 0. We rely on refresh()'s own
+                # lock + httpx timeout to bound the call.
+                result = await self.refresh(force=True)
+                errors = result.get("errors") or []
+                if errors:
+                    logger.warning(
+                        "event=intelligence_prewarm_partial packs=%s mappings=%s errors=%d "
+                        "— proxy continues with whatever is on disk",
+                        result.get("packs_downloaded", 0),
+                        result.get("mappings_downloaded", 0),
+                        len(errors),
+                    )
+                else:
+                    logger.info(
+                        "event=intelligence_prewarm_complete packs=%s mappings=%s",
+                        result.get("packs_downloaded", 0),
+                        result.get("mappings_downloaded", 0),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                # Loud + visible: this is the "CDN unreachable at startup"
+                # branch. We fail open (no enforced policies) but never block
+                # the proxy from accepting traffic.
+                logger.error(
+                    "event=intelligence_prewarm_failed error=%s "
+                    "— proxy is starting with empty/stale intelligence cache",
+                    exc,
+                )
+
         async def _loop() -> None:
             while True:
                 await asyncio.sleep(self._config.refresh_interval_hours * 3600)
