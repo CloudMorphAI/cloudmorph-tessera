@@ -8,7 +8,7 @@ Three publishing destinations, all driven by `.github/workflows/release.yml` on 
 
 | Target | Consumer | Auth |
 |--------|----------|------|
-| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | PyPI Trusted Publisher (OIDC, no token). `cloudmorph-tessera 0.2.0` is live on PyPI since 2026-05-14, published via manual twine upload. |
+| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | PyPI Trusted Publisher (OIDC, no token). `cloudmorph-tessera 0.2.0` is live on PyPI since 2026-05-14, published via manual twine upload. **0.2.1 release-prepped 2026-05-15** (commit `18ffa13`) — version bumped in the 5 places below; PyPI upload is a founder follow-up (WSL env lacks twine auth). |
 | GHCR: `ghcr.io/cloudmorphai/tessera:<version>` | Public Docker pull, customer Docker-mode deployments | `GITHUB_TOKEN` for push |
 | ECR: `237509402889.dkr.ecr.us-east-1.amazonaws.com/cloudmorph/tessera-cloud-prod:<version>` | Fargate pull from `cloudmorph-mono-repo`'s CDK stack | AWS OIDC role assumption |
 
@@ -40,7 +40,9 @@ Optional-dependency groups (`pyproject.toml:[project.optional-dependencies]`):
 - `[intelligence]` — `cryptography`, for Ed25519 verification of intelligence content.
 - `[infracost]` — `gql[all]`, for the GraphQL client.
 
-The core `[project.dependencies]` set is FastAPI, uvicorn, httpx, pydantic, typer, regex (the timeout-supporting library, not stdlib `re`), watchdog, PyYAML, jmespath. Every optional dep is lazily imported at the call site, so a minimal install runs the proxy with bearer auth, SQLite audit, no LLM, no cost backend, no AWS upstream.
+The core `[project.dependencies]` set is FastAPI, uvicorn, httpx, pydantic, typer, regex (the timeout-supporting library, not stdlib `re`), watchdog, PyYAML, jmespath, **PyJWT (≥2.8)**. Every optional dep is lazily imported at the call site, so a minimal install runs the proxy with bearer auth, SQLite audit, no LLM, no cost backend, no AWS upstream.
+
+**PyJWT note (P-cross-repo-audit, commit `9d84d82`).** The license-validator and OAuth introspection paths use `jwt.decode` / `jwt.get_unverified_header`. `PyJWT` was previously a transitive dep of `python-jose` and a runtime survival was accidental. It is now an explicit `>=2.8` pin in `[project.dependencies]` so a `pip install cloudmorph-tessera` without the `[oidc]` extra still has license-JWT decode. The `[oidc]` extra continues to layer `python-jose[cryptography]` on top for the JWKS path.
 
 `requires-python = ">=3.12"` — driven by usage of `zoneinfo`, `match` statements in `proxy.py`, and `Annotated[..., Field(discriminator=...)]` discriminated unions in `policy/schema.py`.
 
@@ -142,6 +144,8 @@ The version string must agree across five places (per the comment block in `pypr
 5. `CHANGELOG.md` — new section
 
 This is fragile. A stale `README.md` renders on the GitHub project page and on PyPI's project page; customers copy-paste from there. Single-source-of-truth automation (a `bump-version.py` script, or pulling `__version__` from `pyproject.toml` at runtime via `importlib.metadata.version`) would close this gap; it's not a v0.2.x priority.
+
+**0.2.0 → 0.2.1 bump (commit `18ffa13`, 2026-05-15).** All 5 places were updated in lockstep. The 0.2.1 release packages the cross-repo audit fixes (tier `scale`/`team` aliasing, `bundle_url` mapping URL, mandatory `manifest.signed.json` verify, `tarball_sha256` consumer check, base64 signature decoding) plus the explicit PyJWT dep. PyPI upload + wrapper image rebuild + ECR push + ECS `force-new-deployment` are founder follow-ups (Batch 4 was blocked on missing PyPI auth in the WSL environment that performed the local commits).
 
 ## Schemas as the consumed/emitted contract
 

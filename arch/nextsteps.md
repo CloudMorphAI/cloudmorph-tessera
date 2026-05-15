@@ -2,7 +2,25 @@
 
 State of the P0 worklist as of 2026-05-15, after the parallel sub-agent coding session that landed three commits (SA-1 / SA-2 / SA-3) closing 14 of the original P0 items in this repo. Tessera-intelligence picked up one companion commit (`471523f`, P0-12 rename).
 
-For pre-P0 audit-style findings (PyJWT undeclared dep, JWKS sync fetch, mypy decorator noise, ruff residue) see `plan/nextsteps.md` — those tracked the 2026-05-14 audit and remain open. This document focuses on the P0 worklist defined in `plan/details/tessera-content.md`, `plan/details/tessera-hotpath.md`, and `plan/details/tessera-cost-awsmcp.md`.
+For pre-P0 audit-style findings see `plan/nextsteps.md` — that catalogued the 2026-05-14 audit. The cross-repo audit findings that surfaced 2026-05-15 (tier ordering, `bundle_url` rename, mandatory `manifest.signed.json` verify, tarball SHA-256 check, base64 signature decoding, PyJWT explicit dep) were closed in commit `426ca84` + `9d84d82` + `18ffa13` — see "2026-05-15 cross-repo audit closures" below. This document focuses on the P0 worklist defined in `plan/details/tessera-content.md`, `plan/details/tessera-hotpath.md`, and `plan/details/tessera-cost-awsmcp.md`.
+
+## 2026-05-15 cross-repo audit closures
+
+Closed in `cloudmorph-tessera` `main`. Commit SHAs verified by `git log --oneline 1a55944..18ffa13`. The companion producer-side ship is `tessera-intelligence` commit `a481fe7` (production signing of 4 compliance packs + Azure pack + 4 mapping bundles + blast-radius bundle).
+
+| Item | Closed by | Where it landed |
+|------|-----------|-----------------|
+| Tier table — OSS consumer's `_TIER_ORDER` used `team` for rank 2; producer canonical is `scale` | `426ca84` | `tessera/intelligence/_tier.py` — `scale=2` is canonical; `team` is retained as a same-rank alias so 0.2.0 customers don't see policies vanish. Documented at `arch/status/intelligence-and-licensing.md` step 4. |
+| Mapping bundle URL — consumer was reading `mapping_url` but `mapping-index.json` ships `bundle_url` (every mapping download was a 404) | `426ca84` | `tessera/intelligence/client.py` — reads `bundle_url` first, falls back to `mapping_url` for backwards-compat with 0.2.0 catalogs. |
+| Mandatory `manifest.signed.json` verify — consumer was treating catalog `content_hash` / `signature` (PLACEHOLDER strings) as if they were the load-bearing signature; the actual signed manifest at `manifest_url` was never fetched | `426ca84` | `tessera/intelligence/client.py:_verify_pack_manifest` — fetches `manifest_url`, recomputes canonical-JSON SHA-256 with `content_hash`/`signature`/`signed_at` zeroed, Ed25519-verifies. Mirrors `tessera-intelligence/scripts/sign_pack.py:compute_content_hash` exactly. Documented at `arch/status/intelligence-and-licensing.md` step 5. |
+| Tarball SHA-256 check — consumer was comparing tarball-bytes-SHA-256 against manifest's `content_hash` (a hash of canonical JSON, not the tarball) | `426ca84` | `tessera/intelligence/client.py` now reads `tarball_sha256` from the verified manifest and compares it to `SHA-256(downloaded_tarball)`. Mandatory when `manifest_url` is present. |
+| Base64 signature decoding — consumer was `bytes.fromhex` on signatures the producer emits as base64 | `426ca84` | `tessera/intelligence/client.py:_verify_signature` uses `base64.b64decode` (matching `sign_pack.py`). |
+| PyJWT explicit dep | `9d84d82` | `pyproject.toml:[project.dependencies]` adds `PyJWT>=2.8`. License-validator + OAuth introspection no longer rely on transitive `python-jose` survival. Documented at `arch/status/packaging-and-release.md`. |
+| 0.2.0 → 0.2.1 release bump | `18ffa13` | 5-place version bump (`pyproject.toml`, `tessera/__init__.py`, `README.md`, `docs/INSTALL.md`, `CHANGELOG.md`). PyPI upload + wrapper rebuild + ECR push + ECS `force-new-deployment` are founder follow-ups — Batch 4 was blocked on missing PyPI auth in the WSL environment. |
+
+Round-trip smoke passes against `s3://tessera-intelligence-prod/v1.0.0/` end-to-end with the 0.2.1 client + the producer-signed corpus from `a481fe7`.
+
+
 
 ## Closed — landed locally on `main` (2026-05-15)
 
