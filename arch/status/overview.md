@@ -6,7 +6,7 @@
 
 Two artifacts, customer-installed:
 
-1. **The PyPI distribution `cloudmorph-tessera`** — a wheel + sdist containing the `tessera` package, the bundled `tessera/intelligence/public_key.pem` trust anchor, the 12 reference policies (`tessera/policies_default/`), and the `tessera` CLI entry point.
+1. **The PyPI distribution `cloudmorph-tessera`** — a wheel + sdist containing the `tessera` package, the bundled `tessera/intelligence/public_key.pem` trust anchor, the 18 reference policies (`tessera/policies_default/` — 7 generic + 5 `-EXAMPLE` AWS-illustrative + 6 AWS-MCP security defaults; see `policy-engine.md`), and the `tessera` CLI entry point.
 2. **The OCI image `ghcr.io/cloudmorphai/tessera:<version>`** — a multi-stage `python:3.12-slim` build pinned to a SHA-256 base digest, running as UID 10001, signed via Sigstore cosign keyless, with a CycloneDX SBOM attested alongside. Mirrored to a private ECR repo (`cloudmorph/tessera-cloud-prod`) for the Fargate consumers in `cloudmorph-mono-repo`.
 
 Both artifacts are produced from a single tag-push by `.github/workflows/release.yml`. See `packaging-and-release.md` for the full pipeline.
@@ -80,7 +80,7 @@ tessera/
 │   ├── action_verbs.py    # Tool-name → intent-verb registry
 │   └── regex_safety.py    # ReDoS corpus validator
 │
-├── policies_default/      # 12 bundled YAMLs (7 generic + 5 AWS-illustrative)
+├── policies_default/      # 18 bundled YAMLs (7 generic + 5 AWS-illustrative + 6 AWS-MCP)
 │
 ├── intelligence/          # Consumer of tessera-intelligence content
 │   ├── client.py          # IntelligenceClient — fetch + verify + cache

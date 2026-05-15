@@ -23,7 +23,7 @@ The PyPI distribution name is `cloudmorph-tessera`. The import name stays `tesse
 tessera = [
     "intelligence/*.pem",         # Ed25519 public-key trust anchor
     "intelligence/*.json",        # Any bundled intelligence catalogs
-    "policies_default/*.yaml",    # 12 bundled reference policies
+    "policies_default/*.yaml",    # 18 bundled reference policies (7 generic + 5 AWS-illustrative + 6 AWS-MCP)
 ]
 ```
 

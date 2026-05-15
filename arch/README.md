@@ -6,10 +6,11 @@ Architecture docs for the OSS `tessera` package: deterministic MCP firewall, con
 
 - **`status/*.md`** — architecture-design docs. How each subsystem is designed and intended to work.
 - **`improvements/*.md`** — version-scoped planned work. Named `<version>-<short-description>.md`.
+- **`nextsteps.md`** — top-level P0 worklist closure tracker. Lives at `arch/` root (not under `status/`) because it captures session-level closure state across multiple subsystems; status docs describe the design itself.
 
 ## Combined cap: 16 files
 
-Hard ceiling across `README.md` + `status/` + `improvements/`. New work fits by merging, not adding. Recommended cuts under pressure: fold `intelligence-and-licensing` into `proxy-enforcement-and-audit` once the OAuth surface stabilizes; fold `llm-policy-authoring` into `policy-engine` if the LLM authoring subsystem stops growing.
+Hard ceiling across `README.md` + `nextsteps.md` + `status/` + `improvements/`. New work fits by merging, not adding. Recommended cuts under pressure: fold `intelligence-and-licensing` into `proxy-enforcement-and-audit` once the OAuth surface stabilizes; fold `llm-policy-authoring` into `policy-engine` if the LLM authoring subsystem stops growing.
 
 ## Status docs are design, not snapshots
 
@@ -46,4 +47,4 @@ This directory covers **cloudmorph-tessera content only** — the OSS firewall, 
 - LLM authoring: `status/llm-policy-authoring.md`.
 - Distribution + release: `status/packaging-and-release.md`.
 
-Read `status/overview.md` first if this is a new visit.
+Read `status/overview.md` first if this is a new visit. For the live P0 worklist (what shipped this week, what remains founder-only) see `nextsteps.md`.
