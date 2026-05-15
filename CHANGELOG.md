@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - UNRELEASED
+
+### Added
+
+- **`tests/integration_cdn_smoke.py`** — end-to-end CDN license-gating matrix (8
+  scenarios: anonymous, developer, scale, and enterprise JWT tokens against
+  free/scale/enterprise-tier packs). Gated behind `TESSERA_INTEGRATION_TESTS=1`
+  env var; excluded from the normal CI matrix.  Also includes an `xfail`
+  placeholder for a typed-error test pending a `fetch_pack()` method on
+  `IntelligenceClient`.
+
 ## [0.2.0] - UNRELEASED
 
 This entry tracks the in-progress v0.2.0 release.
