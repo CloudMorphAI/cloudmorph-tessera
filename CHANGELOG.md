@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.1] - UNRELEASED
 
+### Fixed (cross-repo audit 2026-05-14 — closed 2026-05-15)
+
+- **Tier ordering**: `IntelligenceClient._TIER_ORDER` now carries `"scale": 2`
+  (the canonical name on pricing.cloudmorph.ai and the license server). `"team"`
+  is preserved at the same rank as a backward-compat alias for customers
+  upgrading from 0.2.0.
+- **Mapping bundle URL**: `_parse_catalog` no longer falls back to the
+  non-existent `mapping_url` field. The producer-side
+  `catalogs/mapping-index.json` uses `bundle_url`; the consumer now reads it.
+- **Manifest signature verification**: `_download_and_extract` now fetches the
+  per-pack signed `manifest.json` via the catalog's `manifest_url`, recomputes
+  the canonical-JSON content_hash with signed fields zeroed, asserts it matches
+  the stored hash (tamper detection), and Ed25519-verifies the base64 signature
+  against the content_hash bytes — mirroring `tessera-intelligence/scripts/sign_pack.py`.
+  The earlier flow trusted the catalog-declared `content_hash` as if it were the
+  tarball hash, which it never was.
+- **Tarball hash check**: `tarball_sha256` is now read from the **verified**
+  manifest (not the catalog) and is the authoritative integrity check for the
+  downloaded tarball. The pre-existing `_verify_tarball_hash` is now invoked
+  with that authoritative value.
+- **Signature decoding**: `_verify_signature` now uses `base64.b64decode` (was
+  `bytes.fromhex`). The producer-side `sign_pack.py` emits base64; the consumer's
+  hex-decoding silently failed against real producer output. The bug was masked
+  because catalog signature verification was opt-in until P0-17 landed.
+
 ### Added
 
 - **`tests/integration_cdn_smoke.py`** — end-to-end CDN license-gating matrix (8
@@ -15,6 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   env var; excluded from the normal CI matrix.  Also includes an `xfail`
   placeholder for a typed-error test pending a `fetch_pack()` method on
   `IntelligenceClient`.
+- **`PyJWT>=2.8.0`** as an explicit dependency. `/oauth/introspect` imports
+  `jwt` (PyJWT); previously it was a transitive of `mcp` / `msal` and could
+  silently disappear on a minor version bump of those packages.
+
+### Changed
+
+- **`PackManifest` dataclass** gained two fields: `manifest_url: str = ""` (URL
+  of the per-pack signed `manifest.json`) and `tarball_sha256: str = ""`
+  (populated after fetching + verifying the signed manifest, used by
+  `_download_and_extract` to verify the tarball it just downloaded).
+- **`_parse_catalog`** now reads from the producer-correct catalog keys:
+  `packs` for packs (unchanged) and `mapping_bundles` for mappings (was
+  `mappings` — a typo that worked accidentally because the catalog had a
+  legacy key that has since been deprecated). Both old and new keys are
+  accepted for backward compat.
 
 ## [0.2.0] - UNRELEASED
 
