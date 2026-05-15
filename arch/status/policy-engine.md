@@ -220,6 +220,53 @@ The seven vendor-specific reference policies (`github-mcp-protection`, `jira-mcp
 
 Off-the-shelf agents that don't supply intent simply produce `context["intent"] = None`, and policies that need intent are skipped via `match.require_intent: true`. This is the "intent-blind agent support" property: Cursor, Claude Desktop, and Windsurf work without modification.
 
+## Bundling policy (P0-19 resolution, 2026-05-15)
+
+**Decision**: hybrid open-core. Universal AWS-MCP primitives ship as bundled OSS in this package. Industry-vertical compliance + per-tenant customization + boto3-grade conditions ship as paid packs via `tessera-intelligence`.
+
+### OSS scope (`tessera/policies_default/`)
+
+What ships bundled:
+
+- **Universal AWS attack vectors** as canonicalized by AWS / CIS Benchmarks / NIST. If AWS, CIS, or NIST publishes it as a must-defend primitive, it ships OSS by default. No exceptions.
+- **Generic guardrails**: PII block, secret leak block, prod protection, data residency, write-action approval, read-only mode, cost cap (the existing 12).
+
+Current OSS headcount: 18 policies (12 generic + 6 AWS-MCP P0-1..6: PassRole, admin-policy, CreateAccessKey, KMS deletion, RDS public, IMDSv1).
+
+Target OSS headcount: ~25-30 policies covering the canonical primitive surface. Future additions include Bedrock guardrails-bypass deny, Lambda function-URL public deny, S3 bucket-policy public-grant deny, EBS unencrypted-volume deny, RDS publicly-accessible-snapshot-share deny, VPC default-SG-with-0.0.0.0/0-ingress deny, IAM CreateUser-with-console-password deny.
+
+### Paid scope (`tessera-intelligence/packs/`)
+
+What ships paid:
+
+- **Compliance packs** (HIPAA, PCI, fintech, healthcare, vendor-mcp-protection) with regulatory section anchors (§164.312, PCI v4 reqs, SOX §404, FDA Part 11, etc.). The value is ongoing maintenance as regulations change.
+- **Per-tenant customization**: thresholds, regex tuning, custom blast-radius rules.
+- **Boto3-grade conditions**: `resolved_role_attached_policies_include` and similar deep AWS API integrations that need live calls.
+- **Industry-vertical vendor MCP coverage** as new vendors emerge (healthcare-MCP, fintech-MCP, etc.).
+- **Premium AI cost ceilings** keyed to model family (Claude 4 series, GPT-5 series, etc.).
+- **The 99-op cost mapping + price-table + blast-radius corpus** (already paid).
+
+### Why hybrid (vs all-OSS or all-paid)
+
+- **All-OSS** would give away the compliance packs, which are the actual revenue surface. The value is the 10 HIPAA policies with §164.312 anchors maintained as regs change — not the trivial `block s3:PutObject without encryption` line.
+- **All-paid** turns Tessera into "useless until you pay" — the open-core anti-pattern. Customers feel extorted; competitors (Runlayer, MintMCP, Aurascape) ship a basic free firewall and steal the bottom-of-funnel.
+- **Hybrid** matches every successful open-core security company (Snyk: basic scan free, compliance paid; Datadog: tracing agent free, Sensitive Data Scanner paid; HashiCorp Vault: OSS free, Enterprise namespaces paid).
+
+### Decision triggers (when to revisit)
+
+The bundling policy is re-evaluated when any of these fire:
+
+1. A paying customer asks for one of the paid items in OSS → consider promoting to OSS, OR keep paid with a clear "production-grade refinement" upgrade narrative.
+2. AWS / CIS / NIST publishes a new canonical primitive → ship OSS by default.
+3. A prospective enterprise deal cites "Tessera doesn't ship X out of the box" as a deal-blocker → trigger for OSS expansion if X is universal.
+4. A competitor ships a basic free policy that Tessera gates behind paid → consider matching in OSS.
+
+### What this is NOT
+
+- Not a forever-decision. The triggers above can flip individual items.
+- Not a vertical-by-vertical policy. Industry-specific compliance is always paid; universal primitives are always OSS.
+- Not a "downgrade to paid" path. Items move from paid → OSS over time as they become canonical; never the reverse.
+
 ## Cross-references
 
 - For the surrounding request flow (where `engine.evaluate()` sits in the proxy): `proxy-enforcement-and-audit.md`.

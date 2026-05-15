@@ -79,21 +79,9 @@ The script extension is technically code that a sub-agent could write, but the s
 
 **Why founder-only.** Same as P0-8 — Ed25519 private key access.
 
-### P0-19 — product decision: bundled OSS vs paid-pack scope
+### ~~P0-19 — product decision: bundled OSS vs paid-pack scope~~ **CLOSED 2026-05-15**
 
-Source: `plan/details/tessera-content.md` § P0-19 (line 2008), `plan/details/tessera-cost-awsmcp.md` § 4.10.
-
-**State.** The 6 new AWS-MCP defaults shipped this session **as bundled OSS** (no `-EXAMPLE` suffix, no opt-in). The decision-rationale captured in `arch/status/policy-engine.md` § "The 6 bundled AWS-MCP security defaults" was: ship as loss-leader OSS for adoption; reserve cost-tier customization (per-tenant thresholds, regex tuning, boto3-grade `resolved_role_attached_policies_include` style conditions) for paid packs.
-
-**This decision is now provisional.** The founder owns whether to:
-
-- **Confirm the bundled-OSS posture** going forward (current state) — i.e., future canonical AWS-MCP defaults like Bedrock guardrails-bypass deny, Lambda function-URL public-deny, S3 bucket-policy public-grant deny ship in OSS too.
-- **Pivot to paid-pack-only** for new vertical defenders (HIPAA-extended, fintech-extended, GDPR-extended) and keep the bundled set frozen at the current 18.
-- **Hybrid** — bundle the universal AWS primitives (admin/credential/network) and gate the vertical/compliance defenders behind paid packs.
-
-**Why founder-only.** Pricing / packaging strategy is a non-technical product decision. Sub-agents have no view of the founder's go-to-market thesis and should not lock in the answer by default.
-
-**Decision trigger.** Becomes acutely actionable when (a) a paying customer asks for one of the deferred items above, or (b) the next AWS-MCP authority (AWS, NIST, CIS Benchmark) publishes a new canonical primitive worth defending.
+**Resolution: hybrid open-core.** Universal AWS-MCP primitives ship bundled OSS; industry-vertical compliance + per-tenant customization + boto3-grade conditions ship paid. Full policy + decision triggers documented at `arch/status/policy-engine.md` § "Bundling policy (P0-19 resolution, 2026-05-15)".
 
 ## 2026-05-15 P0 session result
 
