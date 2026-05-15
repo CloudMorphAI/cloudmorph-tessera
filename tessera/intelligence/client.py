@@ -7,13 +7,14 @@ Requires the ``cryptography`` package (included in the ``intelligence`` extra).
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import importlib.resources
 import json
 import logging
 import tarfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,10 +30,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Maps tier names to their rank; packs with min_tier <= current tier rank are allowed.
+# "scale" is the canonical name (matches pricing.cloudmorph.ai + the license server).
+# "team" is kept as a backward-compat alias so customers on 0.2.0 → 0.2.1 don't break.
 _TIER_ORDER: dict[str, int] = {
     "free": 0,
     "developer": 1,
-    "team": 2,
+    "team": 2,  # legacy alias for "scale" — same rank
+    "scale": 2,
     "enterprise": 3,
 }
 
@@ -46,6 +50,8 @@ class PackManifest:
     signature: str
     pack_url: str
     status: str  # "active" | "deprecated" | etc.
+    manifest_url: str = ""  # URL of the per-pack signed manifest.json (packs only)
+    tarball_sha256: str = ""  # Populated after fetching+verifying manifest_url
 
 
 class IntelligenceClient:
@@ -87,9 +93,16 @@ class IntelligenceClient:
 
     # ── Verification helpers ──────────────────────────────────────────────────
 
-    def _verify_signature(self, data: bytes, signature_hex: str) -> None:
-        """Verify Ed25519 signature. Raises cryptography.exceptions.InvalidSignature on failure."""
-        sig_bytes = bytes.fromhex(signature_hex)
+    def _verify_signature(self, data: bytes, signature: str) -> None:
+        """Verify Ed25519 signature.
+
+        ``signature`` is **base64-encoded** per the producer-side ``sign_pack.py``
+        (which uses ``base64.b64encode``).  Earlier versions of this method used
+        ``bytes.fromhex`` which silently failed on real producer output — that bug
+        was masked because the catalog signature path was opt-in until P0-17
+        landed.  Raises ``cryptography.exceptions.InvalidSignature`` on failure.
+        """
+        sig_bytes = base64.b64decode(signature)
         self._public_key.verify(sig_bytes, data)
 
     def _require_or_skip_catalog_sig(
@@ -134,6 +147,88 @@ class IntelligenceClient:
         actual = hashlib.sha256(data).hexdigest()
         return actual == expected_hash
 
+    def _compute_manifest_content_hash(self, manifest_data: dict[str, Any]) -> str:
+        """Recompute the canonical-JSON SHA-256 of a manifest with signed fields zeroed.
+
+        Mirrors ``tessera-intelligence/scripts/sign_pack.py:compute_content_hash``
+        so the consumer can detect a tampered manifest at refresh time.
+        Returns the hex digest (matching the producer-side convention).
+        """
+        canonical = dict(manifest_data)
+        canonical["content_hash"] = None
+        canonical["signature"] = None
+        canonical["signed_at"] = None
+        serialized = json.dumps(
+            canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    async def _fetch_and_verify_signed_manifest(
+        self,
+        manifest_url: str,
+        client: httpx.AsyncClient,
+    ) -> dict[str, Any]:
+        """Fetch a pack's signed ``manifest.json`` and verify its Ed25519 signature.
+
+        The signature scheme matches the producer-side ``sign_pack.py``:
+
+        1. Producer computes SHA-256 of canonical-JSON of the manifest with
+           ``content_hash`` / ``signature`` / ``signed_at`` zeroed.
+        2. Producer signs the hex-digest UTF-8 bytes with Ed25519, base64-encodes.
+        3. Producer writes ``content_hash``, ``signature``, ``signed_at`` back into
+           the manifest along with ``tarball_sha256`` (bound by ``--tarball-hash``).
+
+        Consumer reverses:
+
+        1. Recompute canonical-JSON hash with signed fields zeroed.
+        2. Assert recomputed == ``content_hash`` (catches manifest-level tamper).
+        3. ``base64.b64decode`` the signature, ``Ed25519.verify`` against the
+           ``content_hash`` UTF-8 bytes.
+
+        Returns the verified manifest dict. Caller is expected to read
+        ``tarball_sha256`` to verify the tarball it just downloaded.
+
+        Raises:
+            ValueError: signature missing, placeholder, or verify failed.
+            TamperDetected: recomputed hash != stored content_hash.
+        """
+        from tessera.errors import TamperDetected
+
+        resp = await client.get(manifest_url)
+        resp.raise_for_status()
+        manifest_data: dict[str, Any] = resp.json()
+
+        stored_hash = manifest_data.get("content_hash", "") or ""
+        stored_sig = manifest_data.get("signature", "") or ""
+
+        if not stored_hash or not stored_sig:
+            raise ValueError(
+                f"manifest at {manifest_url} is missing content_hash or signature",
+            )
+        if stored_hash.startswith("PLACEHOLDER") or stored_sig.startswith("PLACEHOLDER"):
+            raise ValueError(
+                f"manifest at {manifest_url} carries placeholder values (pack not signed)",
+            )
+
+        recomputed = self._compute_manifest_content_hash(manifest_data)
+        if recomputed != stored_hash:
+            raise TamperDetected(
+                f"manifest content_hash mismatch at {manifest_url}: "
+                f"stored={stored_hash[:16]}... recomputed={recomputed[:16]}...",
+            )
+
+        # Ed25519 verify the signature over the content_hash bytes.
+        sig_bytes = base64.b64decode(stored_sig)
+        message = stored_hash.encode("utf-8")
+        try:
+            self._public_key.verify(sig_bytes, message)
+        except Exception as exc:
+            raise ValueError(
+                f"manifest signature Ed25519 verify failed at {manifest_url}: {exc}",
+            ) from exc
+
+        return manifest_data
+
     def _verify_tarball_hash(self, tarball_bytes: bytes, expected_sha256: str) -> None:
         """Raise TamperDetected when SHA-256 of tarball_bytes != expected_sha256."""
         from tessera.errors import TamperDetected
@@ -146,18 +241,40 @@ class IntelligenceClient:
     # ── Catalog parsing ───────────────────────────────────────────────────────
 
     def _parse_catalog(self, catalog_data: dict[str, Any], kind: str = "pack") -> list[PackManifest]:
-        """Parse a catalog JSON body into PackManifest list."""
+        """Parse a catalog JSON body into PackManifest list.
+
+        Pack catalog entries carry ``pack_url`` + ``manifest_url``.  Mapping
+        catalog entries carry ``bundle_url`` (NOT ``mapping_url`` — the producer
+        emits ``bundle_url`` per ``catalogs/mapping-index.json``).  The earlier
+        ``mapping_url`` fallback was a silent no-op for every mapping bundle.
+        """
         manifests: list[PackManifest] = []
-        items = catalog_data.get("packs" if kind == "pack" else "mappings", [])
+        # Producer-side catalogs use top-level "packs" or "mapping_bundles".
+        if kind == "pack":
+            items = catalog_data.get("packs", [])
+        else:
+            items = catalog_data.get("mapping_bundles") or catalog_data.get("mappings", [])
         for item in items:
+            # URL fallback chain: pack_url (packs), then bundle_url (current
+            # mapping-index.json producer), then mapping_url (legacy fixture
+            # field — kept so the existing test corpus that mocks "mapping_url"
+            # still resolves to a usable URL until those tests are migrated to
+            # the producer-correct "bundle_url").
+            url = (
+                item.get("pack_url")
+                or item.get("bundle_url")
+                or item.get("mapping_url")
+                or ""
+            )
             manifests.append(PackManifest(
                 name=item["name"],
                 version=item.get("version", "0.0.1"),
                 min_tier=item.get("min_tier", "free"),
                 content_hash=item.get("content_hash", ""),
                 signature=item.get("signature", ""),
-                pack_url=item.get("pack_url", item.get("mapping_url", "")),
+                pack_url=url,
                 status=item.get("status", "active"),
+                manifest_url=item.get("manifest_url", ""),
             ))
         return manifests
 
@@ -176,7 +293,41 @@ class IntelligenceClient:
         dest_parent: Path,
         client: httpx.AsyncClient,
     ) -> bool:
-        """Download, verify, and extract a pack or mapping archive. Returns True on success."""
+        """Download, verify, and extract a pack or mapping archive. Returns True on success.
+
+        Verification flow (post-2026-05-15 cross-repo audit fix):
+
+        * If the catalog entry carries ``manifest_url`` (packs do; mapping bundles
+          do not until producer-side signing lands), fetch + Ed25519-verify the
+          signed manifest first.  The verified manifest's ``tarball_sha256`` is
+          authoritative for the downloaded tarball — the catalog-declared
+          ``content_hash`` is the manifest hash, not the tarball hash, so using
+          it directly against the tarball was a pre-existing bug.
+        * If ``manifest_url`` is absent (mapping bundles today), fall back to
+          the catalog signature path (verified earlier in ``refresh()`` step 2
+          via ``_require_or_skip_catalog_sig``).  Once mapping-bundle signing
+          ships (P0-9 in nextsteps.md), this branch will also fetch a sibling
+          ``.signed.json`` to verify.
+        """
+        # ── Step A: fetch + verify the signed manifest (packs only) ──
+        verified_tarball_sha256: str = ""
+        if manifest.manifest_url:
+            try:
+                verified_manifest = await self._fetch_and_verify_signed_manifest(
+                    manifest.manifest_url, client,
+                )
+                verified_tarball_sha256 = verified_manifest.get("tarball_sha256", "") or ""
+                # Promote the verified hash onto the live PackManifest so callers
+                # / tests inspecting `manifest.tarball_sha256` see the authoritative value.
+                manifest.tarball_sha256 = verified_tarball_sha256
+            except Exception as exc:  # noqa: BLE001 — verify failure = fail-closed
+                logger.error(
+                    "event=manifest_verify_failed name=%s url=%s error=%s",
+                    manifest.name, manifest.manifest_url, exc,
+                )
+                return False
+
+        # ── Step B: fetch tarball ──
         try:
             response = await client.get(manifest.pack_url)
             response.raise_for_status()
@@ -188,25 +339,25 @@ class IntelligenceClient:
             )
             return False
 
-        # Verify content hash
-        if manifest.content_hash and not self._verify_content_hash(raw, manifest.content_hash):
-            logger.error(
-                "event=pack_hash_mismatch name=%s expected=%s",
-                manifest.name, manifest.content_hash,
-            )
-            return False
-
-        # Verify tarball-level SHA-256 if the manifest carries tarball_sha256.
-        # This is separate from content_hash — content_hash covers the extracted
-        # payload; tarball_sha256 binds the transport artifact to the signed manifest.
-        tarball_sha256 = getattr(manifest, "tarball_sha256", None)
-        if tarball_sha256:
+        # ── Step C: verify tarball SHA-256 (mandatory when manifest_url is present) ──
+        if verified_tarball_sha256:
             try:
-                self._verify_tarball_hash(raw, tarball_sha256)
-            except Exception as exc:  # noqa: BLE001 — log + skip on TamperDetected
+                self._verify_tarball_hash(raw, verified_tarball_sha256)
+            except Exception as exc:  # noqa: BLE001 — TamperDetected
                 logger.error(
                     "event=tarball_hash_mismatch name=%s error=%s",
                     manifest.name, exc,
+                )
+                return False
+        elif manifest.content_hash and not manifest.content_hash.startswith("PLACEHOLDER"):
+            # Legacy mapping-bundle path: until P0-9 ships per-bundle signing,
+            # we fall back to the catalog-declared content_hash as a best-effort
+            # tarball check. Once mappings carry .signed.json siblings, this
+            # branch goes away.
+            if not self._verify_content_hash(raw, manifest.content_hash):
+                logger.error(
+                    "event=pack_hash_mismatch name=%s expected=%s",
+                    manifest.name, manifest.content_hash[:16],
                 )
                 return False
 

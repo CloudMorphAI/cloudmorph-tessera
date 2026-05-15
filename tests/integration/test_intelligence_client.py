@@ -44,9 +44,15 @@ def _sign_catalog(priv: Ed25519PrivateKey, payload: dict) -> dict:
     Encodes ``payload`` (without the signature fields) as canonical JSON,
     signs the bytes with ``priv``, and emits a catalog dict that the
     IntelligenceClient signature path will accept.
+
+    The signature is base64-encoded to match the producer-side
+    ``tessera-intelligence/scripts/sign_pack.py`` convention. Earlier
+    revisions of this helper used ``.hex()`` which silently disagreed with
+    the producer — see 0.2.1 CHANGELOG cross-repo audit fix.
     """
+    import base64
     body_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    sig = priv.sign(body_bytes).hex()
+    sig = base64.b64encode(priv.sign(body_bytes)).decode("ascii")
     return {**payload, "body_bytes_hex": body_bytes.hex(), "signature": sig}
 
 
