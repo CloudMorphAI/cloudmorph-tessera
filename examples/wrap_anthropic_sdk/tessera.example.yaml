@@ -1,0 +1,24 @@
+# tessera.example.yaml — minimal config for the wrap_anthropic_sdk example
+# Copy to tessera.yaml and adjust paths before running `tessera serve`.
+
+policies:
+  dir: ./policies          # points at examples/wrap_anthropic_sdk/policies/
+  mode: enforcement        # enforcement | log_only | observation
+  default_action: allow    # allow anything not explicitly blocked
+
+auth:
+  type: bearer             # clients must supply Authorization: Bearer <token>
+
+audit:
+  sink: sqlite
+  path: ./tessera-audit.db  # written to the directory you start tessera from
+  also_stdout: true          # mirror every event to stdout so you can watch live
+
+upstreams:
+  - name: github
+    url: http://localhost:7000   # mock_github_mcp.py; replace with real GitHub MCP URL in prod
+    timeout_seconds: 10
+    # In production, add a credentials block to forward your GitHub token:
+    # credentials:
+    #   header: Authorization
+    #   value: "Bearer ${GITHUB_MCP_TOKEN}"

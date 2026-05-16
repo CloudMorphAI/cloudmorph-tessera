@@ -1,0 +1,4 @@
+# The root .gitignore excludes .vscode/ globally.
+# Override here so that the example workspace settings are tracked.
+!.vscode/
+!.vscode/settings.json
