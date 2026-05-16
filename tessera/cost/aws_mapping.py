@@ -2,11 +2,19 @@
 
 Built-in OSS mappings cover 10 high-value operations.
 Extended/premium mappings can be loaded at runtime from a YAML cache directory.
+
+.. deprecated::
+    This module is the **legacy per-call cost path** (fallback in v0.3.x).
+    The canonical entry point is ``tessera.cost.cost_for_call()``.
+    ``_BUILTIN_MAPPING`` and ``map_request()`` remain callable for
+    backwards-compatibility through v0.3.x and are scheduled for removal
+    in v0.4.0.  Migrate to ``cost_for_call()``.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,12 +22,25 @@ from typing import Any, Literal
 
 import yaml  # type: ignore[import-untyped]
 
+warnings.warn(
+    "tessera.cost.aws_mapping is the legacy per-call cost path. The unified "
+    "tessera.cost.cost_for_call() with the price-table backend is the v0.3.0 "
+    "canonical entry point. aws_mapping._BUILTIN_MAPPING + map_request() remain "
+    "callable as fallbacks through v0.3.x and will be removed in v0.4.0. "
+    "Migrate to cost_for_call().",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class InfracostQuery:
-    """Parameters for a single Infracost SKU query."""
+    """Parameters for a single Infracost SKU query.
+
+    Deprecated: used by the legacy ``map_request()`` path; removed in v0.4.0.
+    """
 
     service: str
     region: str
@@ -222,6 +243,9 @@ def map_request(tool_name: str, args: dict[str, Any]) -> InfracostQuery | None:
 
     Extended mappings (loaded from premium pack) take precedence over builtins.
     Returns None if tool_name is not mapped — caller should fail-closed (don't block).
+
+    Deprecated: legacy fallback path; prefer ``tessera.cost.cost_for_call()``.
+    Removed in v0.4.0.
     """
     # Extended wins over builtin
     fn = _extended_mappings.get(tool_name) or _BUILTIN_MAPPING.get(tool_name)
@@ -241,6 +265,10 @@ def load_extended_mappings(cache_dir: Path) -> int:
         confidence_band: high
 
     Returns the count of entries successfully loaded.
+
+    Deprecated: extended mappings are now consumed via the price-table artifact
+    loaded by ``IntelligenceClient``.  This function remains callable as a
+    fallback through v0.3.x and is removed in v0.4.0.
     """
     loaded = 0
     if not cache_dir.is_dir():
@@ -288,5 +316,6 @@ def load_extended_mappings(cache_dir: Path) -> int:
     return loaded
 
 
-# Public alias used in __init__.py
+# Public alias used in __init__.py.
+# Deprecated: alias for the legacy builtin mapping dict; removed in v0.4.0.
 aws_mapping = _BUILTIN_MAPPING

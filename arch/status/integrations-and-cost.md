@@ -92,7 +92,55 @@ Concurrent requests for `aws_iam_PutRolePolicy` now run their IAM reads in worke
 
 Cross-references: producer-side rules and algorithm rationale live in `tessera-intelligence/arch/status/blast-radius.md`.
 
+## Unified cost_for_call API (v0.3.0)
+
+`tessera.cost.cost_for_call(operation, args, region)` is the canonical cost-resolution entry point as of v0.3.0.
+
+### Contract
+
+```python
+tessera.cost.cost_for_call(
+    operation: str,
+    args: dict,
+    region: str | None = None,
+) -> CostResult
+```
+
+### `CostResult` shape
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `price_usd` | `float \| None` | Resolved unit price in USD; `None` on miss |
+| `unit` | `str` | Pricing unit (e.g. `"Hrs"`, `"GB-month"`, `"1M requests"`) |
+| `confidence_band` | `"high" \| "medium" \| "ceiling"` | Certainty of the estimate |
+| `source` | `"price_table" \| "infracost_live" \| "miss"` | Which backend resolved the price |
+| `operation` | `str` | Echo of the requested operation name |
+
+### Routing
+
+The `operation` string carries a provider prefix (`aws_*` / `azure_*` / `gcp_*`) which determines the registered `PriceTable` instance to consult. Price tables are populated at lifespan startup via `IntelligenceClient._load_price_tables_from_cache()`, which scans the local intelligence cache for signed `<cloud>-prices-<version>.json` artifacts and loads each into a `PriceTable` per provider.
+
+### Resolution flow
+
+1. **Price-table hit** (sub-millisecond) — the operation is present in the loaded price artifact; `source="price_table"`.
+2. **Live Infracost fallback** (200 ms cap) — operation not in price table; `InfracostClient.query_sku()` is called via the configured Infracost backend; `source="infracost_live"`.
+3. **Miss** — operation has no mapping in either path; `price_usd=None`, `source="miss"`. The `predicted_cost` condition returns `False` on miss (don't block).
+
+### Audit linkage
+
+When `cost_for_call` resolves a price, the proxy records `cost_source` and `cost_band` on the emitted audit event alongside `pricingSnapshotId`. This lets operators filter audit logs by resolution path (`source == "price_table"` vs `"infracost_live"` vs `"miss"`).
+
+### Deprecation timeline
+
+| Version | Status |
+|---------|--------|
+| v0.3.x | `tessera.cost.aws_mapping` raises `DeprecationWarning` at import; legacy `map_request()` direct-call pattern is the fallback |
+| v0.4.0 | `aws_mapping` module removed; `map_request()` + `_BUILTIN_MAPPING` gone |
+| Indefinite | `InfracostClient` remains as supported live-query fallback backend |
+
 ## Cost: AWS mapping shim
+
+**v0.3.0 update**: this surface is now the **fallback path**. The primary cost-resolution entry point is `tessera.cost.cost_for_call()` (see § "Unified cost_for_call API"). The legacy `aws_mapping.map_request()` + `InfracostClient.query_sku()` direct-call pattern remains callable for backwards-compatibility and is scheduled for removal in v0.4.0 (with `DeprecationWarning` raised at import in v0.3.x).
 
 `tessera/cost/aws_mapping.py` is the lookup table from MCP tool name to Infracost GraphQL query parameters. Two tiers:
 

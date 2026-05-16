@@ -68,6 +68,8 @@ Every decision (and most pass-throughs) is written to an audit event. The audit 
 
 The event-schema contract is `schemas/audit_event.schema.json`. Required fields: `schemaVersion` (literal `v0.1`), `eventId` (`evt_<urlsafe-base64>`), `tenantId`, `eventType`, `occurredAt` (RFC 3339), `prevEventHash` (64-char hex or empty), `eventHash` (64-char hex), `payload`. Optional: `sessionId`, `actorId`, `pricingSnapshotId`.
 
+**v0.3.0 cost fields.** When `cost_for_call()` resolves a price for the tool call being evaluated, the proxy additionally records `cost_source` (one of `"price_table"` / `"infracost_live"` / `"miss"`) and `cost_band` (`"high"` / `"medium"` / `"ceiling"`) in the audit event payload. These fields are present only when a price was prefetched (i.e., `cost_source != "miss"`); absent on calls where no cost mapping is registered. Operators can filter the audit log on `cost_source` to distinguish price-table-resolved calls from live Infracost fallbacks.
+
 ## Hash-chain canonicalization rule
 
 `tessera/audit/canonical_json.py` implements RFC 8785 JCS. Object keys are sorted lexicographically, no whitespace, `ensure_ascii=False`, integers serialize as integers (even if originally `float`), NaN/Infinity rejected with `ValueError`. The event hash is computed over `canonical_json({...event, eventHash: "", signature: ""})` — the empty `eventHash` and `signature` fields are zeroed before hashing so the hash includes itself by construction.

@@ -60,6 +60,15 @@ class InfracostClient:
     Wraps the self-hosted Infracost pricing container at `backend_url`.
     On timeout or HTTP error, methods return None (fail-closed: don't block
     the policy engine when pricing data is unavailable).
+
+    v0.3.0 role: **supported fallback indefinitely**.  Live per-call Infracost
+    queries via this client are the fallback path when the price-table artifact
+    produced by ``tessera-intelligence`` does not contain an entry for the
+    requested operation.  The primary entry point is ``tessera.cost.cost_for_call()``,
+    which consults the price-table first and reaches this client only on a miss.
+    The client itself is not deprecated; only the pattern of calling it directly
+    (bypassing ``cost_for_call``) is the legacy path scheduled for removal in
+    v0.4.0.
     """
 
     def __init__(
