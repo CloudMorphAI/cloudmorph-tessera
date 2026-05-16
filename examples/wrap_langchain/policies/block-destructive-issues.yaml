@@ -1,0 +1,12 @@
+id: block-destructive-issues
+name: Block Destructive Issue Operations
+description: >
+  Blocks GitHub MCP calls that delete or close issues in bulk.
+  Demonstrates Tessera enforcement before the request reaches GitHub.
+match:
+  upstream: github
+  tool: github_delete_issue
+when: []   # no extra conditions — block unconditionally
+action: block
+reason: "Issue deletion is blocked by policy. Use the GitHub UI for destructive operations."
+priority: 80
