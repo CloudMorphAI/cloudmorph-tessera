@@ -2,67 +2,148 @@
 
 <!-- mcp-name: io.github.CloudMorphAI/tessera -->
 
-**The open-source MCP firewall for AI agents**
-
-**See Tessera block a destructive Cursor action in 60 seconds → [cursor-hooks recipe](recipes/cursor-hooks.md)**
+**Runtime intelligent firewall for AI agent and MCP tool calls.**
 
 [![PyPI version](https://img.shields.io/pypi/v/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
 [![Python versions](https://img.shields.io/pypi/pyversions/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/CloudMorphAI/cloudmorph-tessera/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fcloudmorphai%2Ftessera-blue.svg)](https://ghcr.io/cloudmorphai/tessera)
-[![Docker pulls](https://img.shields.io/docker/pulls/cloudmorphai/tessera.svg)](https://github.com/CloudMorphAI/cloudmorph-tessera/pkgs/container/tessera)
+
+Tessera is a deterministic in-process firewall that sits between an AI agent and every MCP server, evaluates each tool call against a YAML policy bench, and either forwards, blocks, or routes for approval — writing each decision to a hash-chained audit log.
+
+## v0.5.0 benchmarks (single worker, loopback, 24 bundled policies)
+
+| Metric | Value | Conditions |
+|---|---|---|
+| p50 HTTP cycle | **6.40 ms** | 10 concurrent conns, full proxy stack (auth + 24-policy eval + SQLite audit write) |
+| p99 HTTP cycle | **12.30 ms** | 10 concurrent conns, SQLite write jitter is dominant |
+| Sustained throughput | **2,009 RPS** | 200 concurrent conns, single uvicorn worker (linear with N workers behind nginx) |
+| Engine-eval microbench | 25-86 µs | in-process only, no HTTP, no audit |
+| HTTP overhead above engine | ~6.3 ms p50 | uvicorn + auth + audit write + JSON serde |
+
+Hardware: Intel Core Ultra 5 115U (15W mobile chip), WSL2. Honest developer-hardware numbers — not inflated production claims. Full methodology: [benchmarks/results/v0.4.0-production.md](benchmarks/results/v0.4.0-production.md).
+
+## Install + first block in 60 seconds
+
+```bash
+pip install cloudmorph-tessera
+tessera init                                        # writes tessera.yaml + policies/ in cwd
+TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve
+```
+
+Tessera now listens on `http://127.0.0.1:8080/mcp/<upstream>`. Wire it into Cursor / Claude Code / your agent's MCP config (recipes in [recipes/](recipes/)), and every `tools/call` flows through 24 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 19 others.
 
 ---
 
-Tessera is the deterministic cost and blast-radius firewall for AI agents on AWS. Block expensive operations before they execute. Audit-grade. No false positives.
+## What this protects against
 
----
+Concrete categories the 24 bundled policies cover out of the box:
 
-## What's New in v0.2.0
+- **Cost spikes** — `cost-cap`, `aws-bedrock-cost-ceiling-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`, `aws-ec2-cost-cap-EXAMPLE`. Per-call ceiling, daily cumulative ceiling, model-specific Bedrock ceiling.
+- **IAM blast-radius expansion** — `aws-mcp-passrole-guard`, `aws-mcp-admin-policy-deny`, `aws-mcp-create-access-key-deny`, `aws-iam-blast-radius-EXAMPLE`. PassRole approval gate, AWS-managed-admin attach hard-deny, access-key creation deny, principal-count guard.
+- **Destructive operations on production** — `prod-protection`, `non-prod-only`, `write-action-approval`. Block by tag or name pattern, default-deny writes on prod, require human approval for delete-class actions.
+- **Secret / PII exfiltration in arguments** — `secret-leak-block`, `pii-block`. Regex bench for API keys + tokens + SSN + credit-card numbers in tool-call args.
+- **Prompt injection signals** — `prompt-injection-heuristic`. Regex bench for common jailbreak strings (`ignore previous`, `system: you are now`, etc.).
+- **Region / data-residency violations** — `data-residency-eu`, `aws-region-allowlist-EXAMPLE`. Block ops outside permitted regions.
+- **MCP server hygiene** — `aws-mcp-rds-public-deny`, `aws-mcp-ec2-imdsv1-deny`, `aws-mcp-kms-deletion-approval`. RDS public-access block, EC2 IMDSv1 deny, KMS deletion approval gate.
 
-- **AWS MCP Server upstream** (`kind: aws_mcp`) — IAM-signed routing to the official AWS MCP server via `mcp-proxy-for-aws`. Install with `pip install "cloudmorph-tessera[aws]"`.
-- **5 new semantic conditions** — `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, `time_of_day_outside` — enables cost-aware and blast-radius policies beyond simple argument matching.
-- **Infracost integration** — real-time cost estimation for AWS tool calls via the Infracost GraphQL API. Install with `pip install "cloudmorph-tessera[infracost]"`.
-- **Gemini policy authoring** — `tessera policy author` and `tessera analyze` commands powered by Gemini 1.5 Pro. Install with `pip install "cloudmorph-tessera[gemini]"`.
-- **Intelligence client** — `tessera intelligence pull <pack>` fetches and verifies license-gated premium packs (Ed25519 signature, tier gating). Install with `pip install "cloudmorph-tessera[intelligence]"`.
-- **OIDC/JWT authentication** — management-plane SSO via Clerk/Auth0/Cognito (OQ-2) and JWT mode for MCP traffic from Entra/Okta/Cognito agents.
+Vendor-specific packs (GitHub, Jira, Salesforce, Slack, Postgres, OWASP prompt injection, OWASP tool poisoning) are available via the Tessera Cloud premium pack `vendor-mcp-protection` — `tessera intelligence pull vendor-mcp-protection`.
 
----
-
-## How customers use Tessera
-
-Tessera sits between your AI agent and every MCP server, evaluating each tool call against your policies, auditing the decision, and either forwarding or blocking.
+## How it works
 
 ```
                 ┌──────────────┐                ┌──────────────┐
-   prompt  ───→ │   AI Agent   │ ─── MCP ──→    │   Tessera    │
-                │ (Claude /    │   tools/call   │  policy +    │ ───→ MCP upstream
-                │  GPT / etc.) │                │  audit + cost│
-                └──────────────┘                └──────┬───────┘
+   prompt  ───→ │   AI Agent   │ ─── MCP ──→    │   Tessera    │ ───→ MCP upstream
+                │ (Claude /    │   tools/call   │  auth +      │      (AWS, GitHub,
+                │  GPT / etc.) │                │  policy +    │ ◄─── Slack, your own)
+                └──────────────┘                │  audit       │
+                                                └──────┬───────┘
                                                        │ block / allow / require_approval
                                                        ▼
-                                                  audit log
+                                                  hash-chain audit log
 ```
 
-Five worked examples cover the common integration shapes:
+Every inbound `POST /mcp/{upstream}` is:
 
-- **[Anthropic SDK](examples/wrap_anthropic_sdk/)** — Claude tool-use → Tessera → upstream MCP
-- **[OpenAI SDK](examples/wrap_openai_sdk/)** — GPT tools → manual dispatch → Tessera → upstream MCP
-- **[LangChain](examples/wrap_langchain/)** — LangChain `Tool` subclass that forwards through Tessera
-- **[Claude Code](examples/wrap_claude_code/)** — `~/.claude.json` MCP server entry pointing at Tessera
-- **[VS Code Copilot / Continue / Cline](examples/wrap_vscode_copilot/)** — `.vscode/settings.json` MCP config
+1. **Authenticated** — bearer token matched; `AuthContext.scope` assigned (isolates audit streams per token).
+2. **Evaluated** — policy engine walks the sorted set (descending `priority`, first-match-wins). Returns `allow`, `block`, `log_only`, or `require_approval`.
+3. **Audited** — the decision is written to a SHA-256 hash-chain; `tessera audit verify` detects any tamper or gap.
 
-For tools without bespoke MCP support, the [generic shell-hook recipe](recipes/generic-shell-hook.md) gives you a 20-line wrapper around Tessera's `/intent` endpoint.
+In `enforcement` mode a `block` returns a JSON-RPC error and never touches the upstream. In `log_only` mode the upstream is always called and the decision rides in `X-Tessera-Decision` / `X-Tessera-Policy-Id` / `X-Tessera-Reason` response headers.
 
----
+The engine is pure Python — no OPA, no LLM round-trip, no cloud credentials. Policy outcomes are deterministic.
 
-## AWS Quickstart
+## Tier levels
+
+| Tier | Engine + 24 bundled policies | Premium packs |
+|---|---|---|
+| **Free** | Yes (local enforcement, hash-chain audit, multi-token scoping) | None |
+| **Developer** | Yes | `aws-cost-aware-defaults`, `vendor-mcp-protection` |
+| **Team** | Yes | + `hipaa-guardrails`, `pci-dss-controls` |
+| **Enterprise** | Yes | All 12 packs (tri-cloud AWS+Azure+GCP), custom-pack authoring |
+
+Premium packs are fetched from the Tessera Cloud CDN, Ed25519-signature-verified, and cached locally. Free-tier installs continue to enforce 24 bundled policies with no network calls.
+
+## Installation
 
 ```bash
-pip install "cloudmorph-tessera[aws,gemini,intelligence]"
+# Local development / CLI use
+pip install cloudmorph-tessera
+
+# With optional extras
+pip install "cloudmorph-tessera[aws,gemini,intelligence,infracost,observability]"
+
+# Production deploy (recommended)
+docker pull ghcr.io/cloudmorphai/tessera:0.5.0
 ```
 
-Sample `tessera.yaml` for AWS MCP Server:
+After install: `tessera version` prints `tessera 0.5.0`. Full install matrix + supported Python versions: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Wire it into Cursor
+
+```bash
+tessera serve --bind 127.0.0.1:8080
+```
+
+Then add to `~/.cursor/mcp.json` (macOS/Linux) or `%USERPROFILE%\.cursor\mcp.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "tessera": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+Restart Cursor. Tessera appears in the MCP indicator. Every Cursor tool call is now policy-checked and audit-logged.
+
+For Claude Code, Claude Desktop, VS Code Copilot, Continue, Cline, generic shell hooks, and the Cursor Hooks integration: [recipes/](recipes/) and [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
+
+## Routing pattern — make Tessera the agent's default
+
+Adding Tessera as one of many available MCP servers isn't enough — the agent will often prefer the direct cloud MCP server because it sees both. To make Tessera the default route, instruct the agent in its system context.
+
+For Claude Code, drop a `CLAUDE.md` at project root:
+
+```markdown
+# Tool routing — use Tessera as the MCP firewall
+
+When this project calls MCP tools that touch cloud resources (AWS, GCP, Azure,
+Databricks, Snowflake, GitHub, Slack, Postgres, Kubernetes):
+
+- Always prefer the `tessera` MCP server if the same tool is reachable through it.
+- If a tool is only available via a direct cloud MCP server, stop and ask the
+  user before proceeding — don't silently bypass the firewall.
+- When a block response carries `error.data._meta.tessera_audit_event_id`,
+  surface the policy reason to the user verbatim.
+```
+
+Equivalent goes in `.cursorrules` for Cursor, or the system prompt for Claude Desktop. This pattern is the difference between "a firewall the user must remember to use" and "a firewall the agent uses by default."
+
+## Configuration at a glance
 
 ```yaml
 listen:
@@ -73,8 +154,9 @@ auth:
   type: bearer
 
 policies:
-  dir: ./policies
-  mode: log_only
+  dir: /etc/tessera/policies
+  reload: watch
+  mode: log_only           # enforcement | log_only | observation
   default_action: block
 
 upstreams:
@@ -82,257 +164,13 @@ upstreams:
     kind: aws_mcp
     url: https://mcp.amazonaws.com
     aws_region: us-east-1
-    # Credentials resolved via boto3 chain (env, ~/.aws, instance profile)
-```
-
-Start Tessera:
-
-```bash
-TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve --config tessera.yaml
-```
-
----
-
-## Why Tessera
-
-AI agents calling MCP tools can delete production data, exfiltrate secrets, and exceed cost caps — all in a single tool call your code never explicitly authorized. Tessera is an HTTP proxy that sits between the agent and every MCP server; every `tools/call` request is evaluated against a YAML policy set before it reaches the upstream. Decisions are written to a hash-chain audit log so tampering is detectable. The engine is pure Python — no OPA, no ML, no cloud credentials — so the policy outcome for a given input is always the same. 12 reference policies (7 generic + 5 AWS-illustrative) ship with the container; vendor-specific policies are available via Tessera Cloud premium packs.
-
----
-
-## Installation
-
-### Option 1: Docker (recommended for production)
-
-```bash
-docker pull ghcr.io/cloudmorphai/tessera:0.5.0
-```
-
-### Option 2: Python package (for local development and CLI use)
-
-```bash
-pip install cloudmorph-tessera
-```
-
-After install, verify:
-
-```bash
-tessera version
-# tessera 0.5.0
-```
-
-Docker is the primary path for users running Tessera as a service. PyPI is the path for users who want to author policies locally or run `tessera policy lint` / `tessera policy test` in CI.
-
----
-
-## 5-minute quickstart
-
-### Primary path: pip + Cursor
-
-```bash
-# Step 1: Install
-pipx install cloudmorph-tessera
-# or: pip install cloudmorph-tessera  (inside a venv)
-
-# Step 2: Scaffold
-tessera init
-# Creates tessera.yaml (mode: log_only), policies/, .env.example in current directory
-
-# Step 3: Start Tessera
-# Default bind is 0.0.0.0:8080; use --bind to restrict to loopback if preferred
-tessera serve --policy-dir ./policies --bind 127.0.0.1:8080
-# Tessera HTTP MCP server is now listening on http://localhost:8080
-
-# Step 4: Wire Cursor — see the "Wire up Cursor" section below
-
-# Step 5: Verify policy decisions were logged
-# The audit log is a SQLite file; check integrity with:
-tessera audit verify --audit-path /var/lib/tessera/audit.db --scope default
-# Adjust --audit-path if you changed audit.path in tessera.yaml
-
-# Step 6: When ready, switch to enforcement mode
-# Edit tessera.yaml: change mode: log_only -> mode: enforcement
-# Restart Tessera. Block decisions now fire.
-
-# IMPORTANT: If exposing Tessera beyond localhost, put it behind nginx/Caddy
-# with a rate-limit rule. Native rate limiting is on the v0.2 roadmap.
-```
-
-### Alternative path: Docker
-
-```bash
-# Step 1: Pull
-docker pull ghcr.io/cloudmorphai/tessera:0.5.0
-
-# Step 2: Scaffold
-docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.5.0 tessera init --dir /out
-# Creates tessera.yaml (mode: log_only), policies/, .env.example
-
-# Step 3: Start Tessera (log_only by default — safe to try, nothing is blocked yet)
-docker run -d --name tessera \
-  -p 8080:8080 \
-  -v "$PWD/tessera.yaml:/etc/tessera/tessera.yaml:ro" \
-  -v "$PWD/policies:/etc/tessera/policies:ro" \
-  -v tessera_audit:/var/lib/tessera \
-  -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
-  ghcr.io/cloudmorphai/tessera:0.5.0
-
-# Step 4: Wire Cursor — see the "Wire up Cursor" section below
-
-# Step 5: Verify a tool call was logged
-docker exec tessera tessera audit verify --scope default
-
-# Step 6: When ready, switch to enforcement
-# Edit tessera.yaml: change mode: log_only -> mode: enforcement
-# Restart Tessera. Now block decisions fire.
-```
-
----
-
-## Wire up Cursor
-
-With Tessera running (`tessera serve --bind 127.0.0.1:8080`), add Tessera as an MCP server in Cursor's config.
-
-### macOS / Linux
-
-Edit `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "tessera": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
-
-### Windows
-
-Edit `%USERPROFILE%\.cursor\mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "tessera": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
-
-Restart Cursor. Tessera should appear in the MCP indicator. All tool calls Cursor makes through Tessera are now subject to your policy bundle, with every decision recorded to the hash-chained audit log.
-
-Tessera also ships a Cursor Hooks integration if you prefer the hooks-based wiring (fires on `beforeMCPExecution` / `afterMCPExecution` events):
-
-```bash
-tessera install-cursor-hooks
-```
-
-See [recipes/cursor-hooks.md](recipes/cursor-hooks.md) for a demo walkthrough.
-
----
-
-## What ships
-
-- **Multi-token bearer auth** — inline env var, YAML file, or single legacy token; per-token scope isolates audit streams. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-- **Three enforcement modes** — `enforcement` (blocks fire), `log_only` (advisory, always forwards), `observation` (engine skipped). See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-- **16-condition pure-Python policy engine** — `arg_equals`, `arg_greater_than`, `arg_less_than`, `arg_matches_regex`, `arg_in_set`, `arg_contains_pattern`, `arg_size_greater_than`, `tool_name_in`, `action_class_in`, `intent_class_in`, `intent_purpose_matches`, `region_in`, `time_of_day_outside`, `meta_field_equals`, `any_of`, `none_of`. See [docs/POLICIES.md](docs/POLICIES.md).
-- **Hash-chain audit log** — every event is chained to the previous via SHA-256; `tessera audit verify` detects any gap or tamper. Per-token scope isolation. See [docs/AUDIT.md](docs/AUDIT.md).
-- **12 reference policies (7 generic + 5 AWS-illustrative)** — generic: `read-only-mode`, `prod-protection`, `secret-leak-block`, `pii-block`, `cost-cap`, `write-action-approval`, `data-residency-eu`; AWS-illustrative: `aws-ec2-cost-cap-EXAMPLE`, `aws-iam-blast-radius-EXAMPLE`, `aws-region-allowlist-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`, `aws-bedrock-cost-ceiling-EXAMPLE`. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are available via Tessera Cloud premium packs. See [Policy Catalog](#policy-catalog) and [docs/POLICIES.md](docs/POLICIES.md).
-- **Per-file reload error isolation** — a bad YAML file is skipped and logged; the rest of the policy set remains live. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-- **Regex safety (ReDoS defense)** — all regex conditions are evaluated via the `regex` library with a 100 ms timeout; a timeout returns `false` and tags the audit event. See [docs/POLICIES.md](docs/POLICIES.md).
-- **Intent-blind agent support** — agents that do not declare intent in `_meta.tessera_intent` are handled by tool-name and argument policies. `intent.required: false` is the default. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
-- **CLI** — `tessera serve`, `tessera audit verify`, `tessera policy test`, `tessera policy lint`, `tessera version`, `tessera init`. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-- **Multi-stage Docker image** — builder + slim runtime; runs as UID 10001 (non-root). See [docs/INSTALL.md](docs/INSTALL.md).
-- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` are resolved via importlib at startup; swap implementations without modifying core code. See [tessera/pluggable.py](tessera/pluggable.py).
-
----
-
-## Policy Catalog
-
-Tessera v0.5.0 ships **12 reference policies** out of the box (7 generic + 5 AWS-illustrative). Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are in the Tessera Cloud premium pack.
-
-### Generic (7)
-
-| Policy | Effect |
-|---|---|
-| `prod-protection.yaml` | Block destructive write operations when targeting production resources (env=production/prod or resource name matching `prod-*`) |
-| `secret-leak-block.yaml` | Block tool calls where arguments appear to contain API keys or tokens |
-| `pii-block.yaml` | Block tool calls with arguments matching PII patterns (SSN, credit card numbers) |
-| `cost-cap.yaml` | Block tool calls that exceed per-request cost thresholds |
-| `read-only-mode.yaml` | Allow only read operations; block everything else |
-| `write-action-approval.yaml` | Require human approval for all write and delete operations |
-| `data-residency-eu.yaml` | Ensure data operations stay within EU regions |
-
-### AWS-illustrative policies (5)
-
-| Policy | Effect |
-|---|---|
-| `aws-ec2-cost-cap-EXAMPLE.yaml` | Block EC2 RunInstances calls predicted to cost more than $50/hr |
-| `aws-iam-blast-radius-EXAMPLE.yaml` | Block IAM PutRolePolicy/AttachRolePolicy affecting more than 100 principals |
-| `aws-region-allowlist-EXAMPLE.yaml` | Block operations outside EU regions (data-residency enforcement) |
-| `aws-cost-runaway-stop-EXAMPLE.yaml` | Halt all cost-incurring calls when cumulative daily spend exceeds $500 |
-| `aws-bedrock-cost-ceiling-EXAMPLE.yaml` | Block Bedrock InvokeModel calls with ceiling cost above $1.50 |
-
-These require `predicted_cost` / `blast_radius` / `cumulative_spend_today` condition support from the Tessera Cloud `aws-cost-aware-defaults` premium pack. In `log_only` mode they are safe to try without the premium pack (unknown conditions fail-open).
-
-### Vendor-specific policies (premium pack)
-
-The 7 vendor-specific policies (GitHub, Jira, OWASP prompt injection, OWASP tool poisoning, Postgres, Salesforce, Slack) are available in the **Tessera Cloud premium pack** `vendor-mcp-protection`. Access via `tessera intelligence pull vendor-mcp-protection`.
-
-See [`policies/README.md`](policies/README.md) for the full schema and authoring guide.
-
----
-
-## How it works
-
-```
-Agent --> [Tessera: auth --> engine --> audit] --> Upstream MCP
-```
-
-Every inbound `POST /mcp/{upstream}` is:
-
-1. Authenticated — bearer token matched against configured tokens; `AuthContext.scope` assigned.
-2. Evaluated — policy engine walks the sorted policy set (first-match-wins) and returns `allow`, `block`, `log_only`, or `require_approval`.
-3. Audited — the decision (and response, if forwarded) is written to the hash-chain.
-
-In `enforcement` mode a `block` decision returns a JSON-RPC error (code `-32603`) over HTTP 200 to the agent and does not touch the upstream. In `log_only` mode the upstream is always called and the decision is returned in response headers (`X-Tessera-Decision`, `X-Tessera-Policy-Id`, `X-Tessera-Reason`).
-
-Source code is under [tessera/](tessera/); contributor notes in [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## Configuration at a glance
-
-```yaml
-listen:
-  host: 0.0.0.0
-  port: 8080
-
-auth:
-  type: bearer
-
-policies:
-  dir: /etc/tessera/policies
-  reload: watch          # watch | sighup | none
-  mode: log_only         # enforcement | log_only | observation
-  default_action: block
-
-upstreams:
-  - name: aws
-    url: https://mcp.aws.example.com
-    credentials:
-      header: Authorization
-      value: "Bearer ${AWS_MCP_TOKEN}"   # resolved from environment at startup
 ```
 
 Full reference: [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Annotated example: [tessera.example.yaml](tessera.example.yaml).
 
----
-
 ## Authoring policies
+
+One YAML file per rule in `policies.dir`. Files prefixed with `_` are skipped. The engine evaluates in descending `priority`; first match wins.
 
 ```yaml
 id: block-delete-prod
@@ -351,83 +189,47 @@ reason: "Delete blocked on production resource"
 priority: 90
 ```
 
-Policies are one YAML file per rule in the directory set by `policies.dir`. Files prefixed with `_` are skipped. The engine evaluates policies in descending `priority` order; the first matching policy wins. `when: []` (empty) matches every call.
-
-Test before deploying:
+Validate before deploying:
 
 ```bash
 tessera policy lint --policy-dir policies/
 tessera policy test --policy-dir policies/ --fixture-dir tests/fixtures/
 ```
 
-Full condition catalog and fixture format: [docs/POLICIES.md](docs/POLICIES.md).
+18 condition primitives shipped (`arg_equals`, `arg_matches_regex`, `arg_path_matches_regex`, `arg_in_set`, `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, `sts_chain_depth_greater_than`, `time_of_day_outside`, `any_of`, `none_of`, plus 6 more). Full catalog + fixture format: [docs/POLICIES.md](docs/POLICIES.md).
 
----
+## What ships
 
-## Routing your AI agent through Tessera (CLAUDE.md / system-prompt pattern)
-
-Adding Tessera as one of many available MCP servers isn't enough — your agent will often prefer the direct cloud MCP server because it sees that one too. To make Tessera the default route for cloud tool calls, instruct the agent in its system context.
-
-For **Claude Code**, drop a `CLAUDE.md` at your project root (or `~/.claude/CLAUDE.md` for global default):
-
-```markdown
-# Tool routing — use Tessera as the MCP firewall
-
-When this project calls MCP tools that touch cloud resources (AWS, GCP, Azure,
-Databricks, Snowflake, GitHub, Slack, Postgres, Kubernetes):
-
-- **Always prefer the `tessera` MCP server** if the same tool is reachable
-  through it. Tessera enforces deterministic policy + writes a hash-chained
-  audit log of every call.
-- If a tool is only available via a direct cloud MCP server, **stop and ask
-  the user before proceeding** — don't silently bypass the firewall.
-- Read-only operations (list, describe, get) typically pass through normally.
-- Destructive operations (delete, terminate, drop, force-push) WILL be blocked
-  by the shipped reference policies if they touch prod resources. When the
-  block response carries `error.data._meta.tessera_audit_event_id`, surface
-  the policy reason to the user verbatim.
-```
-
-For **Cursor**, equivalent goes in `.cursorrules` at project root, or in user-level Cursor settings. For **Claude Desktop**, put it in the global system prompt via Settings → "Personalization".
-
-This pattern is the difference between "a firewall the user must remember to use" and "a firewall the agent uses by default." Combined with the 14 reference policies, it gives you defense-in-depth without per-call vigilance.
-
-See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for per-client config recipes (Cursor, Claude Code, Claude Desktop).
-
----
+- **24 bundled defensive policies** — 7 generic + 6 AWS-MCP defaults + 5 AWS-illustrative + 6 Batch 8 (intent / business-hours / oversized-payload / tool-allowlist / prompt-injection / non-prod-only).
+- **Hash-chained audit log** — SQLite-backed; per-token scope isolation; `tessera audit verify` detects gap or tamper.
+- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` resolved via importlib at startup. Same Protocols in Tessera Cloud (which swaps in Cognito + DynamoDB implementations).
+- **Three enforcement modes** — `enforcement`, `log_only`, `observation`.
+- **Multi-token bearer auth** + JWT mode (Entra / Okta / Cognito).
+- **OAuth 2.1 PKCE + DCR + introspection** for management-plane SSO.
+- **Multi-stage Docker image** — runs as UID 10001 (non-root).
+- **Observability** — Prometheus metrics + optional OpenTelemetry tracing (off by default).
+- **Optional extras** — `[aws]` (AWS-MCP routing), `[gemini]` (policy authoring), `[infracost]` (real-time cost), `[intelligence]` (premium-pack CDN client).
 
 ## Tessera Cloud
 
-Want hosted? Multi-tenant? SSO? Compliance evidence export? Tessera Cloud is the same engine with hosted orchestration. The same `Authenticator`, `PolicyLoader`, and `AuditSink` Protocols are used — the implementations are swapped (e.g., `DynamoDBPolicyLoader` instead of `FilesystemPolicyLoader`). Your existing `tessera.yaml` and policy files work without changes when you migrate. https://cloudmorph.ai
+Hosted, multi-tenant, SSO, compliance evidence export, signed premium intelligence packs. Same engine, same Protocols — the implementations are swapped (e.g., `DynamoDBPolicyLoader` instead of `FilesystemPolicyLoader`). Your existing `tessera.yaml` and policy files work without changes when you migrate. https://cloudmorph.ai
 
----
+## Manual smoke scenarios
+
+Six human-readable customer journeys — fresh install, intelligence fetch + verify, policy-allow, cost-cap block, tier downgrade, anonymous CDN — under [tests/scenarios/](tests/scenarios/). Run them before tagging a release.
 
 ## Roadmap
 
-Deferred from v0.1; detail and rationale in [docs/ROADMAP.md](docs/ROADMAP.md).
+Detail and rationale: [docs/ROADMAP.md](docs/ROADMAP.md).
 
-- **OAuth 2.1 PKCE** — v0.2; needed for SaaS/CI deployments where the identity issuer is a third-party IdP.
-- **Native rate limiting** — v0.2; per-token token bucket; workaround in v0.1 is nginx/Caddy in front.
-- **Postgres audit sink** — v0.2; the `AuditSink` Protocol is already designed for it; SQLite covers v0.1 write volume.
-- **stdio transport** — v0.2; for Claude Desktop and agent runtimes that launch MCP servers as subprocesses.
-- **Rego escape hatch** — v0.2; gated on a concrete use case the YAML condition catalog cannot express.
-- **Multi-tenant isolation** — not planned for OSS; available in Tessera Cloud.
-
----
-
-## FAQ
-
-### Does Tessera work with Claude Desktop?
-
-Tessera v0.5.0 is HTTP-mode only. Claude Desktop **free tier** supports stdio MCP servers only, so Tessera v0.5.0 won't appear there. Claude Desktop **Pro / Max / Team / Enterprise** plans support [Custom Connectors](https://support.anthropic.com/en/articles/11724636-claude-desktop-custom-connectors), which can talk to Tessera via the same `http://localhost:8080/mcp` endpoint Cursor uses.
-
-A stdio adapter is on the **v0.3.0 roadmap** so Claude Desktop free-tier users can also use Tessera without a paid plan. Track it in [issues](https://github.com/CloudMorphAI/cloudmorph-tessera/issues).
-
----
+- **stdio transport** — for Claude Desktop free-tier and agent runtimes that launch MCP servers as subprocesses.
+- **Postgres audit sink** — for write volumes beyond SQLite's comfort zone; the `AuditSink` Protocol is already designed for it.
+- **Native rate limiting** — per-token token bucket; workaround today is nginx/Caddy in front.
+- **Rego escape hatch** — gated on a concrete use case the YAML condition catalog cannot express.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `pip install -e ".[dev]"` and `pre-commit install` to get started.
+See [CONTRIBUTING.md](CONTRIBUTING.md). `pip install -e ".[dev]"` and `pre-commit install` to get started.
 
 ## License
 
