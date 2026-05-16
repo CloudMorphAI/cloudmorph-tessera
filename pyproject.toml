@@ -185,6 +185,7 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
     "adversarial: adversarial security fixtures",
     "slow: slow tests (deselect with '-m \"not slow\"')",
+    "examples: smoke tests for the worked examples under examples/",
 ]
 
 [tool.coverage.run]

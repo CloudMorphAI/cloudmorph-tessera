@@ -1,0 +1,70 @@
+name: examples-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    name: Validate ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - wrap_anthropic_sdk
+          - wrap_openai_sdk
+          - wrap_langchain
+          - wrap_claude_code
+          - wrap_vscode_copilot
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tessera (runtime extras only)
+        run: pip install -e .[runtime]
+
+      - name: Validate policy YAML
+        run: |
+          python -c "
+          import yaml, sys
+          path = 'examples/${{ matrix.example }}/policies/block-destructive-issues.yaml'
+          with open(path) as f:
+              doc = yaml.safe_load(f)
+          required = {'id', 'name', 'action'}
+          missing = required - doc.keys()
+          if missing:
+              print(f'FAIL: missing keys {missing}', file=sys.stderr)
+              sys.exit(1)
+          print(f'OK  policy parsed: {doc[\"id\"]}')
+          "
+
+      - name: Validate tessera config YAML
+        run: |
+          python -c "
+          import yaml, sys
+          path = 'examples/${{ matrix.example }}/tessera.example.yaml'
+          with open(path) as f:
+              doc = yaml.safe_load(f)
+          required = {'policies', 'auth', 'upstreams'}
+          missing = required - doc.keys()
+          if missing:
+              print(f'FAIL: missing keys {missing}', file=sys.stderr)
+              sys.exit(1)
+          print(f'OK  tessera config parsed, mode={doc[\"policies\"][\"mode\"]}')
+          "
+
+      - name: AST-parse Python files
+        run: |
+          found=0
+          for f in examples/${{ matrix.example }}/*.py; do
+            [ -f "$f" ] || continue
+            python -c "import ast; ast.parse(open('$f').read())"
+            echo "OK  $f"
+            found=1
+          done
+          [ "$found" -eq 0 ] && echo "No .py files in examples/${{ matrix.example }}/ (skipped)"
+          exit 0

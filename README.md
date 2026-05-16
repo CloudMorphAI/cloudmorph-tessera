@@ -29,6 +29,33 @@ Tessera is the deterministic cost and blast-radius firewall for AI agents on AWS
 
 ---
 
+## How customers use Tessera
+
+Tessera sits between your AI agent and every MCP server, evaluating each tool call against your policies, auditing the decision, and either forwarding or blocking.
+
+```
+                ┌──────────────┐                ┌──────────────┐
+   prompt  ───→ │   AI Agent   │ ─── MCP ──→    │   Tessera    │
+                │ (Claude /    │   tools/call   │  policy +    │ ───→ MCP upstream
+                │  GPT / etc.) │                │  audit + cost│
+                └──────────────┘                └──────┬───────┘
+                                                       │ block / allow / require_approval
+                                                       ▼
+                                                  audit log
+```
+
+Five worked examples cover the common integration shapes:
+
+- **[Anthropic SDK](examples/wrap_anthropic_sdk/)** — Claude tool-use → Tessera → upstream MCP
+- **[OpenAI SDK](examples/wrap_openai_sdk/)** — GPT tools → manual dispatch → Tessera → upstream MCP
+- **[LangChain](examples/wrap_langchain/)** — LangChain `Tool` subclass that forwards through Tessera
+- **[Claude Code](examples/wrap_claude_code/)** — `~/.claude.json` MCP server entry pointing at Tessera
+- **[VS Code Copilot / Continue / Cline](examples/wrap_vscode_copilot/)** — `.vscode/settings.json` MCP config
+
+For tools without bespoke MCP support, the [generic shell-hook recipe](recipes/generic-shell-hook.md) gives you a 20-line wrapper around Tessera's `/intent` endpoint.
+
+---
+
 ## AWS Quickstart
 
 ```bash
