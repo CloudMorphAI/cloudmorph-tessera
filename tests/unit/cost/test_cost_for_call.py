@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tessera.cost import CostResult, register_price_table, cost_for_call, _PRICE_TABLE_REGISTRY
+from tessera.cost import _PRICE_TABLE_REGISTRY, CostResult, cost_for_call, register_price_table
 from tessera.cost.price_table import PriceTable
 
 

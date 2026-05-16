@@ -5,8 +5,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from tessera.policy.engine import PolicyEngine
 from tessera.policy.schema import (
     Action,
@@ -19,7 +17,6 @@ from tessera.policy.schema import (
     Policy,
     PredictedCost,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
-import pytest
 
 from tessera.config import (
     AuditConfig,
@@ -29,9 +28,7 @@ from tessera.config import (
 )
 from tessera.cost import register_price_table
 from tessera.cost.price_table import PriceTable
-from tessera.cost.types import CostResult
 from tessera.proxy import create_app
-
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -224,7 +221,6 @@ def test_price_table_path_blocks_with_cost_source(tmp_path: Path) -> None:
 
 def test_infracost_live_fallback_blocks_with_cost_source(tmp_path: Path) -> None:
     """price-table miss → InfracostClient returns $10/hr → BLOCKED; audit has cost_source=infracost_live."""
-    import asyncio
 
     from tessera import cost as _cost_mod
     from tessera.cost.aws_mapping import InfracostQuery

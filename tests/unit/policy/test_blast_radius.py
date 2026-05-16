@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from tessera.integrations.aws.blast_radius import BlastRadiusBackend
 from tessera.policy.conditions import evaluate_condition
 from tessera.policy.schema import BlastRadius
-from tessera.integrations.aws.blast_radius import BlastRadiusBackend
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -22,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from tessera.config import AuditConfig, PoliciesConfig, TesseraConfig, UpstreamConfig
 from tessera.proxy import _DATA_LEAK_PASSTHROUGH_METHODS, create_app
-
 
 # ---------------------------------------------------------------------------
 # Helpers

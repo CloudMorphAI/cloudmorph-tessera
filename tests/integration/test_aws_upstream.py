@@ -7,14 +7,11 @@ object whose .post() method is mockable via respx.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-import respx
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -170,7 +167,7 @@ async def test_timeout_returns_error() -> None:
     from fastapi.responses import JSONResponse
 
     mock_client = AsyncMock()
-    mock_client.post.side_effect = asyncio.TimeoutError()
+    mock_client.post.side_effect = TimeoutError()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -192,6 +189,7 @@ async def test_timeout_returns_error() -> None:
 async def test_unknown_upstream_name_returns_error() -> None:
     """Requesting a non-existent upstream from state returns -32001."""
     from fastapi.responses import JSONResponse
+
     from tessera.proxy import _forward_upstream
 
     # Minimal state mock with no aws_clients or http_clients for "nonexistent"

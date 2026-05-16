@@ -17,7 +17,6 @@ from cryptography.hazmat.primitives.serialization import (
 
 from tessera.config import IntelligenceConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -267,7 +266,7 @@ async def test_license_check_401_falls_back_to_free(tmp_path, respx_mock):
 @pytest.mark.asyncio
 async def test_license_server_unreachable_uses_cached(tmp_path, respx_mock):
     """License server unreachable → returns cached license if within 7d."""
-    from tessera.intelligence.license import LicenseValidator, LicenseStatus
+    from tessera.intelligence.license import LicenseValidator
 
     config = _make_config(tmp_path)
 

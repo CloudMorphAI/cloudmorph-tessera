@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from tessera.policy.engine import PolicyEngine
 from tessera.policy.loader import FilesystemPolicyLoader
 from tessera.policy.schema import Action, MatchSpec, Policy, ToolNameIn

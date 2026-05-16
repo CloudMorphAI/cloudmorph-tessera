@@ -15,7 +15,6 @@ from jose import jwt
 from tessera.auth.oidc import OIDCAuthenticator
 from tessera.errors import UnauthorizedError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -77,8 +76,8 @@ def _make_request_no_header() -> MagicMock:
 @pytest.fixture(scope="module")
 def rsa_keypair():
     """Generate an RSA keypair for signing test JWTs."""
-    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     private_key = rsa.generate_private_key(
         public_exponent=65537,

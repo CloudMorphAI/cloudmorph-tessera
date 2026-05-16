@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def app():
-    from tessera.auth.oauth_rs import make_metadata_route
     from fastapi import FastAPI
+
+    from tessera.auth.oauth_rs import make_metadata_route
 
     test_app = FastAPI()
     make_metadata_route(test_app)

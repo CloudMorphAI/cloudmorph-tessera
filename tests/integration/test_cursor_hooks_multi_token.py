@@ -3,12 +3,8 @@ fail_closed mode (A-4-5)."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import patch
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,9 +89,9 @@ def test_resolve_bearer_token_file(tmp_path: Any) -> None:
 
 def test_resolve_bearer_token_legacy_fallback() -> None:
     """TESSERA_BEARER_TOKEN single-token path still works."""
-    from tessera.integrations.cursor_hooks import _resolve_bearer_token
-
     import os
+
+    from tessera.integrations.cursor_hooks import _resolve_bearer_token
 
     env_patch = {
         "TESSERA_BEARER_TOKEN": "tk_eeeeeeeeeeeeeeee",
@@ -127,9 +123,9 @@ def test_fail_closed_true_denies_on_unreachable() -> None:
 
 def test_fail_open_default_allows_on_unreachable() -> None:
     """When fail_closed is not set, handle_before fails open on unreachable Tessera."""
-    from tessera.integrations.cursor_hooks import handle_before
-
     import os
+
+    from tessera.integrations.cursor_hooks import handle_before
 
     with patch.dict("os.environ", {}, clear=False):
         os.environ.pop("TESSERA_CURSOR_FAIL_CLOSED", None)

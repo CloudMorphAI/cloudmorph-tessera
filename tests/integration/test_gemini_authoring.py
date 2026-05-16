@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tessera.llm.gemini import GeminiPolicyAuthor
 from tessera.llm.base import PolicyRecommendation
+from tessera.llm.gemini import GeminiPolicyAuthor
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -133,7 +133,6 @@ def test_analyze_tools_happy_path(mock_client_cls):
 @patch("tessera.llm.gemini.genai.Client")
 def test_temperature_and_top_k_passed_correctly(mock_client_cls):
     """Temperature and top_k values are forwarded to generate_content config."""
-    from google.genai import types as genai_types
 
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client

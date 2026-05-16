@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from tessera.policy.engine import PolicyEngine
 from tessera.policy.matchers import resolve_effective_tool_name
 from tessera.policy.schema import (
@@ -19,7 +17,6 @@ from tessera.policy.schema import (
     Policy,
     ToolNameIn,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

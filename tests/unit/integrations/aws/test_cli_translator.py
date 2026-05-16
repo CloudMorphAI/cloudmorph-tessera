@@ -365,7 +365,7 @@ class TestGenericFallback:
         _called: list[str] = []
 
         def _fake_handler(args: dict) -> str:
-            cmd = f"aws glue start-crawler"
+            cmd = "aws glue start-crawler"
             if "Name" in args:
                 cmd += f" --name {args['Name']}"
             _called.append(cmd)

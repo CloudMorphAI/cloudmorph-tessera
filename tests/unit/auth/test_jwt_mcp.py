@@ -15,7 +15,6 @@ from jose import jwt
 from tessera.auth.jwt_mcp import JWTAuthenticator
 from tessera.errors import UnauthorizedError
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -32,8 +31,8 @@ _KID = "entra-kid-001"
 
 @pytest.fixture(scope="module")
 def rsa_keypair():
-    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     return rsa.generate_private_key(
         public_exponent=65537,

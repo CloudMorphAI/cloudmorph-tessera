@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from tessera.cost.types import CostResult
 from tessera.policy.conditions import evaluate_condition
 from tessera.policy.schema import PredictedCost
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

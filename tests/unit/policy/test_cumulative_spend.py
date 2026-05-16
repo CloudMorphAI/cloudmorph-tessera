@@ -5,14 +5,13 @@ from __future__ import annotations
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from tessera.policy.conditions import evaluate_condition
 from tessera.policy.schema import CumulativeSpendToday
 from tessera.state.daily_spend import DailySpendState
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

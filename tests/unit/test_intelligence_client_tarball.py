@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import tarfile
 
 import pytest
 
 from tessera.errors import TamperDetected
 from tessera.intelligence.client import IntelligenceClient
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

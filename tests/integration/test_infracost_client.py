@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 # We mock the gql Client so no real GraphQL transport is needed.
 from tessera.cost.infracost import InfracostClient, SkuResult
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -176,8 +173,8 @@ async def test_fail_closed_on_missing_mapping():
 @pytest.mark.asyncio
 async def test_pricing_snapshot_id_flows_through_emit():
     """pricing_snapshot_id returned by data_version() flows into audit emitter."""
-    from tessera.audit.emitter import AuditEmitter
     from tessera.audit.chain import HashChain
+    from tessera.audit.emitter import AuditEmitter
     from tessera.audit.sinks.stdout import StdoutSink
 
     # Build emitter and emit with a snapshot id
