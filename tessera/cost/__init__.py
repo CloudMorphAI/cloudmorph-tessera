@@ -1,16 +1,15 @@
-"""Tessera cost estimation — Infracost GraphQL client + AWS mapping shim.
+"""Tessera cost estimation — price-table registry + Infracost GraphQL client.
 
+cost_for_call() and register_price_table() are the primary API entry points.
 InfracostClient is imported lazily (requires the [infracost] optional dep group).
-aws_mapping, map_request, and load_extended_mappings are always available.
-cost_for_call() and register_price_table() are the primary v0.3.0 API entry points.
+InfracostQuery is re-exported from tessera.cost.types for backwards-compat.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tessera.cost.aws_mapping import InfracostQuery, aws_mapping, load_extended_mappings, map_request
-from tessera.cost.types import CostResult, CostSource
+from tessera.cost.types import CostResult, CostSource, InfracostQuery
 
 if TYPE_CHECKING:
     from tessera.cost.price_table import PriceTable
@@ -24,14 +23,12 @@ __all__ = [
     # price_table surface
     "PriceTable",
     "CostEstimate",
-    # legacy shim surface (kept callable for one release)
+    # infracost surface (lazy)
     "InfracostClient",
     "SkuResult",
     "CostBackendError",
+    # InfracostQuery moved to tessera.cost.types in v0.4.0
     "InfracostQuery",
-    "aws_mapping",
-    "map_request",
-    "load_extended_mappings",
 ]
 
 import logging as _logging

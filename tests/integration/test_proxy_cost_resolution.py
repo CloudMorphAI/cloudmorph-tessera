@@ -223,7 +223,7 @@ def test_infracost_live_fallback_blocks_with_cost_source(tmp_path: Path) -> None
     """price-table miss → InfracostClient returns $10/hr → BLOCKED; audit has cost_source=infracost_live."""
 
     from tessera import cost as _cost_mod
-    from tessera.cost.aws_mapping import InfracostQuery
+    from tessera.cost.types import InfracostQuery
 
     op = "aws_ec2_RunInstances"
     threshold = 1.00

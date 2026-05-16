@@ -738,20 +738,14 @@ register_handler("aws_lambda_UpdateFunctionCode", "aws lambda update-function-co
 
 
 # ---------------------------------------------------------------------------
-# Auto-register generic handlers for the remaining aws_mapping _BUILTIN_MAPPING
-# entries not already covered above.  Import with warning-suppression since
-# aws_mapping itself emits a DeprecationWarning at import.
+# Auto-register generic handlers for the builtin canonical AWS ops.
 # ---------------------------------------------------------------------------
 
 def _register_builtin_generics() -> None:
-    """Auto-register generic fallback handlers for all _BUILTIN_MAPPING canonicals."""
-    import warnings
+    """Auto-register generic fallback handlers for all BUILTIN_AWS_OPS canonicals."""
+    from tessera.cost._aws_canonical_ops import BUILTIN_AWS_OPS  # noqa: PLC0415
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        from tessera.cost.aws_mapping import _BUILTIN_MAPPING  # noqa: PLC0415
-
-    for canonical in _BUILTIN_MAPPING:
+    for canonical in BUILTIN_AWS_OPS:
         if canonical not in _HANDLERS:
             parts = canonical.split("_", 2)
             if len(parts) != 3:
