@@ -1,0 +1,13 @@
+{
+  "policy_id": "tool-allowlist",
+  "context": {
+    "tool_call": {
+      "name": "aws_iam_GetRole",
+      "arguments": {"RoleName": "my-role"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

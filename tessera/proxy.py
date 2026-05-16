@@ -606,20 +606,34 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         method: str = body.get("method", "")
 
         # Step 3 — Branch on method
-        if method.startswith("notifications/") or method in _PASS_THROUGH_METHODS:
+        # v0.5.0: resources/read and sampling/createMessage can be promoted to
+        # engine-evaluated when policies.engine_eval_data_methods is True.
+        _engine_eval_data = cfg.policies.engine_eval_data_methods
+        _data_eval_methods = {"resources/read", "sampling/createMessage"}
+        if method.startswith("notifications/") or (
+            method in _PASS_THROUGH_METHODS
+            and not (_engine_eval_data and method in _data_eval_methods)
+        ):
             return await _handle_pass_through(
                 app.state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id
             )
 
-        if method != "tools/call":
+        if method not in ("tools/call", "resources/read", "sampling/createMessage"):
             _METRICS["requests_total{outcome=unknown_method}"] += 1
             return _jsonrpc_error(jsonrpc_id, -32601, "Method not found")
 
         # Step 4 — Extract params
         params = body.get("params", {})
-        tool_name: str = params.get("name", "")
-        arguments: dict[str, Any] = params.get("arguments", {}) or {}
-        meta: dict[str, Any] | None = params.get("_meta")
+        if method == "tools/call":
+            tool_name: str = params.get("name", "")
+            arguments: dict[str, Any] = params.get("arguments", {}) or {}
+            meta: dict[str, Any] | None = params.get("_meta")
+        else:
+            # resources/read and sampling/createMessage promoted to engine-eval.
+            # Synthesize a tool_call shape so conditions can inspect params uniformly.
+            tool_name = method
+            arguments = dict(params) if isinstance(params, dict) else {}
+            meta = arguments.pop("_meta", None) if isinstance(arguments, dict) else None
 
         # Step 4b — Extract conversation_id from _meta for audit threading
         # Checks _meta.tessera_intent.conversation_id first, falls back to _meta.conversation_id.

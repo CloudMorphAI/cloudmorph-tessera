@@ -1,0 +1,16 @@
+id: business-hours-only
+name: Business Hours Only
+description: Block write operations outside US Pacific business hours (9am-5pm Mon-Fri).
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: time_of_day_outside
+    start: "09:00"
+    end: "17:00"
+    tz: "America/Los_Angeles"
+  - condition: action_class_in
+    values: ["write.create", "write.update", "write.delete", "execute.deploy"]
+action: block
+reason: "Write operations outside business hours require explicit override."
+priority: 75

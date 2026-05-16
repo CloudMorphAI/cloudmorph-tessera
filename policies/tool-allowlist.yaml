@@ -1,0 +1,36 @@
+id: tool-allowlist
+name: Tool Allowlist
+description: |
+  Block any tool call whose name is not in the operator-defined allowlist.
+
+  The default set is conservative: read-only discovery and metadata tools.
+  Operators should fork this policy and extend the values list with the exact
+  tool names their agent is permitted to use. Pair with read-only-mode.yaml
+  to lock down the full surface.
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: none_of
+    conditions:
+      - condition: tool_name_in
+        values:
+          - "aws_s3_ListBuckets"
+          - "aws_s3_ListObjects"
+          - "aws_s3_GetObject"
+          - "aws_s3_HeadObject"
+          - "aws_ec2_DescribeInstances"
+          - "aws_ec2_DescribeImages"
+          - "aws_ec2_DescribeSecurityGroups"
+          - "aws_iam_ListRoles"
+          - "aws_iam_ListPolicies"
+          - "aws_iam_GetRole"
+          - "aws_iam_GetPolicy"
+          - "aws_cloudformation_DescribeStacks"
+          - "aws_cloudformation_ListStacks"
+          - "aws_rds_DescribeDBInstances"
+          - "aws_lambda_ListFunctions"
+          - "aws_lambda_GetFunction"
+action: block
+reason: "Tool is not in the operator-defined allowlist."
+priority: 65

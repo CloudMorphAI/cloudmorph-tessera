@@ -1,0 +1,13 @@
+id: oversized-payload
+name: Oversized Payload
+description: Block tool calls whose arguments JSON-serialize to more than 64 KB.
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: arg_size_greater_than
+    arg: "*"
+    bytes: 65536
+action: block
+reason: "Tool call arguments exceed the 64 KB per-argument size limit."
+priority: 70

@@ -87,6 +87,10 @@ class PoliciesConfig(BaseModel):
     reload: str = "watch"  # watch | none  (sighup declared in v0.1.x but unimplemented; removed in v0.2.0 docs)
     mode: PoliciesMode = PoliciesMode.log_only
     default_action: str = "block"
+    # v0.5.0: when True, resources/read and sampling/createMessage are promoted from
+    # pass-through-with-audit to engine-evaluated. Default False for backward compat.
+    # Operators opt in by setting policies.engine_eval_data_methods: true.
+    engine_eval_data_methods: bool = False
 
 
 class IntentConfig(BaseModel):

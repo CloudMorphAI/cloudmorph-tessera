@@ -211,6 +211,38 @@ class CumulativeSpendToday(BaseCondition):
     operator: Literal["greater_than", "less_than"] = "greater_than"
 
 
+# ── v0.5.0 new conditions ────────────────────────────────────────────────────
+
+
+class ArgPathMatchesRegex(BaseCondition):
+    """Condition: walk a dot-separated path in tool call args and match a regex.
+
+    Where arg_matches_regex only handles top-level argument keys, this condition
+    navigates nested dicts via a dot-separated path (e.g., "MetadataOptions.HttpTokens").
+    Reuses the same pre-compiled regex + timeout infrastructure from ArgMatchesRegex.
+    Returns False (don't block) when the path is missing in args.
+    """
+
+    condition: Literal["arg_path_matches_regex"] = "arg_path_matches_regex"
+    arg_path: str
+    pattern: str
+    # Populated by loader after validate_pattern(); excluded from YAML parse/serialise.
+    compiled_regex: Any = Field(default=None, exclude=True)
+
+
+class StsChainDepthGreaterThan(BaseCondition):
+    """Condition: AWS assume-role chain depth exceeds a threshold.
+
+    Reads context["tool_call"]["_meta"]["aws_session_chain"] (a list).
+    Returns True when len(chain) > threshold.
+    Returns False when _meta or aws_session_chain is absent (fail-closed don't-block
+    per cost convention — missing metadata is not a reason to reject the call).
+    """
+
+    condition: Literal["sts_chain_depth_greater_than"] = "sts_chain_depth_greater_than"
+    threshold: int
+
+
 # ── Discriminated union ──────────────────────────────────────────────────────
 
 ConditionType = Annotated[
@@ -234,7 +266,9 @@ ConditionType = Annotated[
     | BlastRadius
     | AffectedResourceCount
     | DataVolume
-    | CumulativeSpendToday,
+    | CumulativeSpendToday
+    | ArgPathMatchesRegex
+    | StsChainDepthGreaterThan,
     Field(discriminator="condition"),
 ]
 

@@ -1,0 +1,13 @@
+{
+  "policy_id": "business-hours-only",
+  "context": {
+    "tool_call": {
+      "name": "aws_s3_GetObject",
+      "arguments": {"Bucket": "data-lake", "Key": "report.csv"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

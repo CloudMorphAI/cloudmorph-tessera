@@ -48,6 +48,7 @@ from tessera.policy.schema import (
     ArgInSet,
     ArgLessThan,
     ArgMatchesRegex,
+    ArgPathMatchesRegex,
     ArgSizeGreaterThan,
     BlastRadius,
     ConditionType,
@@ -59,6 +60,7 @@ from tessera.policy.schema import (
     NoneOf,
     PredictedCost,
     RegionIn,
+    StsChainDepthGreaterThan,
     TimeOfDayOutside,
     ToolNameIn,
 )
@@ -667,6 +669,43 @@ def _evaluate_cumulative_spend_today(cond: CumulativeSpendToday, context: dict[s
     return today_usd < cond.usd_threshold
 
 
+# ── v0.5.0 new condition evaluators ──────────────────────────────────────────
+
+
+def _evaluate_arg_path_matches_regex(cond: ArgPathMatchesRegex, context: dict[str, Any]) -> bool:
+    """Evaluate arg_path_matches_regex — walk dot-separated path in tool args, then regex match.
+
+    Uses the same pre-compiled regex + timeout infrastructure as arg_matches_regex.
+    Returns False (don't block) when the path is absent in the arguments dict.
+    """
+    tool_call = context.get("tool_call", {})
+    arguments: dict[str, Any] = tool_call.get("arguments", {})
+    policy_id = context.get("policy_id")
+    pre = getattr(cond, "compiled_regex", None)
+
+    found, val = _dot_path_get(arguments, cond.arg_path)
+    if not found:
+        return False
+    return _match_regex(cond.pattern, str(val), policy_id, compiled=pre)
+
+
+def _evaluate_sts_chain_depth_greater_than(cond: StsChainDepthGreaterThan, context: dict[str, Any]) -> bool:
+    """Evaluate sts_chain_depth_greater_than — count AWS assume-role chain depth.
+
+    Reads context["tool_call"]["_meta"]["aws_session_chain"] (a list).
+    Returns True when len(chain) > threshold.
+    Returns False when _meta or aws_session_chain is absent (fail-closed don't-block).
+    """
+    tool_call = context.get("tool_call", {})
+    meta = tool_call.get("_meta")
+    if not isinstance(meta, dict):
+        return False
+    chain = meta.get("aws_session_chain")
+    if not isinstance(chain, list):
+        return False
+    return len(chain) > cond.threshold
+
+
 # ── Dispatch table (PF-2 refactor) ───────────────────────────────────────────
 
 _DISPATCH: dict[type, Callable[..., bool]] = {
@@ -691,6 +730,8 @@ _DISPATCH: dict[type, Callable[..., bool]] = {
     AffectedResourceCount: _evaluate_affected_resource_count,
     DataVolume: _evaluate_data_volume,
     CumulativeSpendToday: _evaluate_cumulative_spend_today,
+    ArgPathMatchesRegex: _evaluate_arg_path_matches_regex,
+    StsChainDepthGreaterThan: _evaluate_sts_chain_depth_greater_than,
 }
 
 
