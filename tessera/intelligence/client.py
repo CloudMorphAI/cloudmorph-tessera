@@ -14,7 +14,7 @@ import json
 import logging
 import tarfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -349,7 +349,7 @@ class IntelligenceClient:
                     manifest.name, exc,
                 )
                 return False
-        elif manifest.content_hash and not manifest.content_hash.startswith("PLACEHOLDER"):
+        elif manifest.content_hash and not manifest.content_hash.startswith("PLACEHOLDER"):  # noqa: SIM102
             # Legacy mapping-bundle path: until P0-9 ships per-bundle signing,
             # we fall back to the catalog-declared content_hash as a best-effort
             # tarball check. Once mappings carry .signed.json siblings, this
@@ -566,14 +566,78 @@ class IntelligenceClient:
 
     # ── Price-table loading ───────────────────────────────────────────────────
 
+    def _verify_price_table_signature(self, json_path: Path) -> bool:
+        """Verify the Ed25519 signature on a price-table JSON artifact.
+
+        Looks for a sibling ``.signed.json`` file produced by the tessera-intelligence
+        signing pipeline. The ``.signed.json`` carries:
+          * ``content_hash`` -- hex SHA-256 of the raw file bytes
+          * ``signature``    -- base64 Ed25519 over ``content_hash.encode("utf-8")``
+
+        Returns True when the signature verifies, False otherwise (logs the reason).
+        The caller loads the price table regardless so the proxy is not hard-blocked
+        on a missing sidecar during development.
+        """
+        signed_path = json_path.parent / (json_path.name + ".signed.json")
+        if not signed_path.exists():
+            logger.warning(
+                "event=price_table_no_signed_json path=%s â loading unverified",
+                json_path,
+            )
+            return False
+
+        try:
+            signed_data: dict[str, Any] = json.loads(signed_path.read_text(encoding="utf-8"))
+            stored_hash: str = signed_data.get("content_hash", "") or ""
+            stored_sig: str = signed_data.get("signature", "") or ""
+            if not stored_hash or not stored_sig:
+                logger.warning(
+                    "event=price_table_signed_json_incomplete path=%s missing=content_hash/signature",
+                    signed_path,
+                )
+                return False
+
+            # Hash the raw JSON file bytes and compare to stored content_hash.
+            raw_bytes = json_path.read_bytes()
+            actual_hash = hashlib.sha256(raw_bytes).hexdigest()
+            if actual_hash != stored_hash:
+                logger.error(
+                    "event=price_table_hash_mismatch path=%s expected=%.16s actual=%.16s",
+                    json_path,
+                    stored_hash,
+                    actual_hash,
+                )
+                return False
+
+            # Ed25519 verify: signature is over the hex content_hash UTF-8 bytes.
+            sig_bytes = base64.b64decode(stored_sig)
+            self._public_key.verify(sig_bytes, stored_hash.encode("utf-8"))
+            return True
+
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "event=price_table_sig_verify_failed path=%s error=%s",
+                json_path,
+                exc,
+            )
+            return False
+
     def _load_price_tables_from_cache(self) -> None:
         """Scan the mappings cache for price-table JSON artifacts and load them.
 
         Files matching ``*-prices-*.json`` in any mappings subdirectory are
-        treated as price-table artifacts.  Each is loaded into a ``PriceTable``
-        instance and stored in ``self._price_tables`` keyed by provider.
+        treated as price-table artifacts.  Covers all three providers (aws,
+        azure, gcp) — the glob is provider-agnostic.
+
+        Each artifact is:
+          1. Signature-verified via a sibling ``.signed.json`` (best-effort).
+          2. Loaded into a ``PriceTable`` instance.
+          3. Stored in ``self._price_tables`` keyed by provider.
+          4. Registered in the ``tessera.cost`` module-level registry via
+             ``register_price_table()`` so ``cost_for_call()`` can resolve it.
         """
-        from tessera.cost.price_table import PriceTable
+        from tessera.cost import register_price_table  # noqa: PLC0415
+        from tessera.cost.price_table import PriceTable  # noqa: PLC0415
 
         mappings_dir = self._cache_dir / "mappings"
         if not mappings_dir.exists():
@@ -581,15 +645,17 @@ class IntelligenceClient:
 
         for json_path in mappings_dir.rglob("*-prices-*.json"):
             try:
-                pt = PriceTable(json_path, signature_verified=False)
+                sig_ok = self._verify_price_table_signature(json_path)
+                pt = PriceTable(json_path, signature_verified=sig_ok)
                 provider = pt.provider
                 self._price_tables[provider] = pt
+                register_price_table(provider, pt)
                 logger.info(
-                    "event=price_table_loaded provider=%s version=%s ops=%d path=%s",
+                    "event=price_table_loaded provider=%s version=%s ops=%d sig_verified=%s",
                     provider,
                     pt.bundle_version,
                     pt.operation_count,
-                    json_path,
+                    sig_ok,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(

@@ -97,6 +97,7 @@ class PriceTable:
         self._verified = signature_verified
         self._index: dict[_IndexKey, tuple[float, dict[str, str]]] = {}
         self._operations: dict[str, list[str]] = {}  # operation → realms
+        self._op_confidence_bands: dict[str, str] = {}  # operation → producer confidence_band
         self._ceiling_bands: dict[str, CeilingBand] = {}
         self._build_index()
 
@@ -109,6 +110,8 @@ class PriceTable:
                 continue
             realms: list[str] = op_body.get("price_realms", ["on_demand"])
             self._operations[op_name] = realms
+            # Producer-declared confidence band ("high" | "medium" | "ceiling"); default medium.
+            self._op_confidence_bands[op_name] = str(op_body.get("confidence_band", "medium"))
             lookups: list[dict[str, Any]] = op_body.get("lookups", [])
             for entry in lookups:
                 params: dict[str, str] = entry.get("params", {})
@@ -206,6 +209,14 @@ class PriceTable:
             )
 
         return None
+
+    def get_operation_confidence_band(self, operation: str) -> str:
+        """Return the producer-declared confidence band for an operation.
+
+        Returns the value from the artifact ("high" | "medium" | "ceiling"),
+        defaulting to "medium" if the operation is unknown.
+        """
+        return self._op_confidence_bands.get(operation, "medium")
 
     def ceiling_band(self, key: str = "default") -> CeilingBand | None:
         """Return the named ceiling band, or ``None`` if not present."""
