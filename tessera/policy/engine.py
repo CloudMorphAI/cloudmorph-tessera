@@ -9,7 +9,7 @@ from tessera.policy.conditions import (
     evaluate_conditions,
     get_decision_errors,
 )
-from tessera.policy.matchers import match_tool, match_upstream
+from tessera.policy.matchers import match_tool, match_tool_dual, match_upstream, resolve_effective_tool_name
 from tessera.policy.schema import (
     Action,
     AnyOf,
@@ -49,13 +49,20 @@ class PolicyEngine:
         request_upstream = context.get("upstream", "")
         intent = context.get("intent")
 
+        # Resolve effective tool name once per request; caches in context so
+        # downstream condition evaluators (e.g. tool_name_in) share the result.
+        effective_tool_name = resolve_effective_tool_name(context)
+
         for policy in self._policies:
             # a. Upstream match
             if not match_upstream(policy.match.upstream, request_upstream):
                 continue
 
-            # b. Tool match
-            if not match_tool(policy.match.tool, policy.match.tool_pattern, tool_name):
+            # b. Tool match — check both literal name and resolved canonical
+            if not match_tool_dual(
+                policy.match.tool, policy.match.tool_pattern,
+                tool_name, effective_tool_name,
+            ):
                 continue
 
             # c. require_intent: skip if intent is required but absent

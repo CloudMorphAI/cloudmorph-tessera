@@ -240,7 +240,12 @@ def _evaluate_arg_size_greater_than(cond: ArgSizeGreaterThan, context: dict[str,
 def _evaluate_tool_name_in(cond: ToolNameIn, context: dict[str, Any]) -> bool:
     tool_call = context.get("tool_call", {})
     tool_name = tool_call.get("name", "")
-    return tool_name in cond.values
+    if tool_name in cond.values:
+        return True
+    # When call_aws was reverse-resolved by the engine, also check the
+    # canonical name so policies authored against aws_*_* still fire.
+    effective = context.get("_effective_tool_name")
+    return effective is not None and effective != tool_name and effective in cond.values
 
 
 def _evaluate_action_class_in(cond: ActionClassIn, context: dict[str, Any]) -> bool:
