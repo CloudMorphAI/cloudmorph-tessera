@@ -7,7 +7,6 @@ This benchmark quantifies the win: under concurrent load, prefetch-on should be
 Usage:
     python benchmarks/blast_radius_latency.py
 """
-import asyncio
 import statistics
 import time
 
@@ -90,7 +89,6 @@ def main() -> None:
     mean_on, wall_on = _run_n_sequential(n, backend, prefetch=True)
 
     speedup_mean = mean_off / mean_on if mean_on > 0 else float("inf")
-    speedup_wall = wall_off / wall_on if wall_on > 0 else float("inf")
     wall_delta = wall_off - wall_on
 
     print(f"{'Mode':<20} {'Mean latency':>15} {'Total wall':>12}")
