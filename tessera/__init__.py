@@ -10,5 +10,5 @@ from __future__ import annotations
 #   5. CHANGELOG.md — add a new section
 # A stale version in README/INSTALL renders on GitHub and PyPI project page —
 # install commands customers copy-paste pull the wrong image tag.
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = ["__version__"]

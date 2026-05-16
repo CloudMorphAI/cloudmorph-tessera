@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - UNRELEASED
+
+### Added — Unified cost API (Batch 2)
+
+- New `tessera.cost.cost_for_call(operation, args, region) -> CostResult` is
+  the canonical entry point for cost-aware policies. Routes by operation
+  prefix (`aws_*` / `azure_*` / `gcp_*`) to a registered `PriceTable`.
+- New `tessera.cost.types.CostResult` dataclass — `price_usd`, `unit`,
+  `confidence_band`, `source` (`"price_table"` / `"infracost_live"` / `"miss"`),
+  `operation`. Adapts both `PriceTable.cost_for_call()` and
+  `InfracostClient.query_sku()` into one consumer shape.
+- `IntelligenceClient._load_price_tables_from_cache` now scans for and loads
+  AWS + **Azure + GCP** price-table artifacts (previously AWS-only). Each
+  artifact's Ed25519 signature is verified against the bundled
+  `public_key.pem` before registration.
+- Audit-event payload carries `cost_source` and `cost_band` whenever a cost
+  was prefetched. Updates `schemas/audit_event.schema.json`.
+
+### Added — AWS MCP translation layer (Batch 3)
+
+- New `tessera.integrations.aws.cli_translator` bridges canonical Tessera
+  names (`aws_iam_PassRole`) to the official `awslabs/mcp/aws-api-mcp-server`'s
+  single `call_aws` tool. 25 explicit per-op handlers cover the priv-esc-
+  and cost-sensitive surface; a generic fallback derives `aws <service>
+  <kebab-verb> --kebab-key value` for the long-tail.
+- `AWSMcpUpstream` gains `_translate_call_aws_op`. New config fields on the
+  upstream: `aws_mcp_server` (set to `"aws-api-mcp-server"` to opt-in) and
+  `aws_mcp_routing` ∈ `{specific-first, call-aws-only}` (default
+  `specific-first`).
+- Reverse-resolver in `tessera/policy/matchers.py`: when an inbound
+  `tool_call.name == "call_aws"`, the matcher reverse-resolves
+  `arguments.command` to canonical (e.g., `aws_iam_PassRole`) so policies
+  authored against canonical names fire correctly. Cached on
+  `context["_effective_tool_name"]`.
+- Audit-event payload carries both `canonical_tool_name` (inbound raw) and
+  `effective_tool_name` (resolved canonical or unchanged).
+- `tessera.cost.aws_mapping.InfracostQuery` learns `official_mcp_tool_name`
+  + `official_mcp_server` optional fields (parsed from the 2026-05-16
+  reconciliation work in `tessera-intelligence`).
+
+### Added — Adoption examples (Batch 5)
+
+- `examples/wrap_anthropic_sdk/` — Anthropic Claude tool-use → Tessera → MCP
+  upstream. Uses the `mcp_servers` kwarg from anthropic-python ≥ 0.40.
+- `examples/wrap_openai_sdk/` — OpenAI tools API with explicit
+  manual dispatch through Tessera. README explains the difference vs MCP-
+  native SDKs.
+- `examples/wrap_langchain/` — LangChain `create_tool_calling_agent` with a
+  custom `MCPToolNode` (`tessera_tool_wrapper.py`) that forwards through
+  Tessera. Tested with `ChatAnthropic`; swap-in for OpenAI documented.
+- `examples/wrap_claude_code/` — `~/.claude.json` MCP-server entry pointing
+  at Tessera. Auto-installable via `tessera install-claude-code`.
+- `examples/wrap_vscode_copilot/` — `.vscode/settings.json` for VS Code 1.99+
+  Copilot Chat / Continue / Cline (and any MCP-aware extension).
+- `recipes/generic-shell-hook.md` — 20-line bash wrapper around
+  `/mcp/<upstream>` for tools/CLIs without bespoke MCP support.
+- New `.github/workflows/examples-smoke.yml` matrix validates each example's
+  policy YAML + tessera config + AST-parses every `.py` file in CI.
+- `README.md` gains a "How customers use Tessera" section with an ASCII flow
+  diagram + links to all 5 wrap-examples.
+
+### Deprecated
+
+- `tessera.cost.aws_mapping` raises `DeprecationWarning` at import. The
+  legacy `aws_mapping._BUILTIN_MAPPING` + `map_request()` direct-call path
+  remains callable through v0.3.x as a fallback and is **scheduled for
+  removal in v0.4.0**. Migrate to `tessera.cost.cost_for_call()`.
+- `InfracostClient` itself stays supported as a fallback indefinitely. Only
+  the direct-per-call pattern is deprecated; `InfracostClient` underlies the
+  `source="infracost_live"` path of `cost_for_call`.
+
+### Changed
+
+- `context["cost_cache"]` now stores `CostResult` objects (was: raw floats).
+  Test fixtures that populate the cache get a one-line migration helper
+  (`tests/integration/test_reference_policies.py:_wrap_cost_cache` +
+  `test_engine_v020.py:_ctx`) that wraps legacy floats into `CostResult`.
+- `_evaluate_predicted_cost` now asserts `"cost_cache" in context`
+  to surface missing-context calls during refactors.
+
 ## [0.2.1] - UNRELEASED
 
 ### Fixed (cross-repo audit 2026-05-14 — closed 2026-05-15)

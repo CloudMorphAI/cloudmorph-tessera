@@ -12,7 +12,7 @@ name = "cloudmorph-tessera"
 #   3. README.md — `tessera:<old>` → `tessera:<new>` AND `tessera <old>` → `tessera <new>`
 #   4. docs/INSTALL.md — same search & replace
 #   5. CHANGELOG.md — add a new section
-version = "0.2.1"
+version = "0.3.0"
 description = "The open-source MCP firewall for AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -154,6 +154,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S104", "S105", "S106", "S108", "S301", "S311", "S603", "S607"]
+"examples/**/mock_*.py" = ["S104"]  # local-only mock upstream servers may bind 0.0.0.0
+"examples/cursor_hooks_demo/mock_mcp_server.py" = ["S104"]
 
 [tool.mypy]
 python_version = "3.12"

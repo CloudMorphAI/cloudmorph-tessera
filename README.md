@@ -104,7 +104,7 @@ AI agents calling MCP tools can delete production data, exfiltrate secrets, and 
 ### Option 1: Docker (recommended for production)
 
 ```bash
-docker pull ghcr.io/cloudmorphai/tessera:0.2.1
+docker pull ghcr.io/cloudmorphai/tessera:0.3.0
 ```
 
 ### Option 2: Python package (for local development and CLI use)
@@ -117,7 +117,7 @@ After install, verify:
 
 ```bash
 tessera version
-# tessera 0.2.1
+# tessera 0.3.0
 ```
 
 Docker is the primary path for users running Tessera as a service. PyPI is the path for users who want to author policies locally or run `tessera policy lint` / `tessera policy test` in CI.
@@ -161,10 +161,10 @@ tessera audit verify --audit-path /var/lib/tessera/audit.db --scope default
 
 ```bash
 # Step 1: Pull
-docker pull ghcr.io/cloudmorphai/tessera:0.2.1
+docker pull ghcr.io/cloudmorphai/tessera:0.3.0
 
 # Step 2: Scaffold
-docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.2.1 tessera init --dir /out
+docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:0.3.0 tessera init --dir /out
 # Creates tessera.yaml (mode: log_only), policies/, .env.example
 
 # Step 3: Start Tessera (log_only by default — safe to try, nothing is blocked yet)
@@ -174,7 +174,7 @@ docker run -d --name tessera \
   -v "$PWD/policies:/etc/tessera/policies:ro" \
   -v tessera_audit:/var/lib/tessera \
   -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
-  ghcr.io/cloudmorphai/tessera:0.2.1
+  ghcr.io/cloudmorphai/tessera:0.3.0
 
 # Step 4: Wire Cursor — see the "Wire up Cursor" section below
 
@@ -252,7 +252,7 @@ See [recipes/cursor-hooks.md](recipes/cursor-hooks.md) for a demo walkthrough.
 
 ## Policy Catalog
 
-Tessera v0.2.1 ships **12 reference policies** out of the box (7 generic + 5 AWS-illustrative). Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are in the Tessera Cloud premium pack.
+Tessera v0.3.0 ships **12 reference policies** out of the box (7 generic + 5 AWS-illustrative). Drop any of them into your `--policy-dir` to opt in. All policies are simple YAML and easy to fork. Vendor-specific policies (GitHub, Jira, OWASP, Postgres, Salesforce, Slack) are in the Tessera Cloud premium pack.
 
 ### Generic (7)
 
@@ -419,7 +419,7 @@ Deferred from v0.1; detail and rationale in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ### Does Tessera work with Claude Desktop?
 
-Tessera v0.2.1 is HTTP-mode only. Claude Desktop **free tier** supports stdio MCP servers only, so Tessera v0.2.1 won't appear there. Claude Desktop **Pro / Max / Team / Enterprise** plans support [Custom Connectors](https://support.anthropic.com/en/articles/11724636-claude-desktop-custom-connectors), which can talk to Tessera via the same `http://localhost:8080/mcp` endpoint Cursor uses.
+Tessera v0.3.0 is HTTP-mode only. Claude Desktop **free tier** supports stdio MCP servers only, so Tessera v0.3.0 won't appear there. Claude Desktop **Pro / Max / Team / Enterprise** plans support [Custom Connectors](https://support.anthropic.com/en/articles/11724636-claude-desktop-custom-connectors), which can talk to Tessera via the same `http://localhost:8080/mcp` endpoint Cursor uses.
 
 A stdio adapter is on the **v0.3.0 roadmap** so Claude Desktop free-tier users can also use Tessera without a paid plan. Track it in [issues](https://github.com/CloudMorphAI/cloudmorph-tessera/issues).
 
