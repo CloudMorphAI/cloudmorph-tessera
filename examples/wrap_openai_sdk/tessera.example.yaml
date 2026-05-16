@@ -1,0 +1,21 @@
+# tessera.example.yaml — local config for the wrap_openai_sdk example.
+# Copy to tessera.yaml and set TESSERA_BEARER_TOKEN before running.
+
+deployment_id: openai-sdk-demo
+
+auth:
+  type: bearer
+
+policies:
+  dir: ./policies
+  mode: enforcement
+  default_action: allow
+
+upstreams:
+  - name: github
+    url: http://localhost:9999   # mock MCP server (see mock_github_mcp.py)
+    timeout_seconds: 10
+
+audit:
+  path: /tmp/tessera-openai-demo-audit.db
+  also_stdout: true

@@ -1,0 +1,14 @@
+id: block-destructive-issues
+name: Block Destructive GitHub Issue Operations
+description: >
+  Block MCP calls that would delete or close issues in bulk.
+  Allows read and create operations through unchanged.
+match:
+  upstream: "github"
+  tool: "github_*"
+when:
+  - condition: action_class_in
+    values: ["write.delete"]
+action: block
+reason: "Destructive GitHub operation blocked by policy"
+priority: 90
