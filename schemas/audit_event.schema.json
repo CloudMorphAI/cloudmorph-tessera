@@ -61,6 +61,10 @@
         "effective_tool_name": {
           "description": "The resolved canonical tool name after reverse-resolution (v0.3.0). For call_aws invocations this is the aws_*_* name resolved from args.command by cli_translator.from_call_aws. Identical to canonical_tool_name for all non-call_aws flows.",
           "type": "string"
+        },
+        "conversation_id": {
+          "description": "Optional conversation identifier threaded from _meta.tessera_intent.conversation_id or _meta.conversation_id in the inbound tool_call request.",
+          "type": "string"
         }
       },
       "additionalProperties": true

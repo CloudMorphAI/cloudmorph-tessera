@@ -10,6 +10,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -31,6 +32,9 @@ from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
+from tessera.observability import events as _obs_events
+from tessera.observability import metrics as _obs_metrics
+from tessera.observability import tracing as _obs_tracing
 from tessera.policy import action_verbs as _action_verbs_module
 from tessera.policy.action_verbs import load_user_mappings, verbs_for
 from tessera.policy.engine import PolicyEngine
@@ -180,7 +184,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 from tessera.errors import ConfigError
                 raise ConfigError("auth.type=jwt requires auth.jwt sub-block")
             from tessera.auth.jwt_mcp import JWTAuthenticator
-            app.state.authenticator = JWTAuthenticator(
+            _jwt_auth = JWTAuthenticator(
                 jwks_url=cfg.auth.jwt.jwks_url,
                 issuer=cfg.auth.jwt.issuer,
                 audience=cfg.auth.jwt.audience,
@@ -189,6 +193,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 scope_claim=cfg.auth.jwt.scope_claim,
                 deployment_id=cfg.deployment_id,
             )
+            await _jwt_auth.prewarm()
+            app.state.authenticator = _jwt_auth
         else:
             authenticator_cls = pluggable.resolve(
                 "", "tessera.auth.bearer:BearerTokenAuthenticator"
@@ -436,6 +442,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             len(policies),
         )
 
+        # Initialise OTel tracer (no-op when TESSERA_OTEL_ENABLED is unset)
+        _obs_tracing.init_tracer()
+
         try:
             yield
         finally:
@@ -612,6 +621,16 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         arguments: dict[str, Any] = params.get("arguments", {}) or {}
         meta: dict[str, Any] | None = params.get("_meta")
 
+        # Step 4b — Extract conversation_id from _meta for audit threading
+        # Checks _meta.tessera_intent.conversation_id first, falls back to _meta.conversation_id.
+        _conversation_id: str | None = None
+        if isinstance(meta, dict):
+            _ti = meta.get("tessera_intent")
+            if isinstance(_ti, dict):
+                _conversation_id = _ti.get("conversation_id") or None
+            if _conversation_id is None:
+                _conversation_id = meta.get("conversation_id") or None
+
         # Step 5 — Extract intent
         intent: dict[str, Any] | None = None
         try:
@@ -637,6 +656,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     "decision_error": None,
                     "canonical_tool_name": tool_name,
                     "effective_tool_name": tool_name,
+                    "conversation_id": _conversation_id,
                 },
             )
             resp_body: dict[str, Any] = {
@@ -655,7 +675,13 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Pre-fetch cost estimate for predicted_cost condition (async → sync bridge)
         cost_backend = getattr(app.state, "cost_backend", None)
         aws_mapping_mod = getattr(app.state, "aws_mapping", None)
+        _t0_cost = perf_counter()
         cost_cache: dict[str, CostResult] = await _prefetch_cost(tool_name, arguments, cost_backend, aws_mapping_mod)
+        _cost_result_for_latency = cost_cache.get(tool_name)
+        _obs_metrics.tessera_cost_prefetch_latency_seconds.labels(
+            upstream=upstream_name,
+            cost_source=_cost_result_for_latency.source if _cost_result_for_latency is not None else "miss",
+        ).observe(perf_counter() - _t0_cost)
 
         # Step 6b — Pre-fetch blast-radius when any matching policy needs it (P0-14).
         # Wraps the synchronous boto3 IAM/S3/KMS call in asyncio.to_thread to avoid
@@ -669,6 +695,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             and engine_for_prefetch is not None
             and engine_for_prefetch.policies_need_blast_radius(tool_name, upstream_name)
         ):
+            _t0_br = perf_counter()
             try:
                 count = await asyncio.to_thread(
                     blast_radius_backend.compute, tool_name, arguments
@@ -677,6 +704,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             except Exception:  # noqa: BLE001
                 # Leave cache empty so the evaluator takes its fail-closed branch.
                 _METRICS["blast_radius_prefetch_failures_total"] += 1
+            finally:
+                _obs_metrics.tessera_blast_radius_prefetch_latency_seconds.labels(
+                    upstream=upstream_name
+                ).observe(perf_counter() - _t0_br)
 
         # Step 6c — Pre-fetch DataVolume sizes for matching policies (P0-15).
         data_vol_cache: dict[str, int] = {}
@@ -737,6 +768,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     "decision_error": None,
                     "canonical_tool_name": tool_name,
                     "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                    "conversation_id": _conversation_id,
                 },
             )
             _METRICS["requests_total{outcome=lockdown}"] += 1
@@ -783,6 +815,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "decision_error": None,
                 "canonical_tool_name": tool_name,
                 "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
             }
             if _obs_cost is not None:
                 _obs_payload["cost_source"] = _obs_cost.source
@@ -793,8 +826,18 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return JSONResponse(upstream_response)
 
         # Evaluate engine (enforcement + log_only)
+        _t0_eval = perf_counter()
         decision = engine.evaluate(context)
+        _obs_metrics.tessera_decision_latency_seconds.labels(
+            upstream=upstream_name, mode=mode.value
+        ).observe(perf_counter() - _t0_eval)
+        _obs_metrics.tessera_decisions_total.labels(
+            upstream=upstream_name, mode=mode.value, action=decision.action.value
+        ).inc()
         _METRICS[f"decisions_total{{action={decision.action.value},mode={mode.value}}}"] += 1
+
+        # Fire decision hooks fire-and-forget (never blocks hot path)
+        asyncio.create_task(_obs_events.fire_on_decision(decision, context))
 
         if mode == PoliciesMode.log_only:
             # Always forward upstream (even on upstream error — return with headers)
@@ -821,6 +864,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "decision_error": decision.decision_error,
                 "canonical_tool_name": tool_name,
                 "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
             }
             if _lo_cost is not None:
                 _lo_payload["cost_source"] = _lo_cost.source
@@ -878,6 +922,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "decision_error": decision.decision_error,
                 "canonical_tool_name": tool_name,
                 "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
             }
             if _enf_allow_cost is not None:
                 _enf_allow_payload["cost_source"] = _enf_allow_cost.source
@@ -901,6 +946,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "decision_error": decision.decision_error,
                 "canonical_tool_name": tool_name,
                 "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
             }
             if _enf_block_cost is not None:
                 _enf_block_payload["cost_source"] = _enf_block_cost.source
@@ -934,6 +980,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "decision_error": decision.decision_error,
                 "canonical_tool_name": tool_name,
                 "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
             }
             if _enf_appr_cost is not None:
                 _enf_appr_payload["cost_source"] = _enf_appr_cost.source

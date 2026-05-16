@@ -62,6 +62,9 @@ dev = [
     "bandit==1.9.4",
     "pip-audit==2.10.0",
     "cyclonedx-bom==7.3.0",
+    # type stubs for mypy clean run
+    "types-PyYAML>=6.0.12",
+    "types-python-jose>=3.3.4",
     # semgrep installed separately in CI (conflicts with click on Python 3.13+)
 ]
 runtime = [
@@ -84,6 +87,11 @@ oidc = ["python-jose[cryptography]>=3.3.0", "httpx>=0.27.0"]
 all-llm = ["google-genai>=2.0.0,<3.0.0", "anthropic>=0.30.0", "openai>=1.30.0", "azure-identity>=1.15.0"]
 intelligence = ["cryptography>=42.0.0"]
 infracost = ["gql[all]>=3.5.0"]
+observability = [
+    "prometheus_client>=0.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+]
 
 [project.scripts]
 tessera = "tessera.cli:app"
@@ -171,6 +179,32 @@ exclude = [
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_decorators = false
+
+# Optional-extra SDK modules — not installed in the dev venv; ignore missing stubs
+[[tool.mypy.overrides]]
+module = [
+    "openai",
+    "openai.*",
+    "anthropic",
+    "anthropic.*",
+    "google.genai",
+    "google.genai.*",
+    "boto3",
+    "boto3.*",
+    "botocore",
+    "botocore.*",
+    "prometheus_client",
+    "prometheus_client.*",
+    "opentelemetry",
+    "opentelemetry.*",
+    "cachetools",
+    "cachetools.*",
+    "regex",
+    "jmespath",
+    "jmespath.*",
+]
+ignore_missing_imports = true
+ignore_errors = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"
