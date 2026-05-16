@@ -16,9 +16,33 @@ Closed in `cloudmorph-tessera` `main`. Commit SHAs verified by `git log --onelin
 | Tarball SHA-256 check — consumer was comparing tarball-bytes-SHA-256 against manifest's `content_hash` (a hash of canonical JSON, not the tarball) | `426ca84` | `tessera/intelligence/client.py` now reads `tarball_sha256` from the verified manifest and compares it to `SHA-256(downloaded_tarball)`. Mandatory when `manifest_url` is present. |
 | Base64 signature decoding — consumer was `bytes.fromhex` on signatures the producer emits as base64 | `426ca84` | `tessera/intelligence/client.py:_verify_signature` uses `base64.b64decode` (matching `sign_pack.py`). |
 | PyJWT explicit dep | `9d84d82` | `pyproject.toml:[project.dependencies]` adds `PyJWT>=2.8`. License-validator + OAuth introspection no longer rely on transitive `python-jose` survival. Documented at `arch/status/packaging-and-release.md`. |
-| 0.2.0 → 0.2.1 release bump | `18ffa13` | 5-place version bump (`pyproject.toml`, `tessera/__init__.py`, `README.md`, `docs/INSTALL.md`, `CHANGELOG.md`). PyPI upload + wrapper rebuild + ECR push + ECS `force-new-deployment` are founder follow-ups — Batch 4 was blocked on missing PyPI auth in the WSL environment. |
+| 0.2.0 → 0.2.1 release bump | `18ffa13` | 5-place version bump (`pyproject.toml`, `tessera/__init__.py`, `README.md`, `docs/INSTALL.md`, `CHANGELOG.md`). |
 
 Round-trip smoke passes against `s3://tessera-intelligence-prod/v1.0.0/` end-to-end with the 0.2.1 client + the producer-signed corpus from `a481fe7`.
+
+## 2026-05-16 Batch 1 — 0.2.1 close-out — DONE
+
+Per `plan/tessera-improvements-plan-2026-05-16.md` §3 Batch 1. The "founder follow-ups" listed in the 0.2.1 release-bump row above are now all closed:
+
+| Action | Status | Detail |
+|--------|--------|--------|
+| PyPI `twine upload` 0.2.1 | ✓ DONE 2026-05-15T13:51Z | manual upload from WSL |
+| `git tag v0.2.1` + push | ✓ DONE | tag points at `18ffa13`; on `origin/main` |
+| GHCR multi-arch image | ✓ DONE | `ghcr.io/cloudmorphai/tessera:0.2.1` (amd64 + arm64) |
+| ECR wrapper image push | ✓ DONE 2026-05-16T01:42Z | repo renamed `cloudmorph/tessera-cloud-prod` → `cloudmorph/tessera-cloud-wrapper` in mono-repo commit `a0c2c36b`; built via `cloudmorph-mono-repo/tessera-cloud-wrapper/build.sh 0.2.1` with `TESSERA_OSS_TAG=0.2.1`; tags `:0.2.1` + `:main` |
+| ECS force-new-deployment | ✓ DONE 2026-05-16T07:01Z | service `tessera-cloud-prod` (cluster `tessera-cloud-prod`) rolled; deploy `ecs-svc/7011306979647899462` Completed; 1/1 task on fresh image |
+| `tessera-ratelimits-prod` DDB | ✓ ACTIVE | CDK at `cloudmorph-mono-repo/amplify/backend/tessera.ts:219` (`TesseraRateLimitsTable`); IAM grant on wrapper task role at line 493; TTL on `expiresAt` |
+| TI build + sign + publish | ✓ DONE 2026-05-16T02:21Z | `scripts/build.sh v1.0.0` + `_update_catalogs_from_dist.py` + `publish.sh`; all 11 new tarballs (6 mappings + blast-radius + 5 packs) + 3 catalog files on S3 |
+| CloudFront invalidate | ✓ DONE 2026-05-16T02:22Z | invalidation `IBZAEEM6BV8SHCCYP84J00DB0J` Completed |
+| Round-trip smoke against prod CDN | ✓ GREEN | 12 packs in live catalog, all Ed25519 signatures verify, tarball-hash binding OK |
+| Clean-venv install verify | ✓ GREEN | `pip install cloudmorph-tessera==0.2.1` → `__version__ == "0.2.1"`, 18 bundled policies present, PEM trust anchor shipped (113 bytes) |
+
+Memory drift fix: `reference_ecr_tessera_cloud.md` updated to reflect the wrapper rename (was `cloudmorph/tessera-cloud-prod`).
+
+Open as of 2026-05-16 (non-blocking):
+
+- **Real-JWT 8-scenario CDN smoke test** (`tests/integration_cdn_smoke.py`) — round-trip smoke ran against prod and passed, but the 8-scenario tier-gate matrix needs 3 test-tenant JWTs minted at `admin.cloudmorph.io` (developer / scale / enterprise) before it can execute. Founder action.
+- **`tessera-intelligence/` working tree** has 78 modified YAMLs that are pure CRLF-vs-LF line-ending drift (Windows-side editor opened them; tarballs hash-bind to the CRLF bytes and signatures verify correctly). Cleanup is `git checkout -- mappings/` from WSL + adding `*.yaml text eol=lf` to `.gitattributes` to prevent recurrence — both shipped 2026-05-16.
 
 
 

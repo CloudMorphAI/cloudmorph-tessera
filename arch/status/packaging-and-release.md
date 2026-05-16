@@ -8,9 +8,9 @@ Three publishing destinations, all driven by `.github/workflows/release.yml` on 
 
 | Target | Consumer | Auth |
 |--------|----------|------|
-| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | PyPI Trusted Publisher (OIDC, no token). `cloudmorph-tessera 0.2.0` is live on PyPI since 2026-05-14, published via manual twine upload. **0.2.1 release-prepped 2026-05-15** (commit `18ffa13`) — version bumped in the 5 places below; PyPI upload is a founder follow-up (WSL env lacks twine auth). |
-| GHCR: `ghcr.io/cloudmorphai/tessera:<version>` | Public Docker pull, customer Docker-mode deployments | `GITHUB_TOKEN` for push |
-| ECR: `237509402889.dkr.ecr.us-east-1.amazonaws.com/cloudmorph/tessera-cloud-prod:<version>` | Fargate pull from `cloudmorph-mono-repo`'s CDK stack | AWS OIDC role assumption |
+| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | Manual twine upload from WSL (PyPI Trusted Publisher OIDC deferred per credit budget). **`0.2.1` live on PyPI** as of 2026-05-15T13:51Z (uploaded by founder; `pip install cloudmorph-tessera==0.2.1` verified clean-venv 2026-05-16). |
+| GHCR: `ghcr.io/cloudmorphai/tessera:<version>` | Public Docker pull, customer Docker-mode deployments | `GITHUB_TOKEN` for push. `0.2.1` multi-arch (amd64 + arm64) live on GHCR. |
+| ECR: `237509402889.dkr.ecr.us-east-1.amazonaws.com/cloudmorph/tessera-cloud-wrapper:<version>` (renamed 2026-05-16 from `tessera-cloud-prod`) | Fargate pull from `cloudmorph-mono-repo`'s CDK stack — ECS service `tessera-cloud-prod` consumes `:main` (floating tag, currently == `:0.2.1`) | AWS-CLI manual push via `tessera-cloud-wrapper/build.sh`. ECS service rolled to 0.2.1 image 2026-05-16T07:01Z (deploy `ecs-svc/7011306979647899462` Completed). |
 
 The PyPI distribution name is `cloudmorph-tessera`. The import name stays `tessera`. The rename is a PyPI pre-flight constraint — the unprefixed `tessera` is taken by an unrelated tessellation library (v0.10.0). Documented in `pyproject.toml`'s header comment.
 
@@ -145,7 +145,16 @@ The version string must agree across five places (per the comment block in `pypr
 
 This is fragile. A stale `README.md` renders on the GitHub project page and on PyPI's project page; customers copy-paste from there. Single-source-of-truth automation (a `bump-version.py` script, or pulling `__version__` from `pyproject.toml` at runtime via `importlib.metadata.version`) would close this gap; it's not a v0.2.x priority.
 
-**0.2.0 → 0.2.1 bump (commit `18ffa13`, 2026-05-15).** All 5 places were updated in lockstep. The 0.2.1 release packages the cross-repo audit fixes (tier `scale`/`team` aliasing, `bundle_url` mapping URL, mandatory `manifest.signed.json` verify, `tarball_sha256` consumer check, base64 signature decoding) plus the explicit PyJWT dep. PyPI upload + wrapper image rebuild + ECR push + ECS `force-new-deployment` are founder follow-ups (Batch 4 was blocked on missing PyPI auth in the WSL environment that performed the local commits).
+**0.2.0 → 0.2.1 bump (commit `18ffa13`, 2026-05-15).** All 5 places were updated in lockstep. The 0.2.1 release packages the cross-repo audit fixes (tier `scale`/`team` aliasing, `bundle_url` mapping URL, mandatory `manifest.signed.json` verify, `tarball_sha256` consumer check, base64 signature decoding) plus the explicit PyJWT dep.
+
+**0.2.1 close-out — DONE 2026-05-16** (Batch 1 of `plan/tessera-improvements-plan-2026-05-16.md`):
+- PyPI `cloudmorph-tessera 0.2.1` uploaded 2026-05-15T13:51Z (manual twine from WSL).
+- `v0.2.1` git tag pushed to `origin/main` pointing at commit `18ffa13`.
+- GHCR `ghcr.io/cloudmorphai/tessera:0.2.1` multi-arch (amd64 + arm64) live.
+- ECR `cloudmorph/tessera-cloud-wrapper:0.2.1` + `:main` pushed 2026-05-16T01:42Z (repo renamed from `tessera-cloud-prod` same day).
+- ECS service `tessera-cloud-prod` (cluster `tessera-cloud-prod`) force-new-deployment Completed 2026-05-16T07:01Z, deploy `ecs-svc/7011306979647899462`; 1/1 task running fresh image.
+- `tessera-ratelimits-prod` DDB table ACTIVE (CDK construct `TesseraRateLimitsTable` in `cloudmorph-mono-repo/amplify/backend/tessera.ts:219`; granted R/W on the wrapper task role line 493).
+- Clean-venv install verify: `pip install cloudmorph-tessera==0.2.1` → `tessera.__version__ == "0.2.1"`, 18 bundled policies present, `tessera/intelligence/public_key.pem` shipped (113 bytes).
 
 ## Schemas as the consumed/emitted contract
 
