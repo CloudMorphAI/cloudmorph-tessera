@@ -51,6 +51,23 @@ def _ctx(
     cost_cache: dict | None = None,
     scope: str = "test",
 ) -> dict:
+    # v0.3.0 — wrap raw-float cost_cache entries into CostResult so the
+    # _evaluate_predicted_cost contract (CostResult-only) holds.
+    cc = cost_cache or {}
+    if cc:
+        from tessera.cost.types import CostResult
+
+        for tool, value in list(cc.items()):
+            if isinstance(value, CostResult):
+                continue
+            if isinstance(value, (int, float)):
+                cc[tool] = CostResult(
+                    price_usd=float(value),
+                    unit="hour",
+                    confidence_band="high",
+                    source="price_table",
+                    operation=tool,
+                )
     return {
         "tool_call": {"name": tool_name, "arguments": args or {}, "_meta": None},
         "intent": None,
@@ -60,7 +77,7 @@ def _ctx(
         "state_backend": state_backend,
         "blast_radius_backend": blast_backend,
         "cost_backend": None,
-        "cost_cache": cost_cache or {},
+        "cost_cache": cc,
         "aws_mapping": None,
     }
 

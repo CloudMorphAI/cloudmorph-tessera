@@ -23,8 +23,32 @@ def load_single_policy(policy_id: str) -> PolicyEngine:
     return PolicyEngine(matching, default_action=Action.allow)
 
 
+def _wrap_cost_cache(context: dict) -> None:
+    """Migrate legacy raw-float cost_cache entries into v0.3.0 CostResult shape."""
+    cc = context.get("cost_cache")
+    if not cc:
+        return
+    from tessera.cost.types import CostResult
+
+    for tool, value in list(cc.items()):
+        if isinstance(value, CostResult):
+            continue
+        if isinstance(value, (int, float)):
+            cc[tool] = CostResult(
+                price_usd=float(value),
+                unit="hour",
+                confidence_band="high",
+                source="price_table",
+                operation=tool,
+            )
+        elif isinstance(value, dict):
+            cc[tool] = CostResult(**value)
+
+
 def load_fixture(fixture_path: Path) -> dict:
-    return json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    _wrap_cost_cache(fixture.get("context", {}))
+    return fixture
 
 
 # Parametrize over all fixture files
