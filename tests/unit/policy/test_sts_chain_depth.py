@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from tessera.policy.conditions import evaluate_condition
 from tessera.policy.schema import StsChainDepthGreaterThan
 
