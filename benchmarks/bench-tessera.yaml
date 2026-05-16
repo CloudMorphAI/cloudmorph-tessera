@@ -1,0 +1,35 @@
+# Tessera benchmark config — do not use in production
+listen:
+  host: 127.0.0.1
+  port: 8400
+
+auth:
+  type: bearer
+
+audit:
+  sink: sqlite
+  path: /tmp/tessera-bench-audit.db
+  also_stdout: false
+
+policies:
+  dir: tessera/policies_default/
+  reload: none
+  mode: enforcement
+  default_action: allow
+
+intent:
+  meta_key: tessera_intent
+  required: false
+
+metrics:
+  enabled: false
+
+deployment_id: bench
+
+upstreams:
+  - name: bench-upstream
+    kind: bearer
+    url: http://127.0.0.1:8401
+
+runtime:
+  lockdown: false
