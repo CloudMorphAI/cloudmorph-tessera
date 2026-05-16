@@ -59,6 +59,8 @@ _CONDITION_TIER: dict[str, int] = {
 def _condition_tier(cond: Any) -> int:
     """Return the cost tier for a condition. Unknown types default to tier 3."""
     cond_type = getattr(cond, "condition", None)
+    if not isinstance(cond_type, str):
+        return 3
     return _CONDITION_TIER.get(cond_type, 3)
 
 

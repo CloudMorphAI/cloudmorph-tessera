@@ -18,7 +18,7 @@ class PolicyAuthor(Protocol):
     def propose_policies(
         self,
         intent: str,
-        condition_catalog: dict | None = None,
+        condition_catalog: dict[str, object] | None = None,
         max_retries: int = 3,
     ) -> list[PolicyRecommendation]:
         ...
@@ -28,7 +28,7 @@ class PolicyAuthor(Protocol):
 class ToolCatalogAnalyzer(Protocol):
     def analyze_tools(
         self,
-        tools: list[dict],
+        tools: list[dict[str, object]],
         upstream_name: str | None = None,
     ) -> list[PolicyRecommendation]:
         ...

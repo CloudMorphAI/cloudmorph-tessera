@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 warnings.warn(
     "tessera.cost.aws_mapping is the legacy per-call cost path. The unified "

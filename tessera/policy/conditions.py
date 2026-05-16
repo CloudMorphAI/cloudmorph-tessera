@@ -67,7 +67,7 @@ from tessera.policy.schema import (
 # Module-level TTL cache shared across requests. Two concurrent requests against
 # the same S3 (bucket, key) or RDS (cluster, statement-hash) tuple should hit
 # this cache rather than each spawn its own HeadObject / EXPLAIN.
-_DATA_VOL_LRU = TTLCache(maxsize=1000, ttl=300.0)
+_DATA_VOL_LRU: Any = TTLCache(maxsize=1000, ttl=300.0)
 _DATA_VOL_LRU_LOCK = threading.Lock()
 
 # Patchable in tests: replace with a lambda returning a fixed datetime

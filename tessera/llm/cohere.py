@@ -57,7 +57,7 @@ class CoherePolicyAuthor:
             ))
         return results
 
-    def _call_api(self, messages: list[dict]) -> str:
+    def _call_api(self, messages: list[dict[str, str]]) -> str:
         """Call the Cohere v2 chat endpoint and return the content string.
 
         Cohere v2 response shape: message.content[0].text
@@ -84,7 +84,7 @@ class CoherePolicyAuthor:
     def propose_policies(
         self,
         intent: str,
-        condition_catalog: dict | None = None,
+        condition_catalog: dict[str, object] | None = None,
         max_retries: int = 3,
     ) -> list[PolicyRecommendation]:
         """Generate draft policies from a natural-language intent description."""
@@ -133,7 +133,7 @@ class CoherePolicyAuthor:
 
     def analyze_tools(
         self,
-        tools: list[dict],
+        tools: list[dict[str, object]],
         upstream_name: str | None = None,
     ) -> list[PolicyRecommendation]:
         """Analyze an MCP tool catalog and recommend policies."""

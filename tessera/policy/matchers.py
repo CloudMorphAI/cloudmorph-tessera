@@ -6,7 +6,7 @@ import fnmatch
 import logging
 from typing import Any
 
-import regex as re  # type: ignore[import-untyped]
+import regex as re
 
 # cli_translator is pure Python (no boto3 dep) — safe to import unconditionally.
 try:

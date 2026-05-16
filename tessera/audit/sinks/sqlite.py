@@ -147,7 +147,8 @@ class SqliteSink:
         row = self._conn.execute(_FETCH_BY_ID, (event_id,)).fetchone()
         if row is None:
             return None
-        return json.loads(row["payload_json"])
+        result: dict[str, Any] = json.loads(row["payload_json"])
+        return result
 
     def iter_recent(self, scope: str | None = None, limit: int = 20) -> Iterator[dict[str, Any]]:
         """Yield the most recent N events for a scope (desc seq), or across all scopes."""

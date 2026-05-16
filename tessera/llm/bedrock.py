@@ -31,7 +31,7 @@ class BedrockPolicyAuthor:
         self._max_tokens = max_tokens
         self._system_prompt = build_system_prompt()
 
-    def _invoke(self, messages: list[dict]) -> str:
+    def _invoke(self, messages: list[dict[str, object]]) -> str:
         """Call Bedrock invoke_model and return the response text."""
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
@@ -46,7 +46,7 @@ class BedrockPolicyAuthor:
             body=body,
         )
         response_body = json.loads(response["body"].read())
-        return response_body["content"][0]["text"]
+        return str(response_body["content"][0]["text"])
 
     def _parse_and_validate_response(self, text: str) -> list[PolicyRecommendation]:
         from tessera.policy.schema import Policy
@@ -65,7 +65,7 @@ class BedrockPolicyAuthor:
     def propose_policies(
         self,
         intent: str,
-        condition_catalog: dict | None = None,
+        condition_catalog: dict[str, object] | None = None,
         max_retries: int = 3,
     ) -> list[PolicyRecommendation]:
         """Generate draft policies from a natural-language intent description."""
@@ -110,7 +110,7 @@ class BedrockPolicyAuthor:
 
     def analyze_tools(
         self,
-        tools: list[dict],
+        tools: list[dict[str, object]],
         upstream_name: str | None = None,
     ) -> list[PolicyRecommendation]:
         """Analyze an MCP tool catalog and recommend policies."""

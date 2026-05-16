@@ -124,7 +124,7 @@ class LicenseValidator:
             try:
                 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
                 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-                from jose import jwt as jose_jwt  # type: ignore[import-untyped]
+                from jose import jwt as jose_jwt
 
                 pub_key = load_pem_public_key(self._public_key_pem)
                 assert isinstance(pub_key, Ed25519PublicKey)

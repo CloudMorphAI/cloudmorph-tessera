@@ -57,7 +57,7 @@ class MistralPolicyAuthor:
             ))
         return results
 
-    def _call_api(self, messages: list[dict]) -> str:
+    def _call_api(self, messages: list[dict[str, str]]) -> str:
         """Call the Mistral chat completions endpoint and return the content string."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -78,7 +78,7 @@ class MistralPolicyAuthor:
     def propose_policies(
         self,
         intent: str,
-        condition_catalog: dict | None = None,
+        condition_catalog: dict[str, object] | None = None,
         max_retries: int = 3,
     ) -> list[PolicyRecommendation]:
         """Generate draft policies from a natural-language intent description."""
@@ -127,7 +127,7 @@ class MistralPolicyAuthor:
 
     def analyze_tools(
         self,
-        tools: list[dict],
+        tools: list[dict[str, object]],
         upstream_name: str | None = None,
     ) -> list[PolicyRecommendation]:
         """Analyze an MCP tool catalog and recommend policies."""

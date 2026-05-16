@@ -528,7 +528,8 @@ class IntelligenceClient:
                 # though _last_refresh is still 0. We rely on refresh()'s own
                 # lock + httpx timeout to bound the call.
                 result = await self.refresh(force=True)
-                errors = result.get("errors") or []
+                errors_raw = result.get("errors") or []
+                errors: list[object] = errors_raw if isinstance(errors_raw, list) else []
                 if errors:
                     logger.warning(
                         "event=intelligence_prewarm_partial packs=%s mappings=%s errors=%d "

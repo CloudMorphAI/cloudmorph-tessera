@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from google import genai
 from google.genai import types as genai_types
 
