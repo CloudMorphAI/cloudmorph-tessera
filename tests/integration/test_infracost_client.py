@@ -186,7 +186,7 @@ async def test_pricing_snapshot_id_flows_through_emit():
     )
 
     captured: list[dict] = []
-    original_emit = sink.emit
+    _original_emit = sink.emit
 
     def _capture(event):
         captured.append(event)

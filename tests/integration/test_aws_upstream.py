@@ -106,14 +106,14 @@ async def test_credentials_missing_failure_mode() -> None:
     """NoCredentialsError returns a -32603 error JSONResponse."""
     from fastapi.responses import JSONResponse
 
-    class _FakeNoCredentials(Exception):
+    class _FakeNoCredentialsError(Exception):
         pass
 
     # Simulate botocore NoCredentialsError by name check in upstream.py
-    _FakeNoCredentials.__name__ = "NoCredentialsError"
+    _FakeNoCredentialsError.__name__ = "NoCredentialsError"
 
     mock_client = AsyncMock()
-    mock_client.post.side_effect = _FakeNoCredentials("Unable to locate credentials")
+    mock_client.post.side_effect = _FakeNoCredentialsError("Unable to locate credentials")
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 

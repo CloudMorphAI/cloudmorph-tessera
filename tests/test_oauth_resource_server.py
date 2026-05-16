@@ -158,7 +158,7 @@ def test_introspect_returns_active_false_for_expired_token(client: TestClient, m
 
 # ── RFC 7009 Token Revocation tests ──────────────────────────────────────────
 
-def _make_token_with_jti(jti: str, secret: str = "test-secret") -> str:
+def _make_token_with_jti(jti: str, secret: str = "test-secret") -> str:  # noqa: S107
     """Build a HS256 JWT with a given JTI for testing."""
     import jwt as _pyjwt
     payload = {
@@ -242,8 +242,6 @@ def test_revoke_returns_200_for_invalid_token(client: TestClient, monkeypatch) -
 
 def test_introspect_sigverify_success(client: TestClient, monkeypatch) -> None:
     """Valid JWT verified against JWKS returns {"active": true, ...claims}."""
-    import jwt as _pyjwt
-
     monkeypatch.setenv("TESSERA_OAUTH_INTROSPECTION_CLIENTS", "auditor:s3cr3t")
     monkeypatch.setenv("TESSERA_OAUTH_JWKS_URL", "https://auth.example.com/.well-known/jwks.json")
     monkeypatch.delenv("TESSERA_OAUTH_AUTHORIZATION_SERVER", raising=False)
@@ -283,20 +281,22 @@ def test_introspect_sigverify_failure_returns_inactive(
     import logging as _logging
     _module_logger = _logging.getLogger("tessera.auth.oauth_rs")
 
-    with caplog.at_level(logging.INFO, logger="tessera.auth.oauth_rs"):
-        with patch("tessera.auth.oauth_rs._verify_token_signature", return_value=None) as mock_verify:
-            # Emit the expected log manually inside the mock so we can assert on it
-            mock_verify.side_effect = lambda token, url: (
-                _module_logger.info(  # type: ignore[func-returns-value]
-                    "event=oauth_introspect_sigverify_failed kid=test-kid reason=InvalidSignatureError"
-                ) or None
-            )
+    with (
+        caplog.at_level(logging.INFO, logger="tessera.auth.oauth_rs"),
+        patch("tessera.auth.oauth_rs._verify_token_signature", return_value=None) as mock_verify,
+    ):
+        # Emit the expected log manually inside the mock so we can assert on it
+        mock_verify.side_effect = lambda token, url: (
+            _module_logger.info(  # type: ignore[func-returns-value]
+                "event=oauth_introspect_sigverify_failed kid=test-kid reason=InvalidSignatureError"
+            ) or None
+        )
 
-            response = client.post(
-                "/introspect",
-                data={"token": "tampered.jwt.token"},
-                headers={"Authorization": _basic_header("auditor", "s3cr3t")},
-            )
+        response = client.post(
+            "/introspect",
+            data={"token": "tampered.jwt.token"},
+            headers={"Authorization": _basic_header("auditor", "s3cr3t")},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"active": False}

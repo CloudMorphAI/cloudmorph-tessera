@@ -169,7 +169,7 @@ async def test_successful_fetch_end_to_end(tmp_path, respx_mock):
 @pytest.mark.asyncio
 async def test_manifest_signature_invalid_raises(tmp_path, respx_mock):
     """When a catalog declares a signature and it is wrong, refresh raises."""
-    pack_data = _make_pack_tar_bytes()
+    _pack_data = _make_pack_tar_bytes()
     catalog = {
         "body_bytes_hex": b"not-the-real-body".hex(),
         "signature": "deadbeef" * 8,  # 32 bytes of wrong sig
@@ -276,7 +276,7 @@ async def test_license_server_unreachable_uses_cached(tmp_path, respx_mock):
     validator = LicenseValidator(config=config, public_key_pem=pub_key_pem)
 
     # Seed the disk cache with a developer tier license 2 hours old
-    cache_dir = Path(config.cache_dir).expanduser()
+    cache_dir = Path(config.cache_dir).expanduser()  # noqa: ASYNC240 — test setup, not hot path
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "license.json"
     cache_data = {
@@ -319,7 +319,7 @@ async def test_license_cache_expired_beyond_7d_degrades_to_free(tmp_path, respx_
     validator = LicenseValidator(config=config, public_key_pem=pub_key_pem)
 
     # Seed cache with an enterprise license that is 8+ days old
-    cache_dir = Path(config.cache_dir).expanduser()
+    cache_dir = Path(config.cache_dir).expanduser()  # noqa: ASYNC240 — test setup, not hot path
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "license.json"
     cache_data = {
@@ -398,7 +398,7 @@ async def test_concurrent_refresh_deduplicated(tmp_path, respx_mock):
     mapping_data = _make_pack_tar_bytes()
 
     # Allow multiple calls but count them
-    catalog_route = respx_mock.get("https://cdn.test/pack-index.json").respond(json=_make_catalog(pack_data, priv=priv))
+    _catalog_route = respx_mock.get("https://cdn.test/pack-index.json").respond(json=_make_catalog(pack_data, priv=priv))
     respx_mock.get("https://cdn.test/mapping-index.json").respond(json=_make_mapping_catalog(mapping_data, priv=priv))
     respx_mock.get("https://cdn.test/packs/aws-s3-baseline-1.0.0.tar.gz").respond(content=pack_data)
     respx_mock.get("https://cdn.test/mappings/aws-actions-1.0.0.tar.gz").respond(content=mapping_data)

@@ -67,14 +67,14 @@ def _sign(private_pem: bytes, claims: dict, kid: str = _KID) -> str:
 
 
 def _make_authenticator(**kwargs) -> JWTAuthenticator:
-    defaults = dict(
-        jwks_url=_JWKS_URL,
-        issuer=_ISSUER,
-        audience=_AUDIENCE,
-        principal_claim="sub",
-        scope_claim="scope",
-        deployment_id="default",
-    )
+    defaults = {
+        "jwks_url": _JWKS_URL,
+        "issuer": _ISSUER,
+        "audience": _AUDIENCE,
+        "principal_claim": "sub",
+        "scope_claim": "scope",
+        "deployment_id": "default",
+    }
     defaults.update(kwargs)
     return JWTAuthenticator(**defaults)
 

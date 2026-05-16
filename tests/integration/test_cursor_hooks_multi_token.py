@@ -113,9 +113,11 @@ def test_fail_closed_true_denies_on_unreachable() -> None:
     """When fail_closed=true and Tessera unreachable, handle_before returns deny."""
     from tessera.integrations.cursor_hooks import handle_before
 
-    with patch.dict("os.environ", {"TESSERA_CURSOR_FAIL_CLOSED": "true"}, clear=False):
-        with patch("tessera.integrations.cursor_hooks._post_intent", return_value=None):
-            result = handle_before(_before_payload())
+    with (
+        patch.dict("os.environ", {"TESSERA_CURSOR_FAIL_CLOSED": "true"}, clear=False),
+        patch("tessera.integrations.cursor_hooks._post_intent", return_value=None),
+    ):
+        result = handle_before(_before_payload())
 
     assert result["action"] == "deny"
     assert "fail_closed" in result["message"].lower()

@@ -19,7 +19,7 @@ import warnings
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
+import pytest  # noqa: TC002 — runtime import in test file
 
 # ---------------------------------------------------------------------------
 # Inject mcp_proxy_for_aws stub into sys.modules so upstream.py can import it

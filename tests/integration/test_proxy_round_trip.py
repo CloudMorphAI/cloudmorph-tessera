@@ -349,7 +349,7 @@ def test_pass_through_methods(test_config: TesseraConfig) -> None:
     resources/unsubscribe, roots/list, logging/setLevel,
     completion/complete, sampling/createMessage.
     """
-    _ALL_PASS_THROUGH = [
+    _all_pass_through = [
         # Lifecycle
         "initialize",
         "ping",
@@ -371,7 +371,7 @@ def test_pass_through_methods(test_config: TesseraConfig) -> None:
     with _proxy_client(
         test_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {}})
     ) as (client, app):
-        for method in _ALL_PASS_THROUGH:
+        for method in _all_pass_through:
             resp = client.post(
                 "/mcp/mock",
                 json={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}},
