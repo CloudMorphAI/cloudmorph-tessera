@@ -1,0 +1,28 @@
+id: require-intent
+name: Require Intent
+description: |
+  Log when a tool call arrives without tessera_intent metadata attached.
+
+  "Block on missing intent" cannot be expressed cleanly in the current condition
+  schema because the schema has no top-level "meta is absent" negation condition
+  that the engine can use before the intent-extraction step runs. The proxy
+  enforces intent_required separately via the cfg.intent.required flag.
+
+  This policy acts as an observability layer: it fires (log_only) whenever
+  _meta.tessera_intent is absent, giving operators an audit trail to tune
+  intent adoption without hard-blocking existing flows. Promote to block by
+  forking and changing action to block once intent coverage is confirmed.
+
+  # NOTE: Block-on-missing-intent needs a future schema enhancement
+  # (a dedicated "meta_field_absent" or "require_intent_present" condition type).
+  # Track in tessera-intelligence/arch/improvements/.
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: meta_field_equals
+    key: tessera_intent
+    value: null
+action: log_only
+reason: "Tool call lacks tessera_intent metadata — intent adoption not yet confirmed for this upstream."
+priority: 85

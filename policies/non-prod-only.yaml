@@ -1,0 +1,30 @@
+id: non-prod-only
+name: Non-Prod Only
+description: |
+  Block write and execute operations on resources tagged as production.
+
+  Counterpart to prod-protection.yaml. Where prod-protection guards against
+  accidental destruction, this policy prevents an agent scoped to a non-prod
+  role from inadvertently touching production resources. Fires when the
+  environment argument equals "prod" or "production" AND the action class is
+  a write or execute operation.
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: action_class_in
+    values: ["write.create", "write.update", "write.delete", "execute.deploy", "execute.invoke"]
+  - condition: any_of
+    conditions:
+      - condition: arg_equals
+        arg: environment
+        value: "prod"
+      - condition: arg_equals
+        arg: environment
+        value: "production"
+      - condition: arg_matches_regex
+        arg: environment
+        pattern: "^prod(uction)?$"
+action: block
+reason: "Write/execute operations on production resources are blocked in non-prod agent scope."
+priority: 60

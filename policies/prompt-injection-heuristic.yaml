@@ -1,0 +1,20 @@
+id: prompt-injection-heuristic
+name: Prompt Injection Heuristic
+description: |
+  Block tool calls whose arguments contain common prompt-injection patterns.
+
+  Matches regexes associated with adversarial prompt-injection attempts:
+  instructions to ignore prior context, override system prompts, or invoke
+  jailbreak techniques. This is a heuristic — false positives are possible
+  for legitimate operations that discuss these patterns. Operators with
+  high-precision needs should tune the pattern list or switch to log_only.
+match:
+  upstream: "*"
+  tool_pattern: ".*"
+when:
+  - condition: arg_matches_regex
+    arg: "*"
+    pattern: "(?i)(ignore previous|disregard above|system: you are now|jailbreak|forget your instructions|new persona|act as an? (AI|assistant|bot) that|you are now unrestricted)"
+action: block
+reason: "Potential prompt-injection pattern detected in tool call arguments."
+priority: 80

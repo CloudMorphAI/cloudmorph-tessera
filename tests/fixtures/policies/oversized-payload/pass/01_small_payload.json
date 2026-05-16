@@ -1,0 +1,13 @@
+{
+  "policy_id": "oversized-payload",
+  "context": {
+    "tool_call": {
+      "name": "aws_s3_PutObject",
+      "arguments": {"Bucket": "my-bucket", "Key": "file.txt", "Body": "hello world"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

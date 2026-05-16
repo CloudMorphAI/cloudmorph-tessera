@@ -1,0 +1,13 @@
+{
+  "policy_id": "business-hours-only",
+  "context": {
+    "tool_call": {
+      "name": "aws_s3_ListBuckets",
+      "arguments": {}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

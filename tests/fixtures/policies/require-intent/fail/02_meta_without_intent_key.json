@@ -1,0 +1,14 @@
+{
+  "policy_id": "require-intent",
+  "context": {
+    "tool_call": {
+      "name": "aws_iam_CreateRole",
+      "arguments": {"RoleName": "test-role"},
+      "_meta": {"tessera_intent": null}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "log_only"
+}

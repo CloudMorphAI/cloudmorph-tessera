@@ -1,0 +1,13 @@
+{
+  "policy_id": "oversized-payload",
+  "context": {
+    "tool_call": {
+      "name": "aws_bedrock_InvokeModel",
+      "arguments": {"modelId": "anthropic.claude-3-5-sonnet", "prompt": "Summarize this document"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}

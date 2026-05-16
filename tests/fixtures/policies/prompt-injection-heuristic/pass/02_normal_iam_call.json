@@ -1,0 +1,13 @@
+{
+  "policy_id": "prompt-injection-heuristic",
+  "context": {
+    "tool_call": {
+      "name": "aws_iam_CreateRole",
+      "arguments": {"RoleName": "data-pipeline-role", "Description": "Role for ETL pipeline"}
+    },
+    "intent": null,
+    "upstream": "aws",
+    "runtime": {"lockdown": false}
+  },
+  "expected_action": "allow"
+}
