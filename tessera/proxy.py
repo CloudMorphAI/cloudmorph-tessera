@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from tessera.cost.types import CostResult
     from tessera.integrations.aws.upstream import AWSMcpUpstream
 
 import httpx
@@ -648,31 +649,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Step 6 — Build context
         # Pre-fetch cost estimate for predicted_cost condition (async → sync bridge)
-        cost_cache: dict[str, float] = {}
         cost_backend = getattr(app.state, "cost_backend", None)
         aws_mapping_mod = getattr(app.state, "aws_mapping", None)
-
-        # Price-table-first: consult the in-memory table before hitting Infracost.
-        # Avoids the 100–300ms live GraphQL call when the operation is already indexed.
-        _price_table = getattr(app.state, "price_table", None)
-        if _price_table is not None:
-            region_arg: str | None = arguments.get("region") if isinstance(arguments, dict) else None
-            estimate = _price_table.cost_for_call(tool_name, arguments, region=region_arg)
-            if estimate is not None:
-                cost_cache[tool_name] = estimate.price_usd
-
-        # Fall back to live Infracost when price-table has no entry for this operation.
-        if tool_name not in cost_cache and cost_backend is not None and aws_mapping_mod is not None:
-            query = aws_mapping_mod.map_request(tool_name, arguments)
-            if query is not None:
-                try:
-                    sku_result = await cost_backend.query_sku(
-                        query.service, query.region, query.attributes
-                    )
-                    if sku_result is not None:
-                        cost_cache[tool_name] = sku_result.usd_per_unit
-                except Exception:  # noqa: BLE001
-                    pass
+        cost_cache: dict[str, CostResult] = await _prefetch_cost(tool_name, arguments, cost_backend, aws_mapping_mod)
 
         # Step 6b — Pre-fetch blast-radius when any matching policy needs it (P0-14).
         # Wraps the synchronous boto3 IAM/S3/KMS call in asyncio.to_thread to avoid
@@ -786,21 +765,21 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 cost_cache=cost_cache,
             )
 
-            audit_event = _emit(
-                app.state,
-                auth_ctx.scope,
-                "decision",
-                {
-                    "mode": "observation",
-                    "policy_id": None,
-                    "reason": None,
-                    "upstream": upstream_name,
-                    "tool_call": context["tool_call"],
-                    "principal_id": auth_ctx.principal_id,
-                    "request_id": request_id,
-                    "decision_error": None,
-                },
-            )
+            _obs_cost = cost_cache.get(tool_name)
+            _obs_payload: dict[str, Any] = {
+                "mode": "observation",
+                "policy_id": None,
+                "reason": None,
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": None,
+            }
+            if _obs_cost is not None:
+                _obs_payload["cost_source"] = _obs_cost.source
+                _obs_payload["cost_band"] = _obs_cost.confidence_band
+            audit_event = _emit(app.state, auth_ctx.scope, "decision", _obs_payload)
             _inject_audit_id(upstream_response, audit_event["eventId"])
             _METRICS["requests_total{outcome=observation}"] += 1
             return JSONResponse(upstream_response)
@@ -821,22 +800,22 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             else:
                 tessera_decision_header = "would_allow"
 
-            audit_event = _emit(
-                app.state,
-                auth_ctx.scope,
-                "decision",
-                {
-                    "mode": "log_only",
-                    "would_decision": decision.action.value,
-                    "policy_id": decision.policy_id,
-                    "reason": decision.reason,
-                    "upstream": upstream_name,
-                    "tool_call": context["tool_call"],
-                    "principal_id": auth_ctx.principal_id,
-                    "request_id": request_id,
-                    "decision_error": decision.decision_error,
-                },
-            )
+            _lo_cost = cost_cache.get(tool_name)
+            _lo_payload: dict[str, Any] = {
+                "mode": "log_only",
+                "would_decision": decision.action.value,
+                "policy_id": decision.policy_id,
+                "reason": decision.reason,
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": decision.decision_error,
+            }
+            if _lo_cost is not None:
+                _lo_payload["cost_source"] = _lo_cost.source
+                _lo_payload["cost_band"] = _lo_cost.confidence_band
+            audit_event = _emit(app.state, auth_ctx.scope, "decision", _lo_payload)
             _METRICS["requests_total{outcome=log_only_forwarded}"] += 1
 
             log_only_headers: dict[str, str] = {
@@ -876,43 +855,43 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 cost_cache=cost_cache,
             )
 
-            audit_event = _emit(
-                app.state,
-                auth_ctx.scope,
-                "decision",
-                {
-                    "mode": "enforcement",
-                    "decision": decision.action.value,
-                    "policy_id": decision.policy_id,
-                    "reason": decision.reason,
-                    "upstream": upstream_name,
-                    "tool_call": context["tool_call"],
-                    "principal_id": auth_ctx.principal_id,
-                    "request_id": request_id,
-                    "decision_error": decision.decision_error,
-                },
-            )
+            _enf_allow_cost = cost_cache.get(tool_name)
+            _enf_allow_payload: dict[str, Any] = {
+                "mode": "enforcement",
+                "decision": decision.action.value,
+                "policy_id": decision.policy_id,
+                "reason": decision.reason,
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": decision.decision_error,
+            }
+            if _enf_allow_cost is not None:
+                _enf_allow_payload["cost_source"] = _enf_allow_cost.source
+                _enf_allow_payload["cost_band"] = _enf_allow_cost.confidence_band
+            audit_event = _emit(app.state, auth_ctx.scope, "decision", _enf_allow_payload)
             _inject_audit_id(upstream_response, audit_event["eventId"])
             _METRICS["requests_total{outcome=allow}"] += 1
             return JSONResponse(upstream_response)
 
         if decision.action == Action.block:
-            audit_event = _emit(
-                app.state,
-                auth_ctx.scope,
-                "decision",
-                {
-                    "mode": "enforcement",
-                    "decision": "block",
-                    "policy_id": decision.policy_id,
-                    "reason": decision.reason,
-                    "upstream": upstream_name,
-                    "tool_call": context["tool_call"],
-                    "principal_id": auth_ctx.principal_id,
-                    "request_id": request_id,
-                    "decision_error": decision.decision_error,
-                },
-            )
+            _enf_block_cost = cost_cache.get(tool_name)
+            _enf_block_payload: dict[str, Any] = {
+                "mode": "enforcement",
+                "decision": "block",
+                "policy_id": decision.policy_id,
+                "reason": decision.reason,
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": decision.decision_error,
+            }
+            if _enf_block_cost is not None:
+                _enf_block_payload["cost_source"] = _enf_block_cost.source
+                _enf_block_payload["cost_band"] = _enf_block_cost.confidence_band
+            audit_event = _emit(app.state, auth_ctx.scope, "decision", _enf_block_payload)
             _METRICS["requests_total{outcome=block}"] += 1
             resp_body = {
                 "jsonrpc": "2.0",
@@ -928,22 +907,22 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if decision.action == Action.require_approval:
             reason_str = f"approval_required: {decision.reason or ''}"
-            audit_event = _emit(
-                app.state,
-                auth_ctx.scope,
-                "decision",
-                {
-                    "mode": "enforcement",
-                    "decision": "require_approval",
-                    "policy_id": decision.policy_id,
-                    "reason": reason_str,
-                    "upstream": upstream_name,
-                    "tool_call": context["tool_call"],
-                    "principal_id": auth_ctx.principal_id,
-                    "request_id": request_id,
-                    "decision_error": decision.decision_error,
-                },
-            )
+            _enf_appr_cost = cost_cache.get(tool_name)
+            _enf_appr_payload: dict[str, Any] = {
+                "mode": "enforcement",
+                "decision": "require_approval",
+                "policy_id": decision.policy_id,
+                "reason": reason_str,
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": decision.decision_error,
+            }
+            if _enf_appr_cost is not None:
+                _enf_appr_payload["cost_source"] = _enf_appr_cost.source
+                _enf_appr_payload["cost_band"] = _enf_appr_cost.confidence_band
+            audit_event = _emit(app.state, auth_ctx.scope, "decision", _enf_appr_payload)
             _METRICS["requests_total{outcome=require_approval}"] += 1
             resp_body = {
                 "jsonrpc": "2.0",
@@ -1081,12 +1060,59 @@ def _emit(state: Any, scope: str, event_type: str, payload: dict[str, Any]) -> d
     return {"eventId": event_id}
 
 
+async def _prefetch_cost(
+    tool_name: str,
+    arguments: Any,
+    cost_backend: Any | None,
+    aws_mapping_mod: Any | None,
+) -> dict[str, CostResult]:
+    """Resolve a CostResult for tool_name and return it in a cache dict.
+
+    Resolution order:
+    1. `cost_for_call()` (module-level price-table registry) — sub-millisecond.
+    2. If source == "miss" AND a live cost_backend (InfracostClient) is configured:
+       `cost_backend.query_sku(...)`.  On hit, builds a CostResult(source="infracost_live").
+       Logs WARNING so operators know the live path fired.
+    3. Both miss → CostResult.miss(tool_name).
+
+    Always returns a dict with exactly one entry keyed on tool_name.
+    """
+    from tessera.cost import CostResult, cost_for_call  # noqa: PLC0415
+
+    region_arg: str | None = arguments.get("region") if isinstance(arguments, dict) else None
+    result = cost_for_call(tool_name, arguments if isinstance(arguments, dict) else {}, region=region_arg)
+
+    if result.source == "miss" and cost_backend is not None and aws_mapping_mod is not None:
+        query = aws_mapping_mod.map_request(tool_name, arguments)
+        if query is not None:
+            try:
+                sku_result = await cost_backend.query_sku(
+                    query.service, query.region, query.attributes
+                )
+                if sku_result is not None:
+                    logger.warning(
+                        "event=cost_live_fallback tool=%s reason=price_table_miss",
+                        tool_name,
+                    )
+                    result = CostResult(
+                        price_usd=sku_result.usd_per_unit,
+                        unit=sku_result.unit,
+                        confidence_band=sku_result.confidence_band,
+                        source="infracost_live",
+                        operation=tool_name,
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {tool_name: result}
+
+
 def _record_daily_spend(
     state: Any,
     *,
     scope: str,
     tool_name: str,
-    cost_cache: dict[str, float],
+    cost_cache: dict[str, CostResult],
 ) -> None:
     """Write back per-call cost to the daily-spend state backend (P0-18).
 
@@ -1100,12 +1126,17 @@ def _record_daily_spend(
     Fires-and-forgets via `asyncio.create_task` + `asyncio.to_thread` so the
     SQLite WAL fsync never blocks the event loop. Failures bump a counter
     but never affect the customer's response.
+
+    Skips the write when source == "miss" (no price data available).
     """
     state_backend = getattr(state, "state_backend", None)
     if state_backend is None:
         return
+    cost_result = cost_cache.get(tool_name)
+    if cost_result is None or cost_result.source == "miss" or cost_result.price_usd is None:
+        return
     try:
-        est_usd = float(cost_cache.get(tool_name, 0.0))
+        est_usd = float(cost_result.price_usd)
     except (TypeError, ValueError):
         return
     if est_usd <= 0:

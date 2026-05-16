@@ -322,21 +322,33 @@ def _evaluate_none_of(cond: NoneOf, context: dict[str, Any]) -> bool:
 def _evaluate_predicted_cost(cond: PredictedCost, context: dict[str, Any]) -> bool:
     """Evaluate predicted_cost condition.
 
-    Reads pre-fetched cost from context["cost_cache"] keyed on tool_name.
+    Reads pre-fetched CostResult from context["cost_cache"] keyed on tool_name.
     The proxy pre-populates this cache before invoking the engine so the
     synchronous condition evaluator never has to bridge into async I/O.
 
-    Fail-closed (False = don't block) when no entry is present — either the
-    operation has no AWS mapping, the cost backend is unconfigured, or the
-    backend returned None. Cost-data uncertainty must not produce a block.
+    Fail-closed (False = don't block) when:
+    - cost_cache is missing from context (callers must pass it explicitly)
+    - no entry for tool_name
+    - source == "miss" (no price data available — uncertainty must not block)
+    - price_usd is None
     """
+    assert "cost_cache" in context, (
+        "_evaluate_predicted_cost: context['cost_cache'] is required but missing. "
+        "Pass cost_cache={} in test contexts or ensure the proxy populates it before evaluation."
+    )
+
     tool_call = context.get("tool_call", {})
     tool_name: str = tool_call.get("name", "")
 
-    cost_cache: dict[str, float] = context.get("cost_cache") or {}
-    if tool_name not in cost_cache:
+    from tessera.cost.types import CostResult  # noqa: PLC0415
+
+    cost_cache: dict[str, CostResult] = context.get("cost_cache") or {}
+    cost_result: CostResult | None = cost_cache.get(tool_name)
+
+    if cost_result is None or cost_result.source == "miss" or cost_result.price_usd is None:
         return False
-    raw_usd = cost_cache[tool_name]
+
+    raw_usd = cost_result.price_usd
 
     # Apply band multiplier (ceiling = highest uncertainty)
     multiplier = _BAND_MULTIPLIER.get(cond.band, 1.0)

@@ -43,7 +43,19 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "payload": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "cost_source": {
+          "description": "Which resolution path produced the cost estimate. Absent when cost was not prefetched for this call.",
+          "type": "string",
+          "enum": ["price_table", "infracost_live", "miss"]
+        },
+        "cost_band": {
+          "description": "Producer-declared confidence band for the cost estimate (high/medium/ceiling). Absent when cost_source is absent.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
     },
     "sessionId": {
       "type": "string"
