@@ -5,6 +5,7 @@ traffic) so JWKS caching and validation logic lives in one place.
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -15,16 +16,18 @@ from jose.exceptions import ExpiredSignatureError, JWTError
 
 from tessera.errors import UnauthorizedError
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class JWKSCache:
-    keys: dict[str, dict]  # kid -> JWK dict
+    keys: dict[str, dict[str, Any]]  # kid -> JWK dict
     fetched_at: float
     ttl_seconds: int = 3600
 
 
 def fetch_jwks(jwks_url: str, http_client: httpx.Client) -> JWKSCache:
-    """Fetch JWKS from *jwks_url* and return a populated cache entry."""
+    """Fetch JWKS from *jwks_url* synchronously and return a populated cache entry."""
     try:
         resp = http_client.get(jwks_url)
         resp.raise_for_status()
@@ -35,6 +38,36 @@ def fetch_jwks(jwks_url: str, http_client: httpx.Client) -> JWKSCache:
     data = resp.json()
     keys = {k["kid"]: k for k in data.get("keys", []) if "kid" in k}
     return JWKSCache(keys=keys, fetched_at=time.monotonic())
+
+
+async def fetch_jwks_async(jwks_url: str) -> JWKSCache:
+    """Fetch JWKS from *jwks_url* asynchronously and return a populated cache entry."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(jwks_url)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise UnauthorizedError(f"JWKS endpoint returned {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise UnauthorizedError(f"JWKS endpoint unreachable: {exc}") from exc
+    data = resp.json()
+    keys = {k["kid"]: k for k in data.get("keys", []) if "kid" in k}
+    return JWKSCache(keys=keys, fetched_at=time.monotonic())
+
+
+async def prewarm_jwks_cache(jwks_url: str) -> JWKSCache | None:
+    """Fetch JWKS once at lifespan startup to pre-populate the cache.
+
+    On failure: logs WARNING and returns None. Callers should swallow None and
+    fall through to the on-demand fetch path for the first real request.
+    """
+    try:
+        cache = await fetch_jwks_async(jwks_url)
+        logger.info("event=jwks_prewarm_ok url=%s keys=%d", jwks_url, len(cache.keys))
+        return cache
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("event=jwks_prewarm_failed url=%s error=%s", jwks_url, exc)
+        return None
 
 
 def get_key(

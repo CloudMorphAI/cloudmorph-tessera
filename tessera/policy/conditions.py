@@ -15,13 +15,13 @@ from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import regex  # type: ignore[import-untyped]
+import regex
 
 # Optional dep: boto3 (in [aws] extras). Module-level reference enables
 # `unittest.mock.patch("tessera.policy.conditions.boto3", ...)` in tests AND
 # avoids per-call import overhead in the hot path for data_volume evaluator.
 try:
-    import boto3  # type: ignore[import-untyped]
+    import boto3
 except ImportError:
     boto3 = None
 
@@ -29,9 +29,9 @@ except ImportError:
 # back to an unbounded dict when missing — fine for tests; production should
 # install cachetools.
 try:
-    from cachetools import TTLCache  # type: ignore[import-untyped]
+    from cachetools import TTLCache
 except ImportError:
-    class TTLCache(dict):  # type: ignore[no-redef]
+    class TTLCache(dict):  # type: ignore[no-redef, type-arg]
         """Trivial fallback when cachetools is missing — unbounded dict, no TTL."""
 
         def __init__(self, maxsize: int = 1000, ttl: float = 300.0) -> None:
@@ -67,7 +67,7 @@ from tessera.policy.schema import (
 # Module-level TTL cache shared across requests. Two concurrent requests against
 # the same S3 (bucket, key) or RDS (cluster, statement-hash) tuple should hit
 # this cache rather than each spawn its own HeadObject / EXPLAIN.
-_DATA_VOL_LRU: TTLCache = TTLCache(maxsize=1000, ttl=300.0)
+_DATA_VOL_LRU = TTLCache(maxsize=1000, ttl=300.0)
 _DATA_VOL_LRU_LOCK = threading.Lock()
 
 # Patchable in tests: replace with a lambda returning a fixed datetime
@@ -102,11 +102,21 @@ def _add_error(error: str) -> None:
     _decision_ctx.errors.append(error)
 
 
-def _match_regex(pattern: str, text: str, policy_id: str | None = None) -> bool:
-    """Match regex with 100ms timeout. On timeout: return False and tag error."""
+def _match_regex(
+    pattern: str,
+    text: str,
+    policy_id: str | None = None,
+    compiled: Any = None,
+) -> bool:
+    """Match regex with 100ms timeout. On timeout: return False and tag error.
+
+    When *compiled* is provided (a pre-compiled regex.Pattern from the loader),
+    it is used directly to avoid re-compiling on every request evaluation.
+    Falls back to runtime compile when *compiled* is None (tests / direct callers).
+    """
     try:
-        compiled = regex.compile(pattern, regex.VERSION1)
-        return compiled.search(text, timeout=_REGEX_TIMEOUT) is not None
+        pat = compiled if compiled is not None else regex.compile(pattern, regex.VERSION1)
+        return pat.search(text, timeout=_REGEX_TIMEOUT) is not None
     except TimeoutError:
         _add_error(f"regex_timeout:{policy_id or 'unknown'}")
         return False
@@ -194,12 +204,13 @@ def _evaluate_arg_matches_regex(cond: ArgMatchesRegex, context: dict[str, Any]) 
     tool_call = context.get("tool_call", {})
     arguments: dict[str, Any] = tool_call.get("arguments", {})
     policy_id = context.get("policy_id")
+    pre = getattr(cond, "compiled_regex", None)
     if cond.arg == "*":
-        return any(_match_regex(cond.pattern, str(v), policy_id) for v in arguments.values())
+        return any(_match_regex(cond.pattern, str(v), policy_id, compiled=pre) for v in arguments.values())
     found, val = _get_arg(arguments, cond.arg)
     if not found:
         return False
-    return _match_regex(cond.pattern, str(val), policy_id)
+    return _match_regex(cond.pattern, str(val), policy_id, compiled=pre)
 
 
 def _evaluate_arg_in_set(cond: ArgInSet, context: dict[str, Any]) -> bool:
@@ -218,12 +229,13 @@ def _evaluate_arg_contains_pattern(cond: ArgContainsPattern, context: dict[str, 
     tool_call = context.get("tool_call", {})
     arguments: dict[str, Any] = tool_call.get("arguments", {})
     policy_id = context.get("policy_id")
+    pre = getattr(cond, "compiled_regex", None)
     if cond.arg == "*":
-        return any(_match_regex(cond.pattern, str(v), policy_id) for v in arguments.values())
+        return any(_match_regex(cond.pattern, str(v), policy_id, compiled=pre) for v in arguments.values())
     found, val = _get_arg(arguments, cond.arg)
     if not found:
         return False
-    return _match_regex(cond.pattern, str(val), policy_id)
+    return _match_regex(cond.pattern, str(val), policy_id, compiled=pre)
 
 
 def _evaluate_arg_size_greater_than(cond: ArgSizeGreaterThan, context: dict[str, Any]) -> bool:
@@ -271,7 +283,8 @@ def _evaluate_intent_purpose_matches(cond: IntentPurposeMatches, context: dict[s
     purpose = intent.get("purpose")
     if purpose is None:
         return False
-    return _match_regex(cond.pattern, str(purpose), policy_id)
+    pre = getattr(cond, "compiled_regex", None)
+    return _match_regex(cond.pattern, str(purpose), policy_id, compiled=pre)
 
 
 def _evaluate_region_in(cond: RegionIn, context: dict[str, Any]) -> bool:
@@ -406,7 +419,7 @@ def _evaluate_blast_radius(cond: BlastRadius, context: dict[str, Any]) -> bool:
 
 def _evaluate_affected_resource_count(cond: AffectedResourceCount, context: dict[str, Any]) -> bool:
     """Evaluate affected_resource_count condition using jmespath on tool args."""
-    import jmespath  # type: ignore[import-untyped]
+    import jmespath
 
     tool_call = context.get("tool_call", {})
     args: dict[str, Any] = tool_call.get("arguments", {})

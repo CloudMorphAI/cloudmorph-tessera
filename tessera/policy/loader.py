@@ -14,36 +14,84 @@ from tessera.errors import PolicyError
 from tessera.policy.action_verbs import ACTION_VERBS, load_user_mappings, merge_mappings
 from tessera.policy.regex_safety import validate_pattern
 from tessera.policy.schema import (
+    AnyOf,
     ArgContainsPattern,
     ArgMatchesRegex,
     IntentPurposeMatches,
+    NoneOf,
     Policy,
 )
 
 logger = logging.getLogger(__name__)
 
+# ── Cost-tier ordering (P1-8) ─────────────────────────────────────────────────
+# Lower number = cheaper to evaluate = runs first.
+_CONDITION_TIER: dict[str, int] = {
+    # Tier 0 — O(1) dict lookups
+    "arg_equals": 0,
+    "arg_in_set": 0,
+    "arg_size_greater_than": 0,
+    "tool_name_in": 0,
+    # Tier 1 — cheap string ops / small comparisons
+    "arg_greater_than": 1,
+    "arg_less_than": 1,
+    "intent_class_in": 1,
+    "action_class_in": 1,
+    "intent_purpose_matches": 1,
+    "region_in": 1,
+    "time_of_day_outside": 1,
+    "meta_field_equals": 1,
+    # Tier 2 — regex (pre-compiled, still measurably slower than string ops)
+    "arg_matches_regex": 2,
+    "arg_contains_pattern": 2,
+    # Tier 3 — semantic / may need I/O (pre-fetched into cache, but heavier logic)
+    "predicted_cost": 3,
+    "cumulative_spend_today": 3,
+    "blast_radius": 3,
+    "affected_resource_count": 3,
+    "data_volume": 3,
+    # Tier 4 — boolean composites (recurse internally, so evaluated last)
+    "any_of": 4,
+    "none_of": 4,
+}
 
-def _regex_fields_in_policy(policy: Policy) -> list[str]:
-    """Collect all regex pattern strings from a Policy that need safety validation."""
-    patterns: list[str] = []
-    if policy.match.tool_pattern is not None:
-        patterns.append(policy.match.tool_pattern)
-    for cond in _iter_conditions(policy.when):
-        if isinstance(cond, (ArgMatchesRegex, ArgContainsPattern, IntentPurposeMatches)):
-            patterns.append(cond.pattern)
-    return patterns
+
+def _condition_tier(cond: Any) -> int:
+    """Return the cost tier for a condition. Unknown types default to tier 3."""
+    cond_type = getattr(cond, "condition", None)
+    return _CONDITION_TIER.get(cond_type, 3)
 
 
-def _iter_conditions(conditions: list[Any]) -> list[Any]:
-    """Flatten nested conditions (AnyOf/NoneOf) into a single iterable."""
-    from tessera.policy.schema import AnyOf, NoneOf
-
-    result: list[Any] = []
-    for cond in conditions:
-        result.append(cond)
+def _sort_conditions(conditions: list[Any]) -> list[Any]:
+    """Sort *conditions* by cost tier (cheap-first) and recursively sort composites."""
+    sorted_conds = sorted(conditions, key=_condition_tier)
+    for cond in sorted_conds:
         if isinstance(cond, (AnyOf, NoneOf)):
-            result.extend(_iter_conditions(cond.conditions))
-    return result
+            object.__setattr__(cond, "conditions", _sort_conditions(list(cond.conditions)))
+    return sorted_conds
+
+
+def _compile_regex_fields(policy: Policy) -> None:
+    """Validate all regex patterns in *policy*, store compiled objects in-place.
+
+    Walks the top-level when list and any AnyOf/NoneOf composites recursively.
+    Also handles match.tool_pattern.
+    """
+    if policy.match.tool_pattern is not None:
+        compiled = validate_pattern(policy.match.tool_pattern)
+        policy.match.compiled_tool_pattern = compiled
+
+    _compile_conditions(policy.when)
+
+
+def _compile_conditions(conditions: list[Any]) -> None:
+    """Recursively validate and store compiled regex on pattern-bearing conditions."""
+    for cond in conditions:
+        if isinstance(cond, (ArgMatchesRegex, ArgContainsPattern, IntentPurposeMatches)):
+            compiled = validate_pattern(cond.pattern)
+            cond.compiled_regex = compiled
+        elif isinstance(cond, (AnyOf, NoneOf)):
+            _compile_conditions(list(cond.conditions))
 
 
 class FilesystemPolicyLoader:
@@ -189,7 +237,7 @@ class FilesystemPolicyLoader:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _load_file(self, path: Path, *, is_startup: bool) -> None:
-        """Parse, validate, and regex-check a single policy file.
+        """Parse, validate, regex-check, and condition-sort a single policy file.
 
         On failure during startup, raises PolicyError.
         On failure during reload, records error and keeps prior version.
@@ -205,9 +253,13 @@ class FilesystemPolicyLoader:
                 )
             policy = Policy.model_validate(raw)
 
-            # Run regex safety checks on all pattern fields
-            for pattern in _regex_fields_in_policy(policy):
-                validate_pattern(pattern)
+            # Validate all regex patterns and store compiled objects in-place.
+            # validate_pattern() raises PolicyError on ReDoS or syntax errors.
+            _compile_regex_fields(policy)
+
+            # Sort each policy's when list by cost tier (cheap-first). Composite
+            # any_of/none_of conditions are sorted recursively inside _sort_conditions.
+            policy.when = _sort_conditions(policy.when)
 
             # Success — store and clear any prior error
             self._policies[path_str] = policy

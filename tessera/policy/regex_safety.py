@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
-import regex  # type: ignore[import-untyped]
+import regex
 
 from tessera.errors import PolicyError
 
@@ -18,8 +19,11 @@ _CORPUS = [
 ]
 
 
-def validate_pattern(pattern: str) -> None:
+def validate_pattern(pattern: str) -> Any:
     """Compile and run pattern against corpus strings.
+
+    Returns the compiled regex.Pattern object so callers can store it and
+    avoid re-compiling on every evaluation.
 
     Raises PolicyError(reason="regex_potential_redos") if any corpus string
     takes >= 50ms to match.
@@ -52,3 +56,5 @@ def validate_pattern(pattern: str) -> None:
                 f"of length {len(s)} (limit 50ms)",
                 reason="regex_potential_redos",
             )
+
+    return compiled

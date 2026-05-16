@@ -7,9 +7,11 @@ tokens.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
-from tessera.auth._jwks import JWKSCache, validate_jwt
+from tessera.auth._jwks import JWKSCache, prewarm_jwks_cache, validate_jwt
 from tessera.auth.base import SCOPE_RE, AuthContext, Authenticator
 from tessera.errors import UnauthorizedError
 
@@ -19,6 +21,9 @@ class JWTAuthenticator:
 
     Configured via cfg.auth.jwt: jwks_url, issuer, audience, clock_skew_seconds,
     principal_claim, scope_claim.
+
+    The JWKS cache is pre-warmed at lifespan startup via prewarm() so the first
+    real request does not block the event loop on a synchronous httpx.get.
     """
 
     def __init__(
@@ -41,7 +46,15 @@ class JWTAuthenticator:
         self._cache: JWKSCache | None = None
         self._http = httpx.Client(timeout=10.0)
 
-    def authenticate(self, request) -> AuthContext:
+    async def prewarm(self) -> None:
+        """Pre-warm the JWKS cache at lifespan startup.
+
+        Failure is swallowed (WARNING logged). The first real request will fall
+        back to the on-demand synchronous fetch path in validate_jwt().
+        """
+        self._cache = await prewarm_jwks_cache(self._jwks_url)
+
+    def authenticate(self, request: Any) -> AuthContext:
         header = request.headers.get("Authorization") or request.headers.get("authorization")
         if not header or not header.lower().startswith("bearer "):
             raise UnauthorizedError("missing or malformed Authorization header")
@@ -74,4 +87,4 @@ class JWTAuthenticator:
 
 
 # Satisfy the Authenticator Protocol at type-check time
-_: Authenticator = JWTAuthenticator.__new__(JWTAuthenticator)  # type: ignore[assignment]
+_: Authenticator = JWTAuthenticator.__new__(JWTAuthenticator)

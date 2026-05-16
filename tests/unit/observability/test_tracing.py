@@ -15,7 +15,7 @@ def _reload_tracing(otel_enabled: str = "") -> object:
             del sys.modules[key]
     with patch.dict("os.environ", {"TESSERA_OTEL_ENABLED": otel_enabled}, clear=False):
         mod = importlib.import_module("tessera.observability.tracing")
-    return mod
+    return mod  # noqa: RET504 — must return after context exits (patch restored)
 
 
 class TestIsEnabled:

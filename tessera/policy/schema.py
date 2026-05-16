@@ -20,11 +20,13 @@ class Action(str, Enum):
 
 
 class MatchSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
     upstream: str = "*"
     tool: str | None = None
     tool_pattern: str | None = None
     require_intent: bool = False
+    # Populated by loader after validate_pattern(); excluded from YAML parse/serialise.
+    compiled_tool_pattern: Any = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def tool_and_tool_pattern_exclusive(self) -> MatchSpec:
@@ -37,7 +39,7 @@ class MatchSpec(BaseModel):
 
 
 class BaseCondition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
 
 class ArgEquals(BaseCondition):
@@ -62,6 +64,8 @@ class ArgMatchesRegex(BaseCondition):
     condition: Literal["arg_matches_regex"]
     arg: str
     pattern: str
+    # Populated by loader after validate_pattern(); excluded from YAML parse/serialise.
+    compiled_regex: Any = Field(default=None, exclude=True)
 
 
 class ArgInSet(BaseCondition):
@@ -74,6 +78,8 @@ class ArgContainsPattern(BaseCondition):
     condition: Literal["arg_contains_pattern"]
     arg: str
     pattern: str
+    # Populated by loader after validate_pattern(); excluded from YAML parse/serialise.
+    compiled_regex: Any = Field(default=None, exclude=True)
 
 
 class ArgSizeGreaterThan(BaseCondition):
@@ -100,6 +106,8 @@ class IntentClassIn(BaseCondition):
 class IntentPurposeMatches(BaseCondition):
     condition: Literal["intent_purpose_matches"]
     pattern: str
+    # Populated by loader after validate_pattern(); excluded from YAML parse/serialise.
+    compiled_regex: Any = Field(default=None, exclude=True)
 
 
 class RegionIn(BaseCondition):

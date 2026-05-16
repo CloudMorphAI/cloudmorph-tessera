@@ -17,7 +17,7 @@ def _reload_metrics_without_prom() -> types.ModuleType:
 
     with patch.dict(sys.modules, {"prometheus_client": None}):
         mod = importlib.import_module("tessera.observability.metrics")
-    return mod
+    return mod  # noqa: RET504 — must return after context exits (patch restored)
 
 
 def _reload_metrics_with_prom() -> types.ModuleType:
@@ -32,7 +32,7 @@ def _reload_metrics_with_prom() -> types.ModuleType:
 
     with patch.dict(sys.modules, {"prometheus_client": fake_prom}):
         mod = importlib.import_module("tessera.observability.metrics")
-    return mod
+    return mod  # noqa: RET504 — must return after context exits (patch restored)
 
 
 class TestStubFallback:

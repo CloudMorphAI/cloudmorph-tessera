@@ -5,6 +5,8 @@ configurable TTL and re-fetches on `kid` not found.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from tessera.auth._jwks import JWKSCache, validate_jwt
@@ -39,7 +41,7 @@ class OIDCAuthenticator:
         self._cache: JWKSCache | None = None
         self._http = httpx.Client(timeout=10.0)
 
-    def authenticate(self, request) -> AuthContext:
+    def authenticate(self, request: Any) -> AuthContext:
         # Extract Bearer token
         header = request.headers.get("Authorization") or request.headers.get("authorization")
         if not header or not header.lower().startswith("bearer "):
@@ -71,4 +73,4 @@ class OIDCAuthenticator:
 
 
 # Satisfy the Authenticator Protocol at type-check time
-_: Authenticator = OIDCAuthenticator.__new__(OIDCAuthenticator)  # type: ignore[assignment]
+_: Authenticator = OIDCAuthenticator.__new__(OIDCAuthenticator)
