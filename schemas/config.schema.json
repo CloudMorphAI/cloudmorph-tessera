@@ -85,6 +85,25 @@
               "header": {"type": "string"},
               "value": {"type": "string"}
             }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["bearer", "aws_mcp"],
+            "default": "bearer"
+          },
+          "aws_region": {"type": "string"},
+          "aws_service": {"type": "string", "default": "aws-mcp"},
+          "aws_endpoint_override": {"type": "string"},
+          "aws_mcp_routing": {
+            "type": "string",
+            "enum": ["specific-first", "call-aws-only"],
+            "default": "specific-first",
+            "description": "Routing mode when upstream targets aws-api-mcp-server. 'specific-first' (default per Q2 2026-05-16): use per-service MCP tool when official_mcp_tool_name is set, fall back to call_aws. 'call-aws-only': always route through call_aws."
+          },
+          "aws_mcp_server": {
+            "type": ["string", "null"],
+            "default": null,
+            "description": "When set to 'aws-api-mcp-server', enables call_aws translation before SigV4 POST. When null (default), pass through unchanged (legacy direct-service routing)."
           }
         }
       }

@@ -314,6 +314,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     aws_service=upstream.aws_service,
                     aws_endpoint_override=upstream.aws_endpoint_override,
                     timeout_seconds=upstream.timeout_seconds,
+                    aws_mcp_routing=upstream.aws_mcp_routing,
+                    aws_mcp_server=upstream.aws_mcp_server,
                 )
                 await aws_client.__aenter__()
                 app.state.aws_clients[upstream.name] = aws_client
@@ -633,6 +635,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     "principal_id": auth_ctx.principal_id,
                     "request_id": request_id,
                     "decision_error": None,
+                    "canonical_tool_name": tool_name,
+                    "effective_tool_name": tool_name,
                 },
             )
             resp_body: dict[str, Any] = {
@@ -731,6 +735,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     "principal_id": auth_ctx.principal_id,
                     "request_id": request_id,
                     "decision_error": None,
+                    "canonical_tool_name": tool_name,
+                    "effective_tool_name": context.get("_effective_tool_name", tool_name),
                 },
             )
             _METRICS["requests_total{outcome=lockdown}"] += 1
@@ -775,6 +781,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "principal_id": auth_ctx.principal_id,
                 "request_id": request_id,
                 "decision_error": None,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
             }
             if _obs_cost is not None:
                 _obs_payload["cost_source"] = _obs_cost.source
@@ -811,6 +819,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "principal_id": auth_ctx.principal_id,
                 "request_id": request_id,
                 "decision_error": decision.decision_error,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
             }
             if _lo_cost is not None:
                 _lo_payload["cost_source"] = _lo_cost.source
@@ -866,6 +876,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "principal_id": auth_ctx.principal_id,
                 "request_id": request_id,
                 "decision_error": decision.decision_error,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
             }
             if _enf_allow_cost is not None:
                 _enf_allow_payload["cost_source"] = _enf_allow_cost.source
@@ -887,6 +899,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "principal_id": auth_ctx.principal_id,
                 "request_id": request_id,
                 "decision_error": decision.decision_error,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
             }
             if _enf_block_cost is not None:
                 _enf_block_payload["cost_source"] = _enf_block_cost.source
@@ -918,6 +932,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 "principal_id": auth_ctx.principal_id,
                 "request_id": request_id,
                 "decision_error": decision.decision_error,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
             }
             if _enf_appr_cost is not None:
                 _enf_appr_payload["cost_source"] = _enf_appr_cost.source

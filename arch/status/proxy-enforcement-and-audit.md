@@ -70,6 +70,8 @@ The event-schema contract is `schemas/audit_event.schema.json`. Required fields:
 
 **v0.3.0 cost fields.** When `cost_for_call()` resolves a price for the tool call being evaluated, the proxy additionally records `cost_source` (one of `"price_table"` / `"infracost_live"` / `"miss"`) and `cost_band` (`"high"` / `"medium"` / `"ceiling"`) in the audit event payload. These fields are present only when a price was prefetched (i.e., `cost_source != "miss"`); absent on calls where no cost mapping is registered. Operators can filter the audit log on `cost_source` to distinguish price-table-resolved calls from live Infracost fallbacks.
 
+**`canonical_tool_name` + `effective_tool_name` (v0.3.0)**: every audit event for a `tools/call` carries both fields. For native `aws_*_*` flows they're identical. For `call_aws` invocations (i.e., traffic from `awslabs/mcp/aws-api-mcp-server`), `canonical_tool_name == "call_aws"` and `effective_tool_name == "<resolved canonical>"` (e.g., `"aws_iam_PassRole"`). Operators searching the audit log by either name find the event. Both fields are declared as optional strings in `schemas/audit_event.schema.json`.
+
 ## Hash-chain canonicalization rule
 
 `tessera/audit/canonical_json.py` implements RFC 8785 JCS. Object keys are sorted lexicographically, no whitespace, `ensure_ascii=False`, integers serialize as integers (even if originally `float`), NaN/Infinity rejected with `ValueError`. The event hash is computed over `canonical_json({...event, eventHash: "", signature: ""})` — the empty `eventHash` and `signature` fields are zeroed before hashing so the hash includes itself by construction.

@@ -87,6 +87,8 @@ The match block runs three cheap filters (upstream, tool, intent-required) befor
 
 When no policy matches, the engine returns `Decision(default_action, "default", None)` where `default_action` is the engine's constructor argument, populated from `policies.default_action` in `tessera.yaml` (defaults to `block` in production; `tessera policy test` defaults to `allow` to keep fixture decks usable without explicit overrides).
 
+**`call_aws` reverse-resolution (v0.3.0)**: when an inbound `tool_call.name == "call_aws"` (i.e., the agent is using `awslabs/mcp/aws-api-mcp-server`), `tessera/policy/matchers.py` reverse-resolves `arguments.command` back to the canonical `aws_*_*` operation name via `cli_translator.from_call_aws`. Policies match against BOTH the literal `call_aws` and the resolved canonical, so policies authored against `aws_iam_PassRole` (the canonical name) still fire when the call arrives as `call_aws`. The resolved name is cached on `context["_effective_tool_name"]` and recorded in the audit event as `effective_tool_name`.
+
 The first-match-wins choice is deliberate. Combinator approaches (deny-overrides, permit-overrides, ordered fall-through) are common in policy engines and produce more expressive policy sets, but they require the operator to reason about interactions. First-match-wins with explicit `priority` is mechanical: the policy that fires is the one with the highest priority whose conditions are all true; the operator can read the YAMLs in priority order and predict the decision at a glance.
 
 ## Lockdown short-circuit

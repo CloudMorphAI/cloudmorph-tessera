@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi.responses import JSONResponse
@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # Header names AWS MCP service injects to signal service routing context.
 _AWS_VIA_HEADER = "aws:ViaAWSMCPService"
 _AWS_CALLED_VIA_HEADER = "aws:CalledViaAWSMCP"
+
+# The identifier for the official awslabs aws-api-mcp-server.
+_AWS_API_MCP_SERVER = "aws-api-mcp-server"
 
 
 class AWSMcpUpstream:
@@ -41,6 +44,14 @@ class AWSMcpUpstream:
         aws_endpoint_override: Optional endpoint override passed through to
             botocore (useful for testing against LocalStack).
         timeout_seconds: Per-request timeout in seconds (default 30).
+        aws_mcp_routing: Routing mode — ``"specific-first"`` (default, per Q2
+            locked decision 2026-05-16) or ``"call-aws-only"``.  Controls
+            fallback behaviour when ``to_call_aws`` returns None for an op.
+        aws_mcp_server: When set to ``"aws-api-mcp-server"``, the upstream
+            targets the official ``awslabs/mcp/aws-api-mcp-server`` and
+            canonical ops are wrapped via ``cli_translator.to_call_aws()``
+            before the SigV4 POST.  When ``None`` (default), pass through
+            unchanged (legacy direct-service routing).
     """
 
     def __init__(
@@ -51,6 +62,8 @@ class AWSMcpUpstream:
         aws_service: str = "aws-mcp",
         aws_endpoint_override: str | None = None,
         timeout_seconds: int = 30,
+        aws_mcp_routing: Literal["specific-first", "call-aws-only"] = "specific-first",
+        aws_mcp_server: str | None = None,
     ) -> None:
         self.name = name
         self.endpoint = endpoint
@@ -58,6 +71,8 @@ class AWSMcpUpstream:
         self.aws_service = aws_service
         self.aws_endpoint_override = aws_endpoint_override
         self.timeout_seconds = timeout_seconds
+        self.aws_mcp_routing = aws_mcp_routing
+        self.aws_mcp_server = aws_mcp_server
         self._client: Any = None
 
     async def __aenter__(self) -> AWSMcpUpstream:
@@ -83,8 +98,53 @@ class AWSMcpUpstream:
                 pass
         self._client = None
 
+    def _translate_call_aws_op(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Translate a canonical aws_*_* invocation into a call_aws-shaped request.
+
+        Called when the upstream targets ``aws-api-mcp-server``.  Invokes
+        ``cli_translator.to_call_aws()``.
+
+        When the translator returns ``None`` (unknown op):
+        - ``specific-first``: log WARNING and return ``args`` unchanged so the
+          caller can fall through to legacy direct-service routing.
+        - ``call-aws-only``: log ERROR (operator explicitly chose this mode but
+          the op isn't translatable) and still return ``args`` unchanged so the
+          call is attempted rather than hard-failing.
+
+        Returns:
+            Either ``{"tool": "call_aws", "command": "<cli string>"}`` when
+            translation succeeds, or the original ``args`` dict when it doesn't.
+        """
+        from tessera.integrations.aws import cli_translator  # noqa: PLC0415
+
+        result = cli_translator.to_call_aws(tool_name, args)
+        if result is not None:
+            return result
+
+        # Translation unknown — log and decide fallback path.
+        if self.aws_mcp_routing == "call-aws-only":
+            logger.error(
+                "event=cli_translator_unknown_op canonical=%s routing=call-aws-only "
+                "upstream=%s reason=op_not_translatable_but_mode_requires_it",
+                tool_name,
+                self.name,
+            )
+        else:
+            logger.warning(
+                "event=cli_translator_unknown_op canonical=%s routing=specific-first "
+                "upstream=%s reason=falling_through_to_legacy",
+                tool_name,
+                self.name,
+            )
+        return args
+
     async def forward(self, jsonrpc_body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         """POST *jsonrpc_body* through the AWS IAM streamable HTTP client.
+
+        When ``aws_mcp_server == "aws-api-mcp-server"``, the tools/call body is
+        pre-processed by ``_translate_call_aws_op`` before the SigV4 POST so
+        that canonical op names are mapped to the ``call_aws`` surface expected
+        by the official awslabs server.
 
         Returns:
             Parsed JSON-RPC response dict on success, or a ``JSONResponse``
@@ -96,9 +156,30 @@ class AWSMcpUpstream:
             logger.error("event=aws_upstream_not_initialized upstream=%s", self.name)
             return _aws_error(jsonrpc_body.get("id", 1), "AWS upstream not initialized")
 
+        # When targeting aws-api-mcp-server, translate canonical ops to call_aws.
+        body = jsonrpc_body
+        if self.aws_mcp_server == _AWS_API_MCP_SERVER:
+            method = body.get("method", "")
+            params = body.get("params") or {}
+            if method == "tools/call" and isinstance(params, dict):
+                tool_name = params.get("name", "")
+                tool_args: dict[str, Any] = params.get("arguments") or {}
+                if tool_name and tool_name.startswith("aws_"):
+                    translated = self._translate_call_aws_op(tool_name, tool_args)
+                    # translated is either {"tool": "call_aws", "command": ...} or original args
+                    if "tool" in translated and translated.get("tool") == "call_aws":
+                        body = {
+                            **body,
+                            "params": {
+                                **params,
+                                "name": "call_aws",
+                                "arguments": {"command": translated["command"]},
+                            },
+                        }
+
         try:
             response: httpx.Response = await asyncio.wait_for(
-                self._client.post(self.endpoint, json=jsonrpc_body),
+                self._client.post(self.endpoint, json=body),
                 timeout=self.timeout_seconds,
             )
         except TimeoutError:

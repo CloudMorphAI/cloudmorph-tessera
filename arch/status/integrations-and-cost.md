@@ -53,6 +53,20 @@ The `forward(body)` method:
 
 The model validator in `UpstreamConfig._require_aws_region_for_aws_mcp` rejects an `aws_mcp` upstream that omits `aws_region` — required for SigV4 region scoping.
 
+## AWS MCP translation layer (v0.3.0)
+
+**Purpose**: bridge between Tessera's canonical tool naming (`aws_*_*`) and the official `awslabs/mcp/aws-api-mcp-server` which exposes a single `call_aws` tool accepting a CLI-string argument. Without this layer, policies authored against `aws_iam_PassRole` (canonical name) cannot fire when the agent drives `awslabs/mcp/aws-api-mcp-server` and sends `call_aws`.
+
+**Forward path**: `AWSMcpUpstream._translate_call_aws_op(tool_name, args)` calls `tessera/integrations/aws/cli_translator.py:to_call_aws(canonical, args)` which serializes the operation as `{"tool": "call_aws", "command": "<aws cli string>"}`. This translation fires when the upstream's config has `aws_mcp_server: aws-api-mcp-server`. For upstreams without that config field, calls pass through as canonical names unchanged.
+
+**Reverse path**: `tessera/policy/matchers.py` reverse-resolves the `args.command` CLI string back to the canonical `aws_*_*` name via `cli_translator.from_call_aws(command)`. Policies match against BOTH the literal `call_aws` name AND the resolved canonical, so a policy matching `aws_iam_PassRole` still fires when the call arrives as `call_aws`. The resolved name is cached in `context["_effective_tool_name"]` so the engine, audit emitter, and any downstream consumer all see the same resolved canonical.
+
+**Config**: `upstream.aws_mcp_routing` accepts `specific-first` or `call-aws-only`. Default is `specific-first` (per Q2 locked decision): the proxy first tries a service-specific tool if the upstream exposes one; only falls back to `call_aws` if no specific tool matches. `call-aws-only` always routes through the single `call_aws` tool regardless.
+
+**Handler registry**: `cli_translator.py` ships 25 explicit handlers covering the priv-esc-relevant and cost-sensitive surface (all IAM mutation ops, EC2 RunInstances, S3 bucket-policy ops, KMS key operations, RDS cluster/instance mutations, Lambda invoke, Bedrock invoke). A generic fallback handles the long tail by deriving `aws <service> <kebab-verb>` from the canonical name — e.g., `aws_cloudformation_CreateStack` → `aws cloudformation create-stack`.
+
+**Audit linkage**: every `tools/call` audit event carries both `canonical_tool_name` (the literal inbound name — `"call_aws"` for AWS API MCP server traffic, `"aws_iam_PassRole"` for direct-canonical traffic) and `effective_tool_name` (the resolved canonical, or identical to canonical when no reverse-resolution was needed). Operators can search audit logs by either name and find the event.
+
 ## Blast-radius: production boto3 evaluator
 
 `tessera/integrations/aws/blast_radius.py:BlastRadiusBackend` is the live-AWS-calls counterpart to the in-test stub in `tessera-intelligence/tests/blast_radius_stub.py`. The two implementations share the algorithm contract (described in `tessera-intelligence/arch/status/blast-radius.md`); they differ in how they resolve principal counts:

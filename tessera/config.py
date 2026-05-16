@@ -122,6 +122,14 @@ class UpstreamConfig(BaseModel):
     aws_region: str | None = None
     aws_service: str = "aws-mcp"
     aws_endpoint_override: str | None = None
+    # v0.3.0: AWS MCP translation routing (Batch 3, Q2 locked 2026-05-16)
+    # "specific-first" (default): use per-service MCP tool when official_mcp_tool_name is set,
+    # fall back to call_aws for ops that only have generic handlers.
+    # "call-aws-only": always route through call_aws; skip service-specific routing.
+    aws_mcp_routing: Literal["specific-first", "call-aws-only"] = "specific-first"
+    # When set to "aws-api-mcp-server", enable call_aws translation before SigV4 POST.
+    # When None (default), pass through unchanged (legacy direct-service routing).
+    aws_mcp_server: str | None = None
 
     @model_validator(mode="after")
     def _require_aws_region_for_aws_mcp(self) -> UpstreamConfig:

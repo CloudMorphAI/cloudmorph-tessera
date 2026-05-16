@@ -47,6 +47,8 @@ class InfracostQuery:
     attributes: dict[str, str]
     confidence_band: Literal["high", "medium", "ceiling"] = "high"
     args_used: list[str] = field(default_factory=list)
+    official_mcp_tool_name: str | None = None
+    official_mcp_server: str | None = None
 
 
 # Extended mappings populated at runtime via load_extended_mappings().
@@ -290,12 +292,16 @@ def load_extended_mappings(cache_dir: Path) -> int:
                 _attrs: dict[str, str] = {str(k): str(v) for k, v in (entry.get("attributes") or {}).items()}
                 _band: Literal["high", "medium", "ceiling"] = entry.get("confidence_band", "high")
                 _args_used: list[str] = list(entry.get("args_used", []))
+                _official_mcp_tool_name: str | None = entry.get("official_mcp_tool_name") or None
+                _official_mcp_server: str | None = entry.get("official_mcp_server") or None
 
                 def _make_fn(
                     svc: str,
                     ats: dict[str, str],
                     bd: Literal["high", "medium", "ceiling"],
                     au: list[str],
+                    omtn: str | None,
+                    oms: str | None,
                 ) -> Callable[[str, dict[str, Any]], InfracostQuery | None]:
                     def _fn(tn: str, args: dict[str, Any]) -> InfracostQuery | None:
                         region = _get_region(args)
@@ -305,10 +311,12 @@ def load_extended_mappings(cache_dir: Path) -> int:
                             attributes=ats,
                             confidence_band=bd,
                             args_used=au,
+                            official_mcp_tool_name=omtn,
+                            official_mcp_server=oms,
                         )
                     return _fn
 
-                _extended_mappings[str(tool_name)] = _make_fn(_service, _attrs, _band, _args_used)
+                _extended_mappings[str(tool_name)] = _make_fn(_service, _attrs, _band, _args_used, _official_mcp_tool_name, _official_mcp_server)
                 loaded += 1
         except Exception as exc:  # noqa: BLE001
             logger.warning("extended_mapping_load_failed path=%s error=%s", yaml_path, exc)

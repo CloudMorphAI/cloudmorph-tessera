@@ -53,6 +53,14 @@
         "cost_band": {
           "description": "Producer-declared confidence band for the cost estimate (high/medium/ceiling). Absent when cost_source is absent.",
           "type": "string"
+        },
+        "canonical_tool_name": {
+          "description": "The literal tool name as sent by the agent in the inbound JSON-RPC tools/call request. For native aws_*_* flows this equals effective_tool_name. For call_aws flows this is 'call_aws'.",
+          "type": "string"
+        },
+        "effective_tool_name": {
+          "description": "The resolved canonical tool name after reverse-resolution (v0.3.0). For call_aws invocations this is the aws_*_* name resolved from args.command by cli_translator.from_call_aws. Identical to canonical_tool_name for all non-call_aws flows.",
+          "type": "string"
         }
       },
       "additionalProperties": true
