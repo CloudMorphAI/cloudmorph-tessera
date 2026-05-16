@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "github": {
+      "url": "http://localhost:8080/mcp/github",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
