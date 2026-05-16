@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+
+## [0.5.0] — 2026-05-16
+
+### Added — 6 new bundled OSS policies (Batch 8)
+
+Out-of-the-box defensive policy bench expanded from 18 to **24 bundled policies**.
+New entries in `tessera/policies_default/`:
+
+- **`require-intent.yaml`** (priority 85, `log_only`) — records when
+  `_meta.tessera_intent` is explicitly null. (Block-on-missing-intent requires
+  a future schema enhancement; the YAML comments the limitation.)
+- **`business-hours-only.yaml`** (priority 75, `block`) — blocks `write.create` /
+  `write.update` / `write.delete` / `execute.deploy` outside 9am–5pm US Pacific.
+- **`oversized-payload.yaml`** (priority 70, `block`) — blocks any args whose
+  JSON serializes > 64 KB via `arg_size_greater_than`.
+- **`tool-allowlist.yaml`** (priority 65, `block`) — blocks any tool not in the
+  shipped allowlist (read-only-by-default starter set; operators override).
+- **`prompt-injection-heuristic.yaml`** (priority 80, `block`) — regex bench
+  for common prompt-injection signatures (`(?i)(ignore previous|disregard above|system: you are now|jailbreak)`).
+- **`non-prod-only.yaml`** (priority 60, `block`) — counterpoint to
+  `prod-protection`: blocks writes on resources tagged `environment != prod`.
+
+### Added — 2 new conditions
+
+- **`arg_path_matches_regex`** — dot-path arg access for nested structures
+  (e.g., `MetadataOptions.HttpTokens`). Reuses the regex pre-compile pipeline
+  from v0.4.0.
+- **`sts_chain_depth_greater_than`** — counts AWS assume-role chain depth from
+  `_meta.aws_session_chain` (list). Fail-closed don't-block when meta absent.
+
+### Changed — proxy method evaluation
+
+- `resources/read` and `sampling/createMessage` are now **engine-evaluable**
+  (gated by new config flag `policies.engine_eval_data_methods: bool = false`).
+  When opted in, those methods flow through `engine.evaluate()` with a
+  synthesized tool_call context. Default `false` for backward compat with
+  v0.4.x.
+
 ## [0.4.0] — 2026-05-16
 
 ### Added — Observability subsystem (Batch 4)
