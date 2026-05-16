@@ -163,11 +163,12 @@ async def test_data_version_cache():
 
 @pytest.mark.asyncio
 async def test_fail_closed_on_missing_mapping():
-    """map_request returns None for unknown tools; cost_cache stays empty."""
-    from tessera.cost import map_request
+    """cost_for_call returns source=miss for unknown tools (post v0.4.0 — legacy map_request removed)."""
+    from tessera.cost import cost_for_call
 
-    query = map_request("aws_unknown_OperationXYZ", {"region": "us-east-1"})
-    assert query is None
+    result = cost_for_call("aws_unknown_OperationXYZ", {"region": "us-east-1"})
+    assert result.source == "miss"
+    assert result.price_usd is None
 
 
 @pytest.mark.asyncio

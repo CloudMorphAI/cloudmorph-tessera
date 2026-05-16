@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.4.0] — 2026-05-16
+
+### Added — Observability subsystem (Batch 4)
+
+- New `tessera.observability` subpackage:
+  - `metrics.py`: Prometheus histograms with labels (upstream, mode, cost_source, action):
+    `tessera_decision_latency_seconds`, `tessera_audit_emit_latency_seconds`,
+    `tessera_blast_radius_prefetch_latency_seconds`, `tessera_cost_prefetch_latency_seconds`
+    + counters `tessera_decisions_total`, `tessera_audit_emit_failures_total`.
+    Stub fallback when `prometheus_client` missing (zero-cost no-op).
+  - `tracing.py`: OpenTelemetry integration. **OFF by default per Q3 lock** —
+    `TESSERA_OTEL_ENABLED=1` to enable. `@trace()` decorator is zero-cost when
+    disabled (sync + async variants). `init_tracer()` from lifespan startup;
+    OTLP exporter via `TESSERA_OTEL_ENDPOINT`.
+  - `events.py`: Protocol-based `OnDecision` / `OnAuditEmit` hook registry.
+    Hooks fire async fire-and-forget; failures logged + swallowed.
+- `proxy.py` instrumented: latency histograms wrap policy.evaluate, cost prefetch,
+  blast-radius prefetch, audit emit. `fire_on_decision` runs registered hooks
+  after every decision.
+- Audit event payload now carries `conversation_id` (read from
+  `_meta.tessera_intent.conversation_id` or `_meta.conversation_id`); declared
+  in `schemas/audit_event.schema.json`.
+- New `[observability]` extra: `prometheus_client>=0.20.0`,
+  `opentelemetry-sdk>=1.20.0`, `opentelemetry-exporter-otlp-proto-http>=1.20.0`.
+
+### Performance — hot-path correctness (Batch 4)
+
+- **JWKS pre-warm**: lifespan startup calls `prewarm_jwks_cache()` so the first
+  request after cache rotation no longer blocks the event loop on a sync
+  `httpx.get`. Failures swallowed + WARNING logged; on-demand fetch fallback.
+- **Regex pre-compile at load**: `validate_pattern()` returns the compiled
+  `regex.Pattern`; the loader stores it on `Policy` / `MatchSpec`. Per-request
+  evaluators reuse the compiled object instead of re-compiling on every match.
+- **Condition cost-tier ordering**: `loader._sort_conditions` sorts each policy's
+  `when` list cheap-first (arg_equals / tool_name_in / arg_in_set before regex
+  before semantic conditions before blast_radius / predicted_cost). Composite
+  `any_of` / `none_of` sorts recursively. Cuts short-circuit time when the
+  policy load includes mixed-cost conditions.
+
+### Added — OAuth surface (Batch 9)
+
+- `POST /revoke` endpoint (RFC 7009): validates HTTP Basic auth, marks token
+  revoked in `InMemoryRevocationStore`, returns 200 regardless per spec §2.2.
+  `RevocationStore` Protocol for production Redis/DDB swap.
+- `POST /introspect` now Ed25519/RSA signature-verifies the inbound JWT against
+  the configured JWKS cache. Verification failure returns `{"active": false}` +
+  emits `event=oauth_introspect_sigverify_failed`. Revoked tokens via the new
+  store also return `{"active": false}`.
+- `POST /register` per-IP token-bucket rate limiter (default 10/min,
+  configurable via `TESSERA_DCR_RATE_LIMIT`). Returns 429 + `Retry-After`
+  header on exceed. `RateLimiter` Protocol for production Redis swap.
+
+### Added — Tooling (Batch 9)
+
+- `scripts/bump_version.py` — single-command version bump across the 5 canonical
+  sites (pyproject + `__init__.py` + README + INSTALL + CHANGELOG) with semver
+  validation, downgrade refusal, `--dry-run`, `--validate` modes.
+- `tessera/_version.py` — reads version from installed package metadata via
+  `importlib.metadata.version`; literal fallback for dev environments.
+  `tessera/__init__.py` re-exports from `_version.py` (the literal in
+  `_version.py` is kept in sync by `scripts/bump_version.py`).
+
+### Added — Benchmarks (Batch 6)
+
+- New `benchmarks/` directory:
+  - `decision_latency.py` (pytest-benchmark): 7 microbenches against the 18-policy
+    default set. Measured: **p50 15–72µs** (well under the 500µs target).
+  - `blast_radius_latency.py` (standalone): prefetch ON vs OFF, 100ms simulated
+    IAM RTT. Measured: **~797× speedup** (0.1ms cache-hit vs 100.6ms inline).
+  - `rps_sustained.py` (locust): 5-step ramp (10/50/100/200/500 concurrent
+    users), 60s windows. Founder-run pre-tag for publishable RPS numbers.
+  - `README.md` + `results/v0.4.0.md`.
+- New `.github/workflows/bench.yml`: runs decision_latency + blast_radius on
+  every tagged release, commits results to `benchmarks/results/<tag>.md`.
+
+### Fixed — Code quality (Batch 9)
+
+- **mypy clean**: 49 errors → **0**. Fixes include explicit `FastAPI` typing
+  for `oauth_rs.py` decorators (closes 4 untyped-decorator), `isinstance` loop
+  for `anthropic` SDK content union (closes 9 union-attr), `dict[str, Any]`
+  generic args throughout `tessera/llm/*.py`, narrowed `errors_raw` for
+  `len(errors)` in `intelligence/client.py`, and `[[tool.mypy.overrides]]`
+  blocks for optional-extra SDK modules. Added `types-PyYAML` +
+  `types-python-jose` to `[dev]` extra.
+- **ruff clean**: 11 deferred errors → **0**. F841 unused-locals renamed `_`,
+  N806/N818 renames, ASYNC240 `# noqa` on test-only sync Path calls, SIM117
+  merged nested `with` statements, RET504 collapsed returns, C408 literal.
+
+### Removed (BREAKING)
+
+- **`tessera.cost.aws_mapping`** is **removed** (per Q1 locked decision: deprecated
+  in v0.3.0 with `DeprecationWarning`, removed in v0.4.0). Customers must migrate
+  to `tessera.cost.cost_for_call()` (introduced in v0.3.0). The `InfracostQuery`
+  dataclass moved to `tessera.cost.types` (re-exported via `tessera.cost`).
+  `_BUILTIN_MAPPING` canonical-name list moved to data-only
+  `tessera.cost._aws_canonical_ops.BUILTIN_AWS_OPS`.
+
+### Architecture docs
+
+- `arch/status/proxy-enforcement-and-audit.md`: observability section
+  documenting metrics + tracing + events + the OTel-off-by-default contract.
+- `arch/status/policy-engine.md`: regex pre-compile + condition cost-tier
+  ordering notes; documents the call_aws reverse-resolution dispatch.
+
 ## [0.3.0] - UNRELEASED
 
 ### Added — Unified cost API (Batch 2)
