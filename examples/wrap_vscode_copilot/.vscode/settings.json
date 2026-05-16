@@ -1,0 +1,24 @@
+{
+  // VS Code 1.99+ workspace-level MCP server config.
+  // This setting is recognised by GitHub Copilot Chat, Continue, Cline, and any
+  // VS Code extension that consumes the shared MCP server registry.
+  //
+  // ${env:TESSERA_BEARER_TOKEN} is expanded by VS Code at startup from the
+  // environment of the shell that launched VS Code.  Set the variable before
+  // opening VS Code:
+  //   export TESSERA_BEARER_TOKEN="tk_vsc_$(openssl rand -hex 16)"
+  //   code .
+  //
+  // For older VS Code preview builds of Copilot Chat (pre-1.99) the extension-
+  // specific key was "github.copilot.chat.mcp.servers".  Use "mcp.servers" for
+  // VS Code 1.99 and later.
+  "mcp.servers": {
+    "tessera-github": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp/github",
+      "headers": {
+        "Authorization": "Bearer ${env:TESSERA_BEARER_TOKEN}"
+      }
+    }
+  }
+}
