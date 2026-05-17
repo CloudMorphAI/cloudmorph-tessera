@@ -243,6 +243,48 @@ class StsChainDepthGreaterThan(BaseCondition):
     threshold: int
 
 
+# ── v0.6.0 cost-combinations condition types ─────────────────────────────────
+
+
+class CombinationAggregateCostUsdGt(BaseCondition):
+    """Condition: aggregate projected cost across an active combination chain exceeds threshold.
+
+    Queries the CombinationTracker for active chains in (tenant, scope). If
+    combination_id is set, checks just that combination. If not set, evaluates across
+    ALL active chains in the scope and triggers if ANY exceeds the threshold.
+    """
+
+    condition: Literal["combination_aggregate_cost_usd_gt"] = "combination_aggregate_cost_usd_gt"
+    threshold: float
+    combination_id: str | None = None
+
+
+class CombinationOpsCountGt(BaseCondition):
+    """Condition: number of observed ops in an active chain exceeds threshold."""
+
+    condition: Literal["combination_ops_count_gt"] = "combination_ops_count_gt"
+    threshold: int
+    combination_id: str | None = None
+
+
+class CombinationWindowSecondsLt(BaseCondition):
+    """Condition: elapsed window of an active chain is less than threshold.
+
+    Use to detect burst behaviour (many ops in a short interval).
+    """
+
+    condition: Literal["combination_window_seconds_lt"] = "combination_window_seconds_lt"
+    threshold: float
+    combination_id: str
+
+
+class CombinationIdMatches(BaseCondition):
+    """Condition: an active chain exists for the given combination_id in this scope."""
+
+    condition: Literal["combination_id_matches"] = "combination_id_matches"
+    combination_id: str
+
+
 # ── Discriminated union ──────────────────────────────────────────────────────
 
 ConditionType = Annotated[
@@ -268,7 +310,11 @@ ConditionType = Annotated[
     | DataVolume
     | CumulativeSpendToday
     | ArgPathMatchesRegex
-    | StsChainDepthGreaterThan,
+    | StsChainDepthGreaterThan
+    | CombinationAggregateCostUsdGt
+    | CombinationOpsCountGt
+    | CombinationWindowSecondsLt
+    | CombinationIdMatches,
     Field(discriminator="condition"),
 ]
 

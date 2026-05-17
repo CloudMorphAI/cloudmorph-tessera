@@ -51,6 +51,10 @@ from tessera.policy.schema import (
     ArgPathMatchesRegex,
     ArgSizeGreaterThan,
     BlastRadius,
+    CombinationAggregateCostUsdGt,
+    CombinationIdMatches,
+    CombinationOpsCountGt,
+    CombinationWindowSecondsLt,
     ConditionType,
     CumulativeSpendToday,
     DataVolume,
@@ -706,6 +710,84 @@ def _evaluate_sts_chain_depth_greater_than(cond: StsChainDepthGreaterThan, conte
     return len(chain) > cond.threshold
 
 
+# ── v0.6.0 combination evaluators ────────────────────────────────────────────
+
+
+def _get_combination_tracker(context: dict[str, Any]):
+    """Locate the CombinationTracker. Prefers context["combination_tracker"];
+    falls back to the module-level singleton in tessera.cost.combinations."""
+    tracker = context.get("combination_tracker")
+    if tracker is not None:
+        return tracker
+    try:
+        from tessera.cost.combinations import get_global_tracker
+        return get_global_tracker()
+    except ImportError:
+        return None
+
+
+def _scope_keys(context: dict[str, Any]) -> tuple[str, str]:
+    """Extract (tenant_id, scope_id) from context, with sane defaults."""
+    tenant = context.get("tenant_id") or context.get("scope") or "default"
+    scope = context.get("scope_id") or context.get("scope") or "default"
+    return tenant, scope
+
+
+def _evaluate_combination_aggregate_cost_usd_gt(
+    cond: CombinationAggregateCostUsdGt, context: dict[str, Any]
+) -> bool:
+    tracker = _get_combination_tracker(context)
+    if tracker is None:
+        return False
+    tenant, scope = _scope_keys(context)
+    if cond.combination_id is not None:
+        cost = tracker.aggregate_cost_usd(tenant, scope, cond.combination_id)
+        return cost > cond.threshold
+    # No combination_id: check every active chain in scope
+    for chain in tracker.all_active_chains(tenant_id=tenant, scope_id=scope):
+        if chain.aggregate_cost_usd > cond.threshold:
+            return True
+    return False
+
+
+def _evaluate_combination_ops_count_gt(
+    cond: CombinationOpsCountGt, context: dict[str, Any]
+) -> bool:
+    tracker = _get_combination_tracker(context)
+    if tracker is None:
+        return False
+    tenant, scope = _scope_keys(context)
+    if cond.combination_id is not None:
+        return tracker.ops_count(tenant, scope, cond.combination_id) > cond.threshold
+    for chain in tracker.all_active_chains(tenant_id=tenant, scope_id=scope):
+        if chain.ops_count() > cond.threshold:
+            return True
+    return False
+
+
+def _evaluate_combination_window_seconds_lt(
+    cond: CombinationWindowSecondsLt, context: dict[str, Any]
+) -> bool:
+    tracker = _get_combination_tracker(context)
+    if tracker is None:
+        return False
+    tenant, scope = _scope_keys(context)
+    w = tracker.window_seconds_elapsed(tenant, scope, cond.combination_id)
+    if w is None:
+        return False
+    return w < cond.threshold
+
+
+def _evaluate_combination_id_matches(
+    cond: CombinationIdMatches, context: dict[str, Any]
+) -> bool:
+    tracker = _get_combination_tracker(context)
+    if tracker is None:
+        return False
+    tenant, scope = _scope_keys(context)
+    return tracker.matches_combination_id(tenant, scope, cond.combination_id)
+
+
 # ── Dispatch table (PF-2 refactor) ───────────────────────────────────────────
 
 _DISPATCH: dict[type, Callable[..., bool]] = {
@@ -732,6 +814,10 @@ _DISPATCH: dict[type, Callable[..., bool]] = {
     CumulativeSpendToday: _evaluate_cumulative_spend_today,
     ArgPathMatchesRegex: _evaluate_arg_path_matches_regex,
     StsChainDepthGreaterThan: _evaluate_sts_chain_depth_greater_than,
+    CombinationAggregateCostUsdGt: _evaluate_combination_aggregate_cost_usd_gt,
+    CombinationOpsCountGt: _evaluate_combination_ops_count_gt,
+    CombinationWindowSecondsLt: _evaluate_combination_window_seconds_lt,
+    CombinationIdMatches: _evaluate_combination_id_matches,
 }
 
 
