@@ -85,7 +85,14 @@ class StreamableHttpUpstream:
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def __aenter__(self) -> StreamableHttpUpstream:
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        # MCP 2025-06-18 spec: client MUST declare Accept for both shapes since
+        # initialize returns application/json and tools/call returns text/event-stream.
+        # Upstreams (e.g. awslabs.aws-api-mcp-server) enforce this and return 406
+        # if only one content-type is listed.
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
         if self.auth_header:
             headers["Authorization"] = self.auth_header
         self._client = httpx.AsyncClient(
