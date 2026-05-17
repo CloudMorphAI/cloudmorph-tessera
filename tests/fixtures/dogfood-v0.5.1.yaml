@@ -1,0 +1,35 @@
+# dogfood-v0.5.1.yaml — Tessera dogfood config for v0.5.1 re-test
+# Used to verify mcp_streamable_http upstream against awslabs.aws-api-mcp-server.
+# Policies: S3 block (both canonical + call_aws variant) + default allow for all else.
+# Start with:
+#   TESSERA_BEARER_TOKENS="alice:tk_dogfood_v051_abcdef0123" \
+#     tessera serve --config tests/fixtures/dogfood-v0.5.1.yaml --bind 0.0.0.0:9000
+
+listen:
+  host: 0.0.0.0
+  port: 9000
+
+auth:
+  type: bearer
+
+audit:
+  sink: sqlite
+  path: /tmp/tessera-dogfood-v051-audit.db   # absolute path — relative paths fail
+  also_stdout: false
+
+policies:
+  dir: /tmp/tessera-dogfood-v051-policies     # populated by test script via symlinks
+  reload: watch
+  mode: enforcement
+  default_action: allow                       # non-S3 calls pass through to AWS
+
+upstreams:
+  - name: aws
+    kind: mcp_streamable_http
+    url: http://127.0.0.1:8000
+    # no auth_header — server runs with AUTH_TYPE=no-auth
+    session_timeout_s: 300
+    request_timeout_s: 30                     # longer for real AWS roundtrips
+
+deployment_id: dogfood-v051
+log_level: INFO

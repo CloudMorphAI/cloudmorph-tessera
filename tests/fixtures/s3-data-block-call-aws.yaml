@@ -1,0 +1,23 @@
+id: s3-data-block-call-aws
+name: S3 Data — Block via call_aws CLI passthrough
+description: |
+  Companion to s3-data-block. The awslabs aws-api-mcp-server exposes a
+  generic "call_aws" tool that wraps arbitrary `aws ...` CLI invocations,
+  which lets the agent issue any S3 op as an opaque CLI string.
+  This policy catches those by matching on the `command` argument.
+priority: 95
+
+match:
+  upstream: "*"
+  tool: "call_aws"
+
+when:
+  - condition: arg_matches_regex
+    arg: command
+    pattern: "^aws\\s+s3(api|control)?\\s+"
+
+action: block
+reason: |
+  S3 access via MCP call_aws is denied by policy s3-data-block-call-aws.
+  The MCP agent is not permitted to read or write S3 data, even through
+  generic CLI passthrough.

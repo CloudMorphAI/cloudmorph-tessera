@@ -259,6 +259,69 @@ service API calls during your evaluation period.
 
 ---
 
+## FastMCP Streamable-HTTP MCP Servers
+
+Tessera v0.5.1 adds `kind: mcp_streamable_http` for MCP servers that implement the
+MCP 2025-06-18 streamable-HTTP transport — including `awslabs.aws-api-mcp-server` and
+any server built with the FastMCP framework.
+
+### When to use which upstream kind
+
+| Kind | Use case |
+|---|---|
+| `bearer` (default) | Plain HTTP JSON-RPC servers that accept a POST and return JSON directly (no session handshake, no SSE). |
+| `mcp_streamable_http` | FastMCP servers: `awslabs.aws-api-mcp-server`, Anthropic example MCP servers, community FastMCP servers. Handles `Mcp-Session-Id` handshake and SSE response streams. |
+| `aws_mcp` | AWS-hosted MCP service endpoints behind IAM SigV4 signing (e.g. `mcp.bedrock.us-east-1.amazonaws.com`). Requires the `[aws]` extra. |
+
+### tessera.yaml configuration
+
+```yaml
+upstreams:
+  - name: awslabs_local
+    kind: mcp_streamable_http
+    url: http://127.0.0.1:8000
+    # optional — omit when AUTH_TYPE=no-auth
+    # auth_header: "Bearer <token>"
+    session_timeout_s: 300   # optional, default 300
+    request_timeout_s: 10    # optional, default 10
+```
+
+The `auth_header` field carries the full Authorization header value (e.g.
+`"Bearer mytoken"`). Omit it entirely for unauthenticated local servers
+(`AUTH_TYPE=no-auth`).
+
+### Starting awslabs.aws-api-mcp-server in streamable-http mode
+
+```bash
+pip install awslabs.aws-api-mcp-server
+AWS_API_MCP_TRANSPORT=streamable-http AUTH_TYPE=no-auth AWS_REGION=us-east-1 \
+  awslabs.aws-api-mcp-server
+# Binds on 127.0.0.1:8000 by default
+```
+
+Then point Tessera at it:
+
+```yaml
+upstreams:
+  - name: aws
+    kind: mcp_streamable_http
+    url: http://127.0.0.1:8000
+```
+
+### Known limits
+
+- **One session per upstream URL** — Tessera maintains one `Mcp-Session-Id` per
+  upstream name. Concurrent tenants share the session. This is safe for stateless
+  MCP servers (like `aws-api-mcp-server`) but may not be correct for session-stateful
+  servers in future MCP revisions.
+- **No session resumption across restarts** — The session cache is in-process memory.
+  A Tessera restart triggers a fresh `initialize` handshake on the next call.
+- **SSE notifications discarded** — SSE events without an `id` matching the request
+  (i.e. MCP notifications) are logged at DEBUG level and dropped. This is correct for
+  `tools/call` traffic; future MCP notification subscription support is v0.6+ work.
+
+---
+
 ## Verifying the connection
 
 ```bash

@@ -1,0 +1,20 @@
+id: s3-data-block
+name: S3 Data — Block All Operations
+description: |
+  Block every canonical aws_s3_* / aws_s3api_* / aws_s3control_* MCP tool.
+  This is the broad-deny half. Companion policy s3-data-block-call-aws
+  covers the call_aws CLI passthrough.
+
+  To relax later: fork this policy and exempt specific buckets, or change
+  `action: block` to `action: require_approval`.
+priority: 95
+
+match:
+  upstream: "*"
+  tool_pattern: "^(aws_s3_.+|aws_s3api_.+|aws_s3control_.+)$"
+
+action: block
+reason: |
+  S3 access via MCP is denied by policy s3-data-block. The MCP agent is
+  not permitted to read or write S3 data. If you need this operation,
+  perform it from a human-operator session — not from the AI agent.

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.5.1] - 2026-05-17
+
+### Added
+- `kind: mcp_streamable_http` upstream. Supports FastMCP streamable-HTTP transport
+  with session-id handshake and SSE response parsing. Required for proxying in front
+  of awslabs.aws-api-mcp-server, Anthropic example MCP servers, and any FastMCP-based
+  community MCP server. The existing `kind: bearer` upstream continues to work for
+  plain HTTP JSON-RPC servers; no behavior change for existing configs.
+
+### Tested against
+- awslabs.aws-api-mcp-server v0.1.2 local in streamable-http mode
+- Real AWS account 237509402889, multiple services: S3 (block path), EC2 / STS / IAM /
+  Amplify (allow + forward path)
+- Audit chain integrity preserved across all 12 test scenarios
+
+### Internal
+- New `tessera/integrations/streamable_http/upstream.py` — `StreamableHttpUpstream` class
+  registered in `proxy._forward_upstream` match block alongside `aws_mcp` and `bearer`.
+- `UpstreamConfig` gains three new optional fields: `auth_header`, `session_timeout_s`,
+  `request_timeout_s`. No changes to existing config parsing.
+- No changes to public `tessera` API surface (`IntelligenceClient`, `LicenseValidator`,
+  `PolicyEngine`, `AuditEmitter` untouched).
+
 ## [0.5.0] — 2026-05-16
 
 ### Added — 6 new bundled OSS policies (Batch 8)
