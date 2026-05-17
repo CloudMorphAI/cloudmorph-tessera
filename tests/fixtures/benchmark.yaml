@@ -1,0 +1,36 @@
+# tests/fixtures/benchmark.yaml — Tessera benchmark config for the v0.5.x suite.
+#
+# Used by tests/bench-0{1..5}*.{sh,py}. Boot order (run-all-benchmarks.sh):
+#   1. AWS MCP server  : awslabs.aws-api-mcp-server  on 127.0.0.1:8000
+#   2. Tessera         : tessera serve --config tests/fixtures/benchmark.yaml
+#
+# Bind to 0.0.0.0:9000 to keep Windows DNS happy when shells outside WSL hit
+# the loopback. Bench drivers all dial 127.0.0.1:9000 — single-host loopback.
+
+listen:
+  host: 0.0.0.0
+  port: 9000
+
+auth:
+  type: bearer
+
+audit:
+  sink: sqlite
+  path: /tmp/tessera-bench-audit.db   # absolute path — relative paths fail loader
+  also_stdout: false
+
+policies:
+  dir: /mnt/c/Users/found/Desktop/CloudMorph/cloudmorph-tessera/tests/fixtures/benchmark-policies
+  reload: none
+  mode: enforcement
+  default_action: allow   # non-S3 calls pass through (sts/ec2/iam/amplify)
+
+upstreams:
+  - name: aws
+    kind: mcp_streamable_http
+    url: http://127.0.0.1:8000
+    session_timeout_s: 300
+    request_timeout_s: 30
+
+deployment_id: bench-v0.5.1
+log_level: WARNING

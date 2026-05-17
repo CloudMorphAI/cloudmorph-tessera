@@ -1,0 +1,171 @@
+{
+  "benchmark": "bench-05-multi-service-3way",
+  "tessera_version": "0.5.1",
+  "aws_account": "237509402889",
+  "aws_region": "us-east-1",
+  "services": {
+    "sts": {
+      "cli_command": "aws sts get-caller-identity",
+      "direct_aws_cli": {
+        "runs_ms": [
+          1889.602,
+          1584.016,
+          1814.59
+        ],
+        "p50_ms": 1814.59,
+        "skipped": null
+      },
+      "direct_mcp": {
+        "runs_ms": [
+          1173.561,
+          1061.319,
+          1117.482
+        ],
+        "p50_ms": 1117.482,
+        "skipped": null
+      },
+      "via_tessera_mcp": {
+        "runs_ms": [
+          1070.845,
+          1381.429,
+          1315.907
+        ],
+        "p50_ms": 1315.907,
+        "skipped": null
+      },
+      "tessera_overhead_p50_ms": 198.425
+    },
+    "ec2": {
+      "cli_command": "aws ec2 describe-regions --region us-east-1",
+      "direct_aws_cli": {
+        "runs_ms": [
+          1820.357,
+          1989.175,
+          2018.776
+        ],
+        "p50_ms": 1989.175,
+        "skipped": null
+      },
+      "direct_mcp": {
+        "runs_ms": [
+          1511.842,
+          1164.364,
+          1371.606
+        ],
+        "p50_ms": 1371.606,
+        "skipped": null
+      },
+      "via_tessera_mcp": {
+        "runs_ms": [
+          1227.654,
+          1386.201,
+          1169.555
+        ],
+        "p50_ms": 1227.654,
+        "skipped": null
+      },
+      "tessera_overhead_p50_ms": -143.952
+    },
+    "iam": {
+      "cli_command": "aws iam list-account-aliases",
+      "direct_aws_cli": {
+        "runs_ms": [
+          1674.053,
+          1660.627,
+          1659.135
+        ],
+        "p50_ms": 1660.627,
+        "skipped": null
+      },
+      "direct_mcp": {
+        "runs_ms": [
+          1127.757,
+          1123.964,
+          1123.535
+        ],
+        "p50_ms": 1123.964,
+        "skipped": null
+      },
+      "via_tessera_mcp": {
+        "runs_ms": [
+          1142.451,
+          1215.716,
+          1175.473
+        ],
+        "p50_ms": 1175.473,
+        "skipped": null
+      },
+      "tessera_overhead_p50_ms": 51.509
+    },
+    "amplify": {
+      "cli_command": "aws amplify list-apps --region us-east-1",
+      "direct_aws_cli": {
+        "runs_ms": [
+          1475.985,
+          1956.757,
+          1438.278
+        ],
+        "p50_ms": 1475.985,
+        "skipped": null
+      },
+      "direct_mcp": {
+        "runs_ms": [
+          1213.925,
+          694.624,
+          672.901
+        ],
+        "p50_ms": 694.624,
+        "skipped": null
+      },
+      "via_tessera_mcp": {
+        "runs_ms": [
+          881.915,
+          1380.051,
+          944.005
+        ],
+        "p50_ms": 944.005,
+        "skipped": null
+      },
+      "tessera_overhead_p50_ms": 249.381
+    },
+    "s3": {
+      "cli_command": "aws s3api list-buckets",
+      "direct_aws_cli": {
+        "runs_ms": [
+          1503.988,
+          1398.294,
+          6176.334
+        ],
+        "p50_ms": 1503.988,
+        "skipped": null
+      },
+      "direct_mcp": {
+        "runs_ms": [
+          931.587,
+          839.688,
+          934.837
+        ],
+        "p50_ms": 931.587,
+        "skipped": null
+      },
+      "via_tessera_mcp": {
+        "runs_ms": [
+          910.349,
+          867.362,
+          919.628
+        ],
+        "p50_ms": 910.349,
+        "skipped": null
+      },
+      "tessera_overhead_p50_ms": -21.238
+    }
+  },
+  "summary": {
+    "max_overhead_p50_ms": 249.381,
+    "mean_overhead_p50_ms": 66.825
+  },
+  "pass_criterion": "max Tessera overhead (C - B) p50 < 50 ms",
+  "pass": false,
+  "substitutions": [],
+  "notes": "3 measured runs per (service, path) after 5 warmup calls per service per path. Direct MCP and Tessera both use long-lived httpx.Client connections with keep-alive; Direct AWS CLI shells out (no in-process equivalent). Tessera config: empty policies dir + default_action=allow (no policy-eval variance). iam list-account-aliases falls back to iam get-user when the session lacks iam:ListAccountAliases."
+}

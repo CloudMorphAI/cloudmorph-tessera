@@ -1,0 +1,19 @@
+{
+  "benchmark": "bench-01-block-path-latency",
+  "tessera_version": "0.5.1",
+  "n_total": 100,
+  "n_denied": 100,
+  "n_errors": 0,
+  "latency_ms": {
+    "min": 0.304,
+    "p50": 0.496,
+    "p95": 0.669,
+    "p99": 0.896,
+    "max": 1.179,
+    "mean": 0.492,
+    "stddev": 0.131
+  },
+  "pass_criterion": "p50 < 5 ms",
+  "pass": true,
+  "notes": "100 sequential deny calls, single keep-alive connection, after 10-call warmup."
+}

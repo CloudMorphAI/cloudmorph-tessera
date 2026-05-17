@@ -1,0 +1,21 @@
+id: s3-data-block-call-aws
+name: S3 Data — Block via call_aws CLI passthrough
+description: |
+  Companion to s3-data-block. awslabs.aws-api-mcp-server exposes a generic
+  `call_aws` tool whose argument key is `cli_command` (not `command`).
+  This benchmark fixture uses the correct `cli_command` key.
+priority: 95
+
+match:
+  upstream: "*"
+  tool: "call_aws"
+
+when:
+  - condition: arg_matches_regex
+    arg: cli_command
+    pattern: "^aws\\s+s3(api|control)?\\s+"
+
+action: block
+reason: |
+  S3 access via MCP call_aws is denied by policy s3-data-block-call-aws.
+  Benchmark-only config — not for production use.

@@ -1,0 +1,44 @@
+{
+  "benchmark": "bench-04-concurrent-throughput",
+  "tessera_version": "0.5.1",
+  "aws_account": "237509402889",
+  "aws_region": "us-east-1",
+  "block_path_concurrent": {
+    "path": "block (s3-data-block)",
+    "driver": "ThreadPoolExecutor + persistent http.client connection pool",
+    "concurrency": 32,
+    "n_total": 2000,
+    "n_ok": 2000,
+    "n_tessera_errors": 0,
+    "wall_clock_s": 0.62,
+    "rps": 3224.2,
+    "latency_ms": {
+      "min": 0.563,
+      "p50": 8.826,
+      "p95": 15.53,
+      "p99": 19.253,
+      "max": 27.632,
+      "mean": 9.231
+    }
+  },
+  "live_aws_sequential": {
+    "path": "allow (live AWS sts get-caller-identity)",
+    "n": 50,
+    "n_ok": 50,
+    "n_aws_throttle": 0,
+    "n_tessera_errors": 0,
+    "wall_clock_s": 62.941,
+    "rps": 0.8,
+    "latency_ms": {
+      "min": 1074.105,
+      "p50": 1171.847,
+      "p95": 1488.262,
+      "p99": 1552.616,
+      "max": 1552.616,
+      "mean": 1258.773
+    }
+  },
+  "pass_criterion": "block_path RPS > 500",
+  "pass": true,
+  "notes": "Concurrent throughput measured on the block path (s3-data-block) so the upstream session lock in awslabs.aws-api-mcp-server v1.3.36 is not on the hot path. Driver is ThreadPoolExecutor (32 workers) with a queue of persistent http.client.HTTPConnection objects so each request hits a kept-alive socket. Closer to wrk semantics than asyncio.gather's single-event-loop pool."
+}

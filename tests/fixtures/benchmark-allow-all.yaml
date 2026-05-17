@@ -1,0 +1,34 @@
+# tests/fixtures/benchmark-allow-all.yaml — Tessera benchmark config for bench-05.
+#
+# Same listen / auth / audit / upstream as benchmark.yaml but points at an
+# EMPTY policies directory and default_action: allow so every call passes
+# through to AWS. Used to measure 3-way path latency (direct CLI vs
+# direct MCP vs Tessera+MCP) without policy-side variance.
+
+listen:
+  host: 0.0.0.0
+  port: 9000
+
+auth:
+  type: bearer
+
+audit:
+  sink: sqlite
+  path: /tmp/tessera-bench-audit.db
+  also_stdout: false
+
+policies:
+  dir: /mnt/c/Users/found/Desktop/CloudMorph/cloudmorph-tessera/tests/fixtures/benchmark-policies-empty
+  reload: none
+  mode: enforcement
+  default_action: allow
+
+upstreams:
+  - name: aws
+    kind: mcp_streamable_http
+    url: http://127.0.0.1:8000
+    session_timeout_s: 300
+    request_timeout_s: 30
+
+deployment_id: bench-v0.5.1-allow-all
+log_level: WARNING

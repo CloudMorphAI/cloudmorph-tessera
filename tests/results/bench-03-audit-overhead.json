@@ -1,0 +1,32 @@
+{
+  "benchmark": "bench-03-audit-overhead",
+  "tessera_version": "0.5.1",
+  "audit_on": {
+    "phase": "audit_on",
+    "n": 100,
+    "min_ms": 0.316,
+    "p50_ms": 0.385,
+    "p95_ms": 0.58,
+    "p99_ms": 0.671,
+    "max_ms": 1.864,
+    "mean_ms": 0.426
+  },
+  "audit_off": {
+    "phase": "audit_off",
+    "n": 100,
+    "min_ms": 0.31,
+    "p50_ms": 0.418,
+    "p95_ms": 0.558,
+    "p99_ms": 0.752,
+    "max_ms": 0.788,
+    "mean_ms": 0.431
+  },
+  "delta_ms": {
+    "p50": -0.033,
+    "p95": 0.022,
+    "p99": -0.081
+  },
+  "pass_criterion": "delta_p50 < 1 ms",
+  "pass": true,
+  "notes": "100 deny calls in each phase. SQLite audit vs benchmark-only NullSink shim."
+}

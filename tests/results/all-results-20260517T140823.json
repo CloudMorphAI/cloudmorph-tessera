@@ -1,0 +1,353 @@
+{
+  "tessera_version": "0.5.1",
+  "aws_account": "237509402889",
+  "aws_region": "us-east-1",
+  "summary": [
+    {
+      "benchmark": "bench-01-block-path-latency",
+      "pass_criterion": "p50 < 5 ms",
+      "pass": true
+    },
+    {
+      "benchmark": "bench-02-engine-microbench",
+      "pass_criterion": "safe_tool_call p50 < 100 us",
+      "pass": true
+    },
+    {
+      "benchmark": "bench-03-audit-overhead",
+      "pass_criterion": "delta_p50 < 1 ms",
+      "pass": true
+    },
+    {
+      "benchmark": "bench-04-concurrent-throughput",
+      "pass_criterion": "block_path RPS > 500",
+      "pass": true
+    },
+    {
+      "benchmark": "bench-05-multi-service-3way",
+      "pass_criterion": "max Tessera overhead (C - B) p50 < 50 ms",
+      "pass": false
+    }
+  ],
+  "results": {
+    "bench-01-block-path-latency": {
+      "benchmark": "bench-01-block-path-latency",
+      "tessera_version": "0.5.1",
+      "n_total": 100,
+      "n_denied": 100,
+      "n_errors": 0,
+      "latency_ms": {
+        "min": 0.304,
+        "p50": 0.496,
+        "p95": 0.669,
+        "p99": 0.896,
+        "max": 1.179,
+        "mean": 0.492,
+        "stddev": 0.131
+      },
+      "pass_criterion": "p50 < 5 ms",
+      "pass": true,
+      "notes": "100 sequential deny calls, single keep-alive connection, after 10-call warmup."
+    },
+    "bench-02-engine-microbench": {
+      "benchmark": "bench-02-engine-microbench",
+      "tessera_version": "0.5.1",
+      "n_policies_loaded": 24,
+      "policies_dir": "tessera/policies_default",
+      "warmup_iterations": 1000,
+      "measured_iterations": 10000,
+      "scenarios": {
+        "safe_tool_call": {
+          "n": 10000,
+          "min_us": 56.522,
+          "p50_us": 60.115,
+          "p95_us": 85.417,
+          "p99_us": 125.352,
+          "max_us": 1735.416,
+          "mean_us": 65.061,
+          "stddev_us": 29.528
+        },
+        "blocked_iam_pass_role": {
+          "n": 10000,
+          "min_us": 29.413,
+          "p50_us": 31.16,
+          "p95_us": 37.086,
+          "p99_us": 53.106,
+          "max_us": 1208.224,
+          "mean_us": 32.493,
+          "stddev_us": 16.019
+        },
+        "blocked_admin_policy_attach": {
+          "n": 10000,
+          "min_us": 10.512,
+          "p50_us": 11.673,
+          "p95_us": 18.34,
+          "p99_us": 37.564,
+          "max_us": 597.96,
+          "mean_us": 13.08,
+          "stddev_us": 10.429
+        },
+        "no_match_passthrough": {
+          "n": 10000,
+          "min_us": 52.581,
+          "p50_us": 59.83,
+          "p95_us": 81.62,
+          "p99_us": 112.671,
+          "max_us": 1987.032,
+          "mean_us": 64.041,
+          "stddev_us": 41.616
+        }
+      },
+      "pass_criterion": "safe_tool_call p50 < 100 us",
+      "pass": true,
+      "notes": "Pure in-process engine eval. time.perf_counter_ns() timing."
+    },
+    "bench-03-audit-overhead": {
+      "benchmark": "bench-03-audit-overhead",
+      "tessera_version": "0.5.1",
+      "audit_on": {
+        "phase": "audit_on",
+        "n": 100,
+        "min_ms": 0.316,
+        "p50_ms": 0.385,
+        "p95_ms": 0.58,
+        "p99_ms": 0.671,
+        "max_ms": 1.864,
+        "mean_ms": 0.426
+      },
+      "audit_off": {
+        "phase": "audit_off",
+        "n": 100,
+        "min_ms": 0.31,
+        "p50_ms": 0.418,
+        "p95_ms": 0.558,
+        "p99_ms": 0.752,
+        "max_ms": 0.788,
+        "mean_ms": 0.431
+      },
+      "delta_ms": {
+        "p50": -0.033,
+        "p95": 0.022,
+        "p99": -0.081
+      },
+      "pass_criterion": "delta_p50 < 1 ms",
+      "pass": true,
+      "notes": "100 deny calls in each phase. SQLite audit vs benchmark-only NullSink shim."
+    },
+    "bench-04-concurrent-throughput": {
+      "benchmark": "bench-04-concurrent-throughput",
+      "tessera_version": "0.5.1",
+      "aws_account": "237509402889",
+      "aws_region": "us-east-1",
+      "block_path_concurrent": {
+        "path": "block (s3-data-block)",
+        "driver": "ThreadPoolExecutor + persistent http.client connection pool",
+        "concurrency": 32,
+        "n_total": 2000,
+        "n_ok": 2000,
+        "n_tessera_errors": 0,
+        "wall_clock_s": 0.62,
+        "rps": 3224.2,
+        "latency_ms": {
+          "min": 0.563,
+          "p50": 8.826,
+          "p95": 15.53,
+          "p99": 19.253,
+          "max": 27.632,
+          "mean": 9.231
+        }
+      },
+      "live_aws_sequential": {
+        "path": "allow (live AWS sts get-caller-identity)",
+        "n": 50,
+        "n_ok": 50,
+        "n_aws_throttle": 0,
+        "n_tessera_errors": 0,
+        "wall_clock_s": 62.941,
+        "rps": 0.8,
+        "latency_ms": {
+          "min": 1074.105,
+          "p50": 1171.847,
+          "p95": 1488.262,
+          "p99": 1552.616,
+          "max": 1552.616,
+          "mean": 1258.773
+        }
+      },
+      "pass_criterion": "block_path RPS > 500",
+      "pass": true,
+      "notes": "Concurrent throughput measured on the block path (s3-data-block) so the upstream session lock in awslabs.aws-api-mcp-server v1.3.36 is not on the hot path. Driver is ThreadPoolExecutor (32 workers) with a queue of persistent http.client.HTTPConnection objects so each request hits a kept-alive socket. Closer to wrk semantics than asyncio.gather's single-event-loop pool."
+    },
+    "bench-05-multi-service-3way": {
+      "benchmark": "bench-05-multi-service-3way",
+      "tessera_version": "0.5.1",
+      "aws_account": "237509402889",
+      "aws_region": "us-east-1",
+      "services": {
+        "sts": {
+          "cli_command": "aws sts get-caller-identity",
+          "direct_aws_cli": {
+            "runs_ms": [
+              1889.602,
+              1584.016,
+              1814.59
+            ],
+            "p50_ms": 1814.59,
+            "skipped": null
+          },
+          "direct_mcp": {
+            "runs_ms": [
+              1173.561,
+              1061.319,
+              1117.482
+            ],
+            "p50_ms": 1117.482,
+            "skipped": null
+          },
+          "via_tessera_mcp": {
+            "runs_ms": [
+              1070.845,
+              1381.429,
+              1315.907
+            ],
+            "p50_ms": 1315.907,
+            "skipped": null
+          },
+          "tessera_overhead_p50_ms": 198.425
+        },
+        "ec2": {
+          "cli_command": "aws ec2 describe-regions --region us-east-1",
+          "direct_aws_cli": {
+            "runs_ms": [
+              1820.357,
+              1989.175,
+              2018.776
+            ],
+            "p50_ms": 1989.175,
+            "skipped": null
+          },
+          "direct_mcp": {
+            "runs_ms": [
+              1511.842,
+              1164.364,
+              1371.606
+            ],
+            "p50_ms": 1371.606,
+            "skipped": null
+          },
+          "via_tessera_mcp": {
+            "runs_ms": [
+              1227.654,
+              1386.201,
+              1169.555
+            ],
+            "p50_ms": 1227.654,
+            "skipped": null
+          },
+          "tessera_overhead_p50_ms": -143.952
+        },
+        "iam": {
+          "cli_command": "aws iam list-account-aliases",
+          "direct_aws_cli": {
+            "runs_ms": [
+              1674.053,
+              1660.627,
+              1659.135
+            ],
+            "p50_ms": 1660.627,
+            "skipped": null
+          },
+          "direct_mcp": {
+            "runs_ms": [
+              1127.757,
+              1123.964,
+              1123.535
+            ],
+            "p50_ms": 1123.964,
+            "skipped": null
+          },
+          "via_tessera_mcp": {
+            "runs_ms": [
+              1142.451,
+              1215.716,
+              1175.473
+            ],
+            "p50_ms": 1175.473,
+            "skipped": null
+          },
+          "tessera_overhead_p50_ms": 51.509
+        },
+        "amplify": {
+          "cli_command": "aws amplify list-apps --region us-east-1",
+          "direct_aws_cli": {
+            "runs_ms": [
+              1475.985,
+              1956.757,
+              1438.278
+            ],
+            "p50_ms": 1475.985,
+            "skipped": null
+          },
+          "direct_mcp": {
+            "runs_ms": [
+              1213.925,
+              694.624,
+              672.901
+            ],
+            "p50_ms": 694.624,
+            "skipped": null
+          },
+          "via_tessera_mcp": {
+            "runs_ms": [
+              881.915,
+              1380.051,
+              944.005
+            ],
+            "p50_ms": 944.005,
+            "skipped": null
+          },
+          "tessera_overhead_p50_ms": 249.381
+        },
+        "s3": {
+          "cli_command": "aws s3api list-buckets",
+          "direct_aws_cli": {
+            "runs_ms": [
+              1503.988,
+              1398.294,
+              6176.334
+            ],
+            "p50_ms": 1503.988,
+            "skipped": null
+          },
+          "direct_mcp": {
+            "runs_ms": [
+              931.587,
+              839.688,
+              934.837
+            ],
+            "p50_ms": 931.587,
+            "skipped": null
+          },
+          "via_tessera_mcp": {
+            "runs_ms": [
+              910.349,
+              867.362,
+              919.628
+            ],
+            "p50_ms": 910.349,
+            "skipped": null
+          },
+          "tessera_overhead_p50_ms": -21.238
+        }
+      },
+      "summary": {
+        "max_overhead_p50_ms": 249.381,
+        "mean_overhead_p50_ms": 66.825
+      },
+      "pass_criterion": "max Tessera overhead (C - B) p50 < 50 ms",
+      "pass": false,
+      "substitutions": [],
+      "notes": "3 measured runs per (service, path) after 5 warmup calls per service per path. Direct MCP and Tessera both use long-lived httpx.Client connections with keep-alive; Direct AWS CLI shells out (no in-process equivalent). Tessera config: empty policies dir + default_action=allow (no policy-eval variance). iam list-account-aliases falls back to iam get-user when the session lacks iam:ListAccountAliases."
+    }
+  }
+}
