@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from tessera.cost.types import CostResult
     from tessera.integrations.aws.upstream import AWSMcpUpstream
+    from tessera.integrations.streamable_http.upstream import StreamableHttpUpstream
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -305,9 +306,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
             loader.watch("default", _on_reload)
 
-        # HTTP clients and AWS clients per upstream
+        # HTTP clients, AWS clients, and streamable-HTTP clients per upstream
         app.state.http_clients = {}
         app.state.aws_clients = {}
+        app.state.streamable_http_clients = {}
 
         for upstream in cfg.upstreams:
             if upstream.kind == "aws_mcp":
@@ -325,6 +327,20 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 )
                 await aws_client.__aenter__()
                 app.state.aws_clients[upstream.name] = aws_client
+            elif upstream.kind == "mcp_streamable_http":
+                from tessera.integrations.streamable_http.upstream import (
+                    StreamableHttpUpstream,  # noqa: PLC0415
+                )
+
+                sh_client = StreamableHttpUpstream(
+                    name=upstream.name,
+                    url=upstream.url,
+                    auth_header=upstream.auth_header,
+                    session_timeout_s=upstream.session_timeout_s,
+                    request_timeout_s=upstream.request_timeout_s,
+                )
+                await sh_client.__aenter__()
+                app.state.streamable_http_clients[upstream.name] = sh_client
             else:
                 headers: dict[str, str] = {}
                 if upstream.credentials:
@@ -462,6 +478,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             # Close AWS clients
             for aws_client in getattr(app.state, "aws_clients", {}).values():
                 await aws_client.__aexit__(None, None, None)
+            # Close streamable-HTTP clients
+            for sh_client in getattr(app.state, "streamable_http_clients", {}).values():
+                await sh_client.__aexit__(None, None, None)
             # Close Infracost client
             cost_backend = getattr(app.state, "cost_backend", None)
             if cost_backend is not None:
@@ -1276,6 +1295,16 @@ async def _forward_upstream(
                     jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
                 )
             return await aws_client.forward(body)
+
+        case "mcp_streamable_http":
+            sh_clients: dict[str, StreamableHttpUpstream] = getattr(state, "streamable_http_clients", {})
+            sh_client = sh_clients.get(upstream_name)
+            if sh_client is None:
+                _METRICS["requests_total{outcome=unknown_upstream}"] += 1
+                return _jsonrpc_error(
+                    jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
+                )
+            return await sh_client.forward(body)
 
         case _:
             # Default bearer / httpx path

@@ -122,6 +122,7 @@ class UpstreamConfig(BaseModel):
     timeout_seconds: int = 30
     credentials: CredentialsConfig | None = None
     # v0.2.0: upstream kind — "bearer" (default httpx path) or "aws_mcp" (IAM-signed)
+    # v0.5.1: added "mcp_streamable_http" for FastMCP streamable-HTTP servers
     kind: str = "bearer"
     aws_region: str | None = None
     aws_service: str = "aws-mcp"
@@ -134,6 +135,13 @@ class UpstreamConfig(BaseModel):
     # When set to "aws-api-mcp-server", enable call_aws translation before SigV4 POST.
     # When None (default), pass through unchanged (legacy direct-service routing).
     aws_mcp_server: str | None = None
+    # v0.5.1: mcp_streamable_http upstream options
+    # auth_header: optional "Authorization: Bearer <token>" value (the whole value string).
+    # session_timeout_s: idle-session TTL hint (seconds); default 300.
+    # request_timeout_s: per-request HTTP timeout (seconds); default 10.
+    auth_header: str | None = None
+    session_timeout_s: int = 300
+    request_timeout_s: int = 10
 
     @model_validator(mode="after")
     def _require_aws_region_for_aws_mcp(self) -> UpstreamConfig:
