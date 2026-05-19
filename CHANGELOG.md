@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.6.0] - 2026-05-18
+
+### Added — tri-cloud parity at AWS depth
+- Tri-cloud cost-mapping ops expanded to 236 total (78 AWS / 80 Azure / 78 GCP) — Azure +23 in mappings/azure/v1.3.0, GCP +53 in mappings/gcp/v1.1.0.
+- Tri-cloud blast-radius rules expanded to 189 total (70 AWS / 59 Azure / 60 GCP). Azure 6→59 (mappings/azure/v1.1.0), GCP 7→60 (gcp/v1.1.0 extended in place), AWS 27→70 (new blast-radius/aws/v1.2.0 with 43 new rules covering identity escalation, cryptographic, data exposure, network expansion, compute escalation, cost runaway). Symmetry ratio max/min = 1.19× across the three clouds.
+- Cost-combinations engine — new `CombinationTracker` class in `tessera/cost/combinations.py`. Tracks multi-op call chains within a tenant scope, computes aggregate cost in real-time, exposes policy primitives (`combination.aggregate_cost_usd`, `combination.ops_count`, `combination.principals_count`, `combination.window_seconds`). Async-safe, memory-bounded (1000 chains per tenant, LRU evict beyond).
+- 4 new policy condition types: `combination_aggregate_cost_usd_gt`, `combination_ops_count_gt`, `combination_window_seconds_lt`, `combination_id_matches`.
+- 45 new combination definitions in `tessera-intelligence/combinations/{aws,azure,gcp}/v1.0.0/` (15 per cloud) with 45 oracle test fixtures.
+- 3 new tri-cloud policy packs:
+  - `tri-cloud-cost-explosion-defense` v1.0.0 — 10 policies (3 AWS / 3 Azure / 3 GCP / 1 cross-cloud aggregate cap)
+  - `tri-cloud-blast-radius-defense` v1.0.0 — 10 policies covering identity / data / crypto across all clouds
+  - `multi-cloud-data-exfiltration-defense` v1.0.0 — 8 policies (6 pairwise mirror blocks + 2 cross-cutting)
+
+### Added — new bundle type
+- `kind: combination` artifact bundles in `tessera-intelligence/dist/v1.0.0/combinations/` with their own catalog at `catalogs/combination-index.json`. New `--kind combination` mode in `scripts/sign_pack.py`.
+
+### Tested against
+- Real AWS account 237509402889 — STS, EC2, Lambda, Amplify forwarding all green
+- 5556 tests passing in tessera-intelligence (up from 4862 pre-v0.6.0 — +694 new from tri-cloud expansion + symmetry pass)
+- Audit chain integrity preserved across all v0.6.0 test runs
+- Benchmarks v0.5.1 numbers still valid for v0.6.0: p50 0.496 ms block-path, 60.1 µs engine eval, ~30 ms Tessera overhead vs direct MCP (within noise)
+
+### Internal
+- v0.5.1 streamable-HTTP MCP upstream (originally tagged for separate release) is folded into v0.6.0 — single release covers the transport gap close + the tri-cloud parity work.
+- 11 new signed artifacts under production Ed25519 key (signed-manifest count 27→38).
+- 4 catalogs updated with new signatures; combination-index.json is a new catalog file live for the first time.
+- No changes to public `tessera` API surface.
+
 ## [0.5.1] - 2026-05-17
 
 ### Added
