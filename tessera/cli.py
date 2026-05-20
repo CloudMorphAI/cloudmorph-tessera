@@ -827,6 +827,154 @@ def install_claude_code(
 
 
 # ---------------------------------------------------------------------------
+# install-cursor
+# ---------------------------------------------------------------------------
+
+
+@app.command("install-cursor")
+def install_cursor(
+    tessera_url: str = typer.Option(
+        "http://localhost:8080",
+        "--tessera-url",
+        help="Tessera proxy URL.",
+    ),
+    token: str = typer.Option(
+        "",
+        "--token",
+        envvar="TESSERA_BEARER_TOKEN",
+        help="Bearer token for Tessera.",
+    ),
+    upstream_name: str = typer.Option(
+        "github",
+        "--upstream-name",
+        help="MCP upstream name to configure in Cursor.",
+    ),
+    project_dir: str = typer.Option(
+        None,
+        "--project-dir",
+        help="Project directory to write .cursor/mcp.json into (default: current working directory).",
+    ),
+    upgrade: bool = typer.Option(
+        False,
+        "--upgrade",
+        help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
+) -> None:
+    """Configure Cursor to use Tessera as MCP server via .cursor/mcp.json in the project directory."""
+    base_dir = Path(project_dir) if project_dir else Path.cwd()
+    cursor_dir = base_dir / ".cursor"
+    config_file = cursor_dir / "mcp.json"
+
+    if config_file.exists():
+        config: dict[str, Any] = json.loads(config_file.read_text(encoding="utf-8"))
+    else:
+        config = {}
+
+    mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
+
+    if upstream_name in mcp_servers and not upgrade:
+        typer.echo(
+            f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
+            "Pass --upgrade to replace it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    mcp_servers[upstream_name] = {
+        "url": f"{tessera_url}/mcp/{upstream_name}",
+        **({"headers": headers} if headers else {}),
+    }
+
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    typer.echo(f"Updated {config_file}")
+    typer.echo(f"Cursor → Tessera proxy configured for upstream '{upstream_name}'")
+    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+
+
+# ---------------------------------------------------------------------------
+# install-claude-desktop
+# ---------------------------------------------------------------------------
+
+
+@app.command("install-claude-desktop")
+def install_claude_desktop(
+    tessera_url: str = typer.Option(
+        "http://localhost:8080",
+        "--tessera-url",
+        help="Tessera proxy URL.",
+    ),
+    token: str = typer.Option(
+        "",
+        "--token",
+        envvar="TESSERA_BEARER_TOKEN",
+        help="Bearer token for Tessera.",
+    ),
+    upstream_name: str = typer.Option(
+        "github",
+        "--upstream-name",
+        help="MCP upstream name to configure in Claude Desktop.",
+    ),
+    claude_config_path: str = typer.Option(
+        None,
+        "--claude-config",
+        help="Override path to claude_desktop_config.json.",
+    ),
+    upgrade: bool = typer.Option(
+        False,
+        "--upgrade",
+        help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
+) -> None:
+    """Configure Claude Desktop to use Tessera as MCP server via claude_desktop_config.json."""
+    if claude_config_path:
+        config_file = Path(claude_config_path)
+    elif sys.platform == "darwin":
+        config_file = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        config_file = Path(appdata) / "Claude" / "claude_desktop_config.json"
+    else:
+        config_file = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+    if config_file.exists():
+        config: dict[str, Any] = json.loads(config_file.read_text(encoding="utf-8"))
+    else:
+        config = {}
+
+    mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
+
+    if upstream_name in mcp_servers and not upgrade:
+        typer.echo(
+            f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
+            "Pass --upgrade to replace it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    mcp_servers[upstream_name] = {
+        "url": f"{tessera_url}/mcp/{upstream_name}",
+        **({"headers": headers} if headers else {}),
+    }
+
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    typer.echo(f"Updated {config_file}")
+    typer.echo(f"Claude Desktop → Tessera proxy configured for upstream '{upstream_name}'")
+    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+
+
+# ---------------------------------------------------------------------------
 # policy author
 # ---------------------------------------------------------------------------
 
