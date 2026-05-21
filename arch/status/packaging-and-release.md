@@ -8,7 +8,7 @@ Three publishing destinations, all driven by `.github/workflows/release.yml` on 
 
 | Target | Consumer | Auth |
 |--------|----------|------|
-| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | Manual twine upload from WSL (PyPI Trusted Publisher OIDC deferred per credit budget). **`0.2.1` live on PyPI** as of 2026-05-15T13:51Z (uploaded by founder; `pip install cloudmorph-tessera==0.2.1` verified clean-venv 2026-05-16). |
+| PyPI: `cloudmorph-tessera` | Developers running `pip install` locally / in CI | Manual twine upload from WSL (PyPI Trusted Publisher OIDC deferred per credit budget). **Current source-tree version: `0.6.0`** (per `pyproject.toml` + `tessera/_version.py` fallback). PyPI version listed below as last verified upload — see `arch/improvements/arch-scan-tessera-version-drift.md` for the full ladder of versions (0.2.1 → 0.6.0) and current PyPI delta. Last verified PyPI publish: `0.2.1` at 2026-05-15T13:51Z. |
 | GHCR: `ghcr.io/cloudmorphai/tessera:<version>` | Public Docker pull, customer Docker-mode deployments | `GITHUB_TOKEN` for push. `0.2.1` multi-arch (amd64 + arm64) live on GHCR. |
 | ECR: `237509402889.dkr.ecr.us-east-1.amazonaws.com/cloudmorph/tessera-cloud-wrapper:<version>` (renamed 2026-05-16 from `tessera-cloud-prod`) | Fargate pull from `cloudmorph-mono-repo`'s CDK stack — ECS service `tessera-cloud-prod` consumes `:main` (floating tag, currently == `:0.2.1`) | AWS-CLI manual push via `tessera-cloud-wrapper/build.sh`. ECS service rolled to 0.2.1 image 2026-05-16T07:01Z (deploy `ecs-svc/7011306979647899462` Completed). |
 

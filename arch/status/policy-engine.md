@@ -23,9 +23,9 @@ Every policy YAML is a mapping with these top-level fields:
 
 Pydantic models reject extra keys (`extra="forbid"`) — a typo in a condition discriminator or a stray top-level field fails validation at load time rather than silently misbehaving.
 
-## The 21-condition catalog
+## The 25-condition catalog
 
-`tessera/policy/schema.py` defines a discriminated-union of 21 condition types. The discriminator field is `condition`; pydantic dispatches to the right model based on its literal value. Authoritative count is the entries in the `ConditionType` annotation and the corresponding entries in the `_DISPATCH` table at `tessera/policy/conditions.py:526`.
+`tessera/policy/schema.py` defines a discriminated-union of **25 condition types** (21 original + 4 added in v0.6.0 for the combinations engine). The discriminator field is `condition`; pydantic dispatches to the right model based on its literal value. Authoritative count is the entries in the `ConditionType` annotation and the corresponding entries in the `_DISPATCH` table in `tessera/policy/conditions.py`.
 
 | Condition | Purpose | Notes |
 |-----------|---------|-------|
@@ -50,8 +50,12 @@ Pydantic models reject extra keys (`extra="forbid"`) — a typo in a condition d
 | `affected_resource_count` | `len(jmespath(arg, args))` > / < threshold | JMESPath-driven |
 | `data_volume` | Byte estimate > / < threshold | Three estimators: `static_arg_size`, `s3_get_byte_estimate`, `rds_query_result_estimate` |
 | `cumulative_spend_today` | Per-scope daily spend > / < threshold | Requires `state_backend` (`DailySpendState`) |
+| `combination_aggregate_cost_usd_gt` | Sum of cost across recent op chain > threshold | **v0.6.0**. Requires `combinations_backend` (`CombinationTracker`) |
+| `combination_ops_count_gt` | Op count in recent chain > threshold | **v0.6.0** |
+| `combination_window_seconds_lt` | Chain window < N seconds (recent burst detection) | **v0.6.0** |
+| `combination_id_matches` | Chain id matches a known combination from `combination-index.json` | **v0.6.0** — used by tri-cloud combination packs |
 
-Sixteen are basic condition types; the remaining five are semantic conditions that unlock cost-aware and blast-radius policies. The five semantic conditions are `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, and `data_volume` — `time_of_day_outside` is a basic condition despite being thematically adjacent to the semantic set.
+Sixteen are basic condition types; the remaining nine are semantic conditions that unlock cost-aware, blast-radius, and combination-aware policies. The five semantic conditions are `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, and `data_volume` — `time_of_day_outside` is a basic condition despite being thematically adjacent to the semantic set.
 
 Dispatch is a single dict lookup in `_DISPATCH` keyed on `type(cond)`. Unknown condition types return `False` (fail-closed) rather than raising — defensive against engine/schema version skew during a rolling upgrade.
 
