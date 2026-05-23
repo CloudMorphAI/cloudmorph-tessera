@@ -1,4 +1,4 @@
-"""OAuth 2.1 Resource Server endpoints.
+"""OAuth 2.1 Resource Server endpoints + bearer-token validator.
 
 Implemented endpoints (all registered via make_metadata_route):
   GET  /.well-known/oauth-protected-resource  — RFC 9728 metadata
@@ -6,6 +6,17 @@ Implemented endpoints (all registered via make_metadata_route):
   POST /register                              — RFC 7591 DCR proxy (per-IP rate limited)
   POST /introspect                            — RFC 7662 token introspection (sig-verified)
   POST /revoke                               — RFC 7009 token revocation
+
+Module-level API (v0.7.0 Item D §7.1):
+  class OAuthResourceServer       — verifies Bearer tokens issued by the
+                                    tessera.cloudmorph.ai authorization
+                                    server (EdDSA + Ed25519). Local pubkey
+                                    verify with JWKS-URL fallback. Verified
+                                    tokens cached 5min by SHA-256(token).
+  get_oauth_resource_server()     — module-level singleton accessor
+  set_oauth_resource_server()     — test injection point
+  require_scope(scope)            — FastAPI dependency that gates a route
+                                    on `scope` being present on the token
 
 DCR proxy (POST /register)
   Transparent proxy to an upstream AS's /register endpoint.
@@ -27,16 +38,21 @@ Token revocation (POST /revoke)
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import os
 import re
 import secrets
+import threading
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import httpx
-from fastapi import Request  # noqa: TC002 — used at runtime for FastAPI dependency injection
+from fastapi import HTTPException, Request  # noqa: TC002 — used at runtime
 from fastapi.responses import JSONResponse
+
+from tessera.errors import UnauthorizedError
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -340,6 +356,228 @@ def _validate_token_for_introspection(
         return None
 
     return claims
+
+
+# ── v0.7.0 Item D §7.1 — OAuthResourceServer ────────────────────────────────
+
+
+_DEFAULT_TESSERA_ISSUER = "tessera.cloudmorph.ai"
+_DEFAULT_TESSERA_AUDIENCE = "tessera.cloudmorph.ai/api"
+_DEFAULT_TESSERA_JWKS_URL = "https://tessera.cloudmorph.ai/oauth/jwks.json"
+_DEFAULT_PUBKEY_PATH = str(Path(__file__).parent / "oauth_pubkey.pem")
+_TOKEN_CACHE_TTL_SECONDS = 300
+_TOKEN_CACHE_MAX_SIZE = 1024
+
+
+class OAuthResourceServer:
+    """Verifier for Bearer tokens issued by tessera.cloudmorph.ai.
+
+    Two verification paths:
+      1. Local: parse the bundled `oauth_pubkey.pem` once at init, then verify
+         every token against that Ed25519 public key. Cheapest path; no
+         network. Used in the steady state.
+      2. JWKS-URL fallback: if the bundled pubkey is missing/invalid OR a
+         local-verify signature failure suggests `kid` rotation, fall through
+         to the live JWKS endpoint via PyJWKClient (which caches per-kid).
+
+    Verified claims are cached by SHA-256(token) for 5 minutes (raw tokens
+    are never stored). A bounded dict (max 1024 entries) keeps memory finite
+    under token-stuffing scenarios.
+
+    Configuration is sourced from env vars (overridable at construction):
+        TESSERA_OAUTH_ISSUER         (default: "tessera.cloudmorph.ai")
+        TESSERA_OAUTH_AUDIENCE       (default: "tessera.cloudmorph.ai/api")
+        TESSERA_OAUTH_JWKS_FALLBACK  (default: "https://tessera.cloudmorph.ai/oauth/jwks.json")
+        TESSERA_OAUTH_PUBKEY_PATH    (default: bundled tessera/auth/oauth_pubkey.pem)
+    """
+
+    def __init__(
+        self,
+        *,
+        issuer: str | None = None,
+        audience: str | None = None,
+        jwks_url: str | None = None,
+        pubkey_path: str | None = None,
+    ) -> None:
+        self._issuer = issuer or os.environ.get("TESSERA_OAUTH_ISSUER", _DEFAULT_TESSERA_ISSUER)
+        self._audience = audience or os.environ.get("TESSERA_OAUTH_AUDIENCE", _DEFAULT_TESSERA_AUDIENCE)
+        self._jwks_url = jwks_url or os.environ.get("TESSERA_OAUTH_JWKS_FALLBACK", _DEFAULT_TESSERA_JWKS_URL)
+        self._pubkey_path = pubkey_path or os.environ.get("TESSERA_OAUTH_PUBKEY_PATH", _DEFAULT_PUBKEY_PATH)
+        self._local_pubkey: Any = self._try_load_pubkey()
+        # Lazy — created on first JWKS path use
+        self._jwks_client: Any = None
+        self._cache: dict[str, tuple[dict[str, Any], float]] = {}
+        self._cache_lock = threading.Lock()
+
+    def _try_load_pubkey(self) -> Any:
+        """Load oauth_pubkey.pem → Ed25519PublicKey. Returns None on any failure.
+
+        Failure-is-None (not raise) so the resource server still works in dev
+        environments where the placeholder pubkey ships — those deployments
+        verify via the JWKS fallback path.
+        """
+        try:
+            with open(self._pubkey_path, "rb") as fh:
+                pem = fh.read()
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+            key = serialization.load_pem_public_key(pem)
+            if not isinstance(key, Ed25519PublicKey):
+                logger.warning(
+                    "event=oauth_rs_pubkey_wrong_type path=%s type=%s",
+                    self._pubkey_path,
+                    type(key).__name__,
+                )
+                return None
+            logger.info("event=oauth_rs_pubkey_loaded path=%s", self._pubkey_path)
+            return key
+        except Exception as exc:  # noqa: BLE001
+            logger.info(
+                "event=oauth_rs_pubkey_load_failed path=%s reason=%s",
+                self._pubkey_path,
+                type(exc).__name__,
+            )
+            return None
+
+    def _cache_lookup(self, token: str) -> dict[str, Any] | None:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._cache_lock:
+            entry = self._cache.get(token_hash)
+            if entry is None:
+                return None
+            claims, expires_at = entry
+            if time.monotonic() >= expires_at:
+                self._cache.pop(token_hash, None)
+                return None
+            return claims
+
+    def _cache_store(self, token: str, claims: dict[str, Any]) -> None:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._cache_lock:
+            if len(self._cache) >= _TOKEN_CACHE_MAX_SIZE:
+                # Bounded eviction — drop one arbitrary entry rather than
+                # building a full LRU. Cache will rewarm naturally.
+                self._cache.pop(next(iter(self._cache)), None)
+            self._cache[token_hash] = (
+                claims,
+                time.monotonic() + _TOKEN_CACHE_TTL_SECONDS,
+            )
+
+    def validate_bearer_token(self, token: str) -> dict[str, Any]:
+        """Verify the token and return its claims dict.
+
+        Raises ``UnauthorizedError`` on any failure (expired, bad signature,
+        wrong issuer/audience, unreachable JWKS, etc.). Cached verifications
+        skip the cryptographic check entirely for 5 minutes.
+        """
+        if not token or not isinstance(token, str):
+            raise UnauthorizedError("missing bearer token")
+
+        cached = self._cache_lookup(token)
+        if cached is not None:
+            return cached
+
+        import jwt as _jwt
+        from jwt.exceptions import InvalidSignatureError
+
+        decode_kwargs: dict[str, Any] = {
+            "algorithms": ["EdDSA"],
+            "audience": self._audience,
+            "issuer": self._issuer,
+            "options": {"verify_exp": True, "verify_iss": True, "verify_aud": True},
+        }
+
+        # Path 1 — local pubkey verify
+        if self._local_pubkey is not None:
+            try:
+                claims = _jwt.decode(token, self._local_pubkey, **decode_kwargs)
+                self._cache_store(token, claims)
+                return claims
+            except InvalidSignatureError:
+                # Possibly a kid rotation we haven't rebundled yet — fall through
+                # to the JWKS fetch path. All other PyJWT errors mean the token
+                # is genuinely invalid (expired, wrong aud, etc.) — raise.
+                logger.info("event=oauth_rs_local_sig_fail jwks_retry=1")
+            except Exception as exc:  # noqa: BLE001
+                raise UnauthorizedError(f"token verification failed: {exc}") from exc
+
+        # Path 2 — JWKS fallback
+        try:
+            from jwt import PyJWKClient
+
+            if self._jwks_client is None:
+                self._jwks_client = PyJWKClient(self._jwks_url)
+            signing_key = self._jwks_client.get_signing_key_from_jwt(token)
+            claims = _jwt.decode(token, signing_key.key, **decode_kwargs)
+            self._cache_store(token, claims)
+            return claims
+        except UnauthorizedError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise UnauthorizedError(
+                f"token verification failed (jwks fallback): {exc}"
+            ) from exc
+
+
+# ── Module-level singleton + injection points ───────────────────────────────
+
+
+_oauth_resource_server: OAuthResourceServer | None = None
+
+
+def get_oauth_resource_server() -> OAuthResourceServer:
+    """Return the active OAuthResourceServer (lazy-initialized)."""
+    global _oauth_resource_server
+    if _oauth_resource_server is None:
+        _oauth_resource_server = OAuthResourceServer()
+    return _oauth_resource_server
+
+
+def set_oauth_resource_server(rs: OAuthResourceServer | None) -> None:
+    """Test injection point — pass None to force re-initialization."""
+    global _oauth_resource_server
+    _oauth_resource_server = rs
+
+
+# ── require_scope FastAPI dependency ────────────────────────────────────────
+
+
+def require_scope(scope: str) -> Callable[[Request], dict[str, Any]]:
+    """FastAPI dependency that enforces a single OAuth scope.
+
+    Example:
+        @app.post("/audit/ingest")
+        async def ingest(claims = Depends(require_scope("tessera:audit:write"))):
+            ...
+
+    Returns the verified claims dict on success. Raises HTTPException 401
+    if the Authorization header is missing/malformed, 403 if the scope is
+    not present on an otherwise-valid token.
+    """
+
+    async def _dep(request: Request) -> dict[str, Any]:
+        header = (
+            request.headers.get("Authorization")
+            or request.headers.get("authorization")
+            or ""
+        )
+        if not header.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="missing bearer token")
+        token = header[7:].strip()
+        try:
+            claims = get_oauth_resource_server().validate_bearer_token(token)
+        except UnauthorizedError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        scopes = set((claims.get("scope") or "").split())
+        if scope not in scopes:
+            raise HTTPException(
+                status_code=403,
+                detail=f"insufficient scope: {scope!r} required",
+            )
+        return claims
+
+    return _dep
 
 
 def make_metadata_route(app_ref: FastAPI) -> None:

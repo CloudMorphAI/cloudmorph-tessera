@@ -27,6 +27,44 @@ app.add_typer(policy_app, name="policy")
 pricing_app = typer.Typer(help="Pricing backend management.")
 app.add_typer(pricing_app, name="pricing")
 
+# Sub-commands for config (v0.7.0 Item D §7.5 — `tessera config sync`)
+config_app = typer.Typer(help="Configuration + cloud-sync commands.")
+app.add_typer(config_app, name="config")
+
+
+# ── v0.7.0 Item D §7.5 — OAuth login + token storage helpers ────────────────
+
+
+_OAUTH_TOKEN_DIR = Path.home() / ".tessera"
+_OAUTH_TOKEN_FILE = _OAUTH_TOKEN_DIR / "oauth.json"
+_OAUTH_DEFAULT_ISSUER = "https://tessera.cloudmorph.ai"
+_OAUTH_DEFAULT_CLIENT_ID = "tessera-cli"
+_OAUTH_DEFAULT_SCOPE = "tessera:policies:read tessera:audit:write"
+
+
+def _save_oauth_tokens(payload: dict) -> Path:
+    """Persist OAuth tokens to ~/.tessera/oauth.json with mode 0600."""
+    _OAUTH_TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+    # Write to a tmpfile + rename to avoid leaving a half-written file on crash.
+    tmp = _OAUTH_TOKEN_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        # Windows ignores chmod; non-fatal.
+        pass
+    tmp.replace(_OAUTH_TOKEN_FILE)
+    return _OAUTH_TOKEN_FILE
+
+
+def _load_oauth_tokens() -> dict | None:
+    if not _OAUTH_TOKEN_FILE.exists():
+        return None
+    try:
+        return json.loads(_OAUTH_TOKEN_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
 
 # ---------------------------------------------------------------------------
 # serve
@@ -1141,6 +1179,245 @@ def pricing_serve(
     # Inputs come from the local CLI invoker (port + their own API key); cmd is
     # a list (no shell expansion). S603 false positive in this context.
     sys.exit(subprocess.call(cmd))  # noqa: S603
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0 Item D §7.5 — `tessera login` (OAuth 2.1 PKCE browser flow)
+# ---------------------------------------------------------------------------
+
+
+@app.command("login")
+def login(
+    issuer: str = typer.Option(
+        _OAUTH_DEFAULT_ISSUER,
+        "--issuer",
+        help="Base URL of the OAuth authorization server.",
+    ),
+    client_id: str = typer.Option(
+        _OAUTH_DEFAULT_CLIENT_ID,
+        "--client-id",
+        help="Pre-registered public client ID (default: tessera-cli).",
+    ),
+    scope: str = typer.Option(
+        _OAUTH_DEFAULT_SCOPE,
+        "--scope",
+        help="Space-separated OAuth scopes to request.",
+    ),
+    port: int = typer.Option(
+        0,
+        "--port",
+        help="Localhost port to receive the callback on (0 = random).",
+    ),
+    timeout: int = typer.Option(
+        300,
+        "--timeout",
+        help="Seconds to wait for the browser callback before giving up.",
+    ),
+) -> None:
+    """Authenticate with tessera.cloudmorph.ai via OAuth 2.1 + PKCE.
+
+    Opens a browser to the authorization server's /oauth/authorize endpoint,
+    waits for the redirect to a one-shot local listener, exchanges the code
+    for an access + refresh token, and stores them at ~/.tessera/oauth.json.
+    """
+    import base64
+    import hashlib
+    import http.server
+    import secrets
+    import socket
+    import threading
+    import time
+    import urllib.parse
+    import webbrowser
+
+    import httpx
+
+    issuer = issuer.rstrip("/")
+
+    # ── PKCE ────────────────────────────────────────────────────────────────
+    verifier = (
+        base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode("ascii")
+    )
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    state = secrets.token_urlsafe(24)
+
+    # ── Local callback listener ─────────────────────────────────────────────
+    captured: dict[str, str] = {}
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — http.server contract
+            parsed = urllib.parse.urlparse(self.path)
+            qs = dict(urllib.parse.parse_qsl(parsed.query))
+            captured.update(qs)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            if "code" in qs and qs.get("state") == state:
+                body = (
+                    "<html><body style='font-family:system-ui;"
+                    "max-width:560px;margin:80px auto;padding:0 20px'>"
+                    "<h1 style='font-weight:300'>Login successful</h1>"
+                    "<p>You can close this tab and return to your terminal.</p>"
+                    "</body></html>"
+                )
+            else:
+                body = (
+                    "<html><body style='font-family:system-ui;"
+                    "max-width:560px;margin:80px auto;padding:0 20px'>"
+                    "<h1 style='font-weight:300'>Login failed</h1>"
+                    f"<p>{qs.get('error_description', qs.get('error', 'unknown'))}</p>"
+                    "</body></html>"
+                )
+            self.wfile.write(body.encode("utf-8"))
+
+        def log_message(self, *_args: Any) -> None:  # noqa: N802
+            # Suppress default stderr access-log spam.
+            return
+
+    # Bind to localhost on the requested (or random) port. SO_REUSEADDR so
+    # repeated logins don't TIME_WAIT on the previous port.
+    if port == 0:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+
+    server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+    server.timeout = 1.0  # poll handle_request every second so we can check timeouts
+    redirect_uri = f"http://localhost:{port}/callback"
+
+    # ── Build /authorize URL ────────────────────────────────────────────────
+    authorize_url = (
+        f"{issuer}/oauth/authorize?"
+        + urllib.parse.urlencode(
+            {
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "scope": scope,
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+    )
+
+    typer.echo(f"Opening {authorize_url} ...")
+    try:
+        webbrowser.open(authorize_url)
+    except Exception:  # noqa: BLE001
+        typer.echo("(Could not auto-open the browser — paste the URL above into your browser.)")
+
+    # ── Wait for callback ───────────────────────────────────────────────────
+    typer.echo(f"Listening on http://localhost:{port} for the OAuth callback ...")
+    started = time.monotonic()
+    while not captured.get("code") and not captured.get("error"):
+        if time.monotonic() - started > timeout:
+            typer.echo("Login timed out — no callback received.", err=True)
+            raise typer.Exit(2)
+        # handle_request honors server.timeout (1.0s) so we can re-check the budget.
+        server.handle_request()
+    server.server_close()
+
+    if "error" in captured:
+        typer.echo(
+            f"Login failed: {captured.get('error_description') or captured.get('error')}",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    code = captured["code"]
+    if captured.get("state") != state:
+        typer.echo("Login failed: state mismatch (possible CSRF) — aborting.", err=True)
+        raise typer.Exit(2)
+
+    # ── Exchange code for tokens ────────────────────────────────────────────
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                f"{issuer}/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": verifier,
+                    "client_id": client_id,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+            tokens = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Token exchange failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    # Save tokens
+    payload = {
+        "issuer": issuer,
+        "client_id": client_id,
+        "scope": tokens.get("scope") or scope,
+        "access_token": tokens.get("access_token"),
+        "refresh_token": tokens.get("refresh_token"),
+        "expires_in": tokens.get("expires_in"),
+        "obtained_at": int(time.time()),
+    }
+    saved_at = _save_oauth_tokens(payload)
+    typer.echo(f"Login successful — tokens saved to {saved_at}")
+
+
+# ---------------------------------------------------------------------------
+# v0.7.0 Item D §7.5 — `tessera config sync` (manual policy refresh)
+# ---------------------------------------------------------------------------
+
+
+@config_app.command("sync")
+def config_sync(
+    endpoint: str | None = typer.Option(
+        None,
+        "--endpoint",
+        help="Cloud endpoint. Defaults to the issuer the CLI logged into.",
+    ),
+    cache_path: str | None = typer.Option(
+        None,
+        "--cache-path",
+        help="Override the local SQLite cache location (default ~/.tessera/policy-cache.db).",
+    ),
+) -> None:
+    """Refresh local policy cache from tessera.cloudmorph.ai immediately.
+
+    Reads the OAuth token from ~/.tessera/oauth.json (created by `tessera login`),
+    fetches /api/cli/policies, and writes the response to the local SQLite cache
+    used by `tessera serve`. Prints a count of policies cached on success.
+    """
+    import asyncio
+
+    tokens = _load_oauth_tokens()
+    if not tokens or not tokens.get("access_token"):
+        typer.echo(
+            "No saved OAuth token at ~/.tessera/oauth.json — run `tessera login` first.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    from tessera.cloud_sync import CloudPolicySync
+
+    chosen_endpoint = endpoint or tokens.get("issuer") or _OAUTH_DEFAULT_ISSUER
+    sync = CloudPolicySync(
+        endpoint=chosen_endpoint,
+        oauth_token=tokens["access_token"],
+        cache_path=cache_path,
+    )
+
+    try:
+        items = asyncio.run(sync.fetch_and_cache())
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Sync failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    typer.echo(f"Cached {len(items)} policies from {chosen_endpoint}.")
 
 
 if __name__ == "__main__":
