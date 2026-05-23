@@ -39,7 +39,8 @@ Resolution is `module.path:ClassName` via `tessera/pluggable.py:resolve()`. Pure
 5. **Pre-fetch cost.** If both an Infracost backend and an `aws_mapping` module are configured, the proxy calls `aws_mapping.map_request(tool_name, args)` to build a query and then `cost_backend.query_sku(...)` to fetch a price. Result is stored in `context["cost_cache"][tool_name]`. This is the async→sync bridge that lets the synchronous `predicted_cost` condition evaluator consult cost data without spinning an event loop inside the engine.
 6. **Build evaluation context.** A dict with `tool_call`, `intent`, `upstream`, `runtime`, `mode`, `policy_id`, `scope`, `cost_backend`, `cost_cache`, `aws_mapping`, `blast_radius_backend`, `state_backend`. The engine reads everything it needs from this context.
 7. **Lockdown short-circuit.** `runtime.lockdown: true` blocks every call before the engine runs. The reason field on the audit event is `lockdown_active`. This is a kill-switch for incident response.
-8. **Mode branch.**
+8. **Decision cache lookup (v0.7.0).** Before invoking the engine, `app.state.decision_cache.get(scope, tool_name, tool_call)` is consulted. On hit, the cached `allow`/`observed` decision is reused — sub-microsecond. On miss, evaluate then `put(...)`. `block` and `require_approval` decisions are NEVER cached (they always re-evaluate against current policy so a fix-up rule takes effect immediately). Cache cleared on every `CloudPolicySync` reload — see `arch/status/control-plane-v0.7.0.md`.
+9. **Mode branch.**
    - `observation` — engine skipped; upstream always called; audit event records `decision: null`.
    - `log_only` — engine evaluates; decision is recorded as `would_decision`; upstream is **always** forwarded regardless of decision. `X-Tessera-Mode`, `X-Tessera-Decision` (`would_block` / `would_allow` / `no_match`), and on `would_block` also `X-Tessera-Policy-Id` and `X-Tessera-Reason` headers are added to the response.
    - `enforcement` — engine result is honored.
@@ -147,11 +148,4 @@ The `tessera audit` subcommand group exposes four inspection operations against 
 - `tessera audit export [--scope S] [--format jsonl|csv] [--output PATH]` — bulk export. `jsonl` emits one full-JSON event per line, suitable for `jq`, Splunk, Vector, Elasticsearch. `csv` emits flat columns (`event_id, scope, event_type, occurred_at, prev_event_hash, event_hash, payload`); the payload column is JSON-stringified with large cells truncated at 4 KB. Both formats preserve the `prev_event_hash` and `event_hash` columns so downstream tools can re-verify the chain offline.
 - `tessera audit inspect <eventId>` — fetch one event by ID and print its full JSON. Delegates to `tessera/audit/inspect.py:fetch_event_by_id` which calls `SqliteSink.fetch_by_id`.
 
-Helper functions (`tail_events`, `export_jsonl`, `export_csv`, `fetch_event_by_id`) live in `tessera/audit/inspect.py`; the CLI subcommands are thin wrappers that handle argument parsing, file I/O, and exit codes. Hash-chain repair (replacing a corrupt event and re-stamping forward) is deliberately not provided — doing so would defeat tamper-evidence; the correct response to a chain break is a fresh chain start with a documented sequence-break in the incident record.
-
-## Cross-references
-
-- For YAML → runtime decisions: `policy-engine.md`.
-- For the consumer side of signed-content fetch: `intelligence-and-licensing.md`.
-- For AWS-specific upstream and blast-radius wiring: `integrations-and-cost.md`.
-- For the audit event schema: `schemas/audit_event.schema.json` at the repo root.
+Helper functions (`tail_events`, `export_jsonl`, `export_csv`, `fetch_event_by_id`) live in `tessera/audit/inspect.py`; the CLI subcommands are thin wrappers that handle argument parsing, file I/O, and exit codes. Hash-chain repair (replacing a corrupt event and re-stamping forward) is deliberat

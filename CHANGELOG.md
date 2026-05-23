@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] - 2026-XX-XX (release pending founder sign-off)
 
+### Added — control-plane wiring (Item D of v0.7.0 plan)
+- **OAuth 2.1 resource server validator** (`tessera/auth/oauth_rs.py:372` — `OAuthResourceServer`). Verifies Ed25519 access tokens against the bundled `tessera/auth/oauth_pubkey.pem` trust anchor with JWKS fetch fallback at `https://tessera.cloudmorph.ai/oauth/.well-known/jwks.json`. Surfaces RFC 9728 protected-resource metadata, RFC 7591 DCR proxy, RFC 7662 introspection, RFC 7009 revocation. `require_scope(scope)` decorator helper for route protection. Gap analysis vs the §7.1 spec at `plan/v0.7.0-item-D-oauth_rs-gaps.md`.
+- **Cloud policy sync** (`tessera/cloud_sync.py` — `CloudPolicySync`). Periodic background pull from `/api/cli/policies` into the local SQLite policy cache. Configurable refresh interval (default 5 min). Invalidates the proxy `DecisionCache` on every policy change so a tightened rule takes effect on the very next call. Failure-isolated: cloud unreachable does not break local enforcement.
+- **Audit cloud uploader** (`tessera/audit/cloud_uploader.py` — `AuditCloudUploader`). Background batched POST to `/api/tessera/audit/ingest` with exponential-backoff retry. Carries the local hash-chain head per batch; server stores raw and chain-verifies on read.
+- **DecisionCache** (`tessera/proxy.py:82` — `DecisionCache`). LRU + 60s TTL memoization on the per-call hot path. Bounded at 1024 entries. Caches `allow` and `observed` decisions only — `block` and `require_approval` are always re-evaluated against current policy. Cache key is `sha256(canonical_json({scope, tool, args}))` so arg-ordering doesn't fragment the cache. Cleared on every `CloudPolicySync` reload.
+- **`tessera login` CLI command** (`tessera/cli.py:1189`). Browser-based PKCE flow against the new cloudmorph.ai OAuth server. Spawns a one-shot localhost listener, exchanges the auth code for an access + refresh JWT pair, and persists them at `~/.tessera/oauth.json`.
+- **`tessera config sync` CLI command** (`tessera/cli.py:1377`). Force a one-shot pull of policies from cloud, bypassing the periodic timer.
+
 ### Fixed (CRITICAL — from code-audit-2026-05-22)
 - **Pack status filter** (`tessera/intelligence/client.py:468,484`) now accepts both `"active"` and `"production"`. Before this fix, every pack and every mapping bundle was silently skipped on every `refresh()` call because the production catalog uses `"production"` while the client checked `!= "active"`. Zero packs downloaded in prod for the full v0.6 lifecycle.
 - **Scale-tier customers silently downgraded to free** (`tessera/intelligence/license.py:_TIER_ORDER`) — the license validator's tier dict was missing `"scale"`. Customers on Quaestor's Scale plan got `tier="scale"` from the license server, which the validator coerced to `"free"`. Paying customers couldn't access premium packs.
@@ -16,14 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `PackManifest.status` enum extended in code+docstring: `"active" | "production" | "deprecated" | "pre-signed"`.
 - `LicenseStatus.tier` Literal type extended to include `"scale"`.
+- Package version bump 0.6.0 → 0.7.0 (`pyproject.toml`, `tessera/_version.py`, `docs/INSTALL.md` x5 occurrences).
 
-### Note — founder follow-up
-- Tests for these regressions live at `tests/unit/test_intelligence_021_audit_fixes.py` (already on main).
-- Items deferred from this v0.7.0 cycle to v0.7.1 / v0.7.1-launch:
-  - OAuth 2.1 resource server completion (`tessera/auth/oauth_rs.py`)
-  - CLI `install-{cursor,claude-code,claude-desktop}` `--use-oauth` flag
-  - CLI `tessera deeplink` subcommand
-  - `authlib` + `cachetools` dependencies (will land alongside OAuth wiring)
+### Note — founder follow-up before publish
+- `tessera/auth/oauth_pubkey.pem` ships as a **placeholder** marked `PLACEHOLDER_REPLACE_POST_DEPLOY_WITH_REAL_ED25519_PUBKEY`. Founder generates the Ed25519 keypair, pastes the private into AWS Secrets Manager `tessera/oauth/jwt-signing-key-prod`, and replaces the placeholder with the real public-key PEM before tagging v0.7.0 + uploading to PyPI. Without that step, `tessera login` will succeed but every subsequent token verify in the OSS package will reject.
+- Deferred to v0.7.1 (intentional, not regressions):
+  - CLI `install-{cursor,claude-code,claude-desktop}` `--use-oauth` flag (current install helpers still wire raw API keys).
+  - CLI `tessera deeplink` subcommand for IDE-side deeplink registration.
+  - `authlib` + `cachetools` dependencies — current implementation uses stdlib + the existing `cryptography` dep, so no new wheel additions for v0.7.0.
 
 ## [0.6.0] - 2026-05-18
 
@@ -616,41 +624,4 @@ This entry tracks the in-progress v0.2.0 release.
 
 **Metrics endpoint**
 - Prometheus metrics endpoint at `/metrics`. Disabled by default (`metrics.enabled: false`).
-- When enabled, bearer authentication is required (dedicated `TESSERA_METRICS_TOKEN` or any main-list token).
-- Labels: `requests_total{outcome}`, `decisions_total{action,mode}`, `audit_emit_failures_total`.
-
-**CLI** (Typer-based, entry point `tessera`):
-- `tessera serve` — start the proxy; `--config`, `--policy-dir`, `--bind`, `--log-level`.
-- `tessera audit verify` — walk the hash chain; `--audit-path`, `--scope`, `--all`, `--json`.
-- `tessera policy test` — run fixture decisions against loaded policies; `--policy-dir`, `--fixture`, `--fixture-dir`, `--json`.
-- `tessera policy lint` — validate all YAML policies and run the ReDoS corpus test; `--policy-dir`, `--json`.
-- `tessera version` — print version, git SHA, and Python version; `--json`.
-- `tessera init` — scaffold `tessera.yaml` (with `mode: log_only`), `policies/`, and `.env.example` into a directory; `--dir`, `--force`.
-
-**Docker image**
-- Multi-stage Dockerfile: `python:3.12-slim` builder and runtime stages.
-- Non-root `tessera` user (uid/gid 10001).
-- HEALTHCHECK polls `/healthz` every 30 s.
-- Target image size ~150 MB (no OPA runtime).
-- Published to `ghcr.io/cloudmorphai/tessera:0.1.0`.
-
-**Pluggable extension points** — three `Protocol` interfaces for Tessera Cloud and custom deployments:
-- `PolicyLoader` — `load_all(scope)` + `watch(scope, callback)`.
-- `AuditSink` — `emit(event)`, `close()`, `head_hash(scope)`, `iter_events(scope)`.
-- `Authenticator` — `authenticate(request) -> AuthContext`.
-- Selected via `TESSERA_POLICY_LOADER`, `TESSERA_AUDIT_SINK`, `TESSERA_AUTHENTICATOR` env vars (`module:Class` format, resolved by `tessera/pluggable.py` at startup).
-
-**Configuration**
-- `tessera.yaml` runtime config with env-var overrides (`TESSERA_*` prefix) and `${VAR}` interpolation in upstream credential values.
-- SIGHUP reloads policies (per-file) and re-reads `runtime.lockdown`; all other fields require a restart.
-- JSON Schemas for policy (`schemas/policy.schema.json`), audit event (`schemas/audit_event.schema.json`), and config (`schemas/config.schema.json`).
-
-**Documentation**
-- `README.md` with 5-minute quickstart (`log_only` → `enforcement` walkthrough).
-- `docs/INSTALL.md`, `docs/POLICIES.md`, `docs/CONFIGURATION.md`, `docs/INTEGRATIONS.md`.
-- `docs/AUDIT.md` — audit event schema, `verify` usage, hash chain guarantees, SQLite → Postgres migration path.
-- `docs/TROUBLESHOOTING.md` — common issues and remediation steps.
-- `docs/ROADMAP.md` — features deferred to v0.2 with rationale.
-
-[0.1.1]: https://github.com/CloudMorphAI/cloudmorph-tessera/releases/tag/v0.1.1
-[0.1.0]: https://github.com/CloudMorphAI/cloudmorph-tessera/releases/tag/v0.1.0
+- When enabled, bearer authenticat
