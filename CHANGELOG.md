@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.0] - 2026-XX-XX (release pending founder sign-off)
+
+### Fixed (CRITICAL — from code-audit-2026-05-22)
+- **Pack status filter** (`tessera/intelligence/client.py:468,484`) now accepts both `"active"` and `"production"`. Before this fix, every pack and every mapping bundle was silently skipped on every `refresh()` call because the production catalog uses `"production"` while the client checked `!= "active"`. Zero packs downloaded in prod for the full v0.6 lifecycle.
+- **Scale-tier customers silently downgraded to free** (`tessera/intelligence/license.py:_TIER_ORDER`) — the license validator's tier dict was missing `"scale"`. Customers on Quaestor's Scale plan got `tier="scale"` from the license server, which the validator coerced to `"free"`. Paying customers couldn't access premium packs.
+
+### Changed
+- `PackManifest.status` enum extended in code+docstring: `"active" | "production" | "deprecated" | "pre-signed"`.
+- `LicenseStatus.tier` Literal type extended to include `"scale"`.
+
+### Note — founder follow-up
+- Tests for these regressions live at `tests/unit/test_intelligence_021_audit_fixes.py` (already on main).
+- Items deferred from this v0.7.0 cycle to v0.7.1 / v0.7.1-launch:
+  - OAuth 2.1 resource server completion (`tessera/auth/oauth_rs.py`)
+  - CLI `install-{cursor,claude-code,claude-desktop}` `--use-oauth` flag
+  - CLI `tessera deeplink` subcommand
+  - `authlib` + `cachetools` dependencies (will land alongside OAuth wiring)
+
 ## [0.6.0] - 2026-05-18
 
 ### Added — tri-cloud parity at AWS depth

@@ -12,7 +12,7 @@ name = "cloudmorph-tessera"
 #   3. README.md — `tessera:<old>` → `tessera:<new>` AND `tessera <old>` → `tessera <new>`
 #   4. docs/INSTALL.md — same search & replace
 #   5. CHANGELOG.md — add a new section
-version = "0.6.0"
+version = "0.7.0"
 description = "The open-source MCP firewall for AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
