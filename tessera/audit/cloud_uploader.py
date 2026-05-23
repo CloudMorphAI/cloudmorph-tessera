@@ -100,6 +100,29 @@ class AuditCloudUploader:
     def stop(self) -> None:
         self._stopped = True
 
+    # ── One-shot flush (CLI + smoke-test entry point) ───────────────────────
+
+    async def flush_once(self) -> int:
+        """Drain the queue in one or more :meth:`_flush_once` batches.
+
+        Returns the number of events successfully uploaded. Raises if any
+        batch fails (caller can re-invoke after fixing connectivity — failed
+        events are restored to the front of the queue).
+        """
+        uploaded = 0
+        while self._queue:
+            depth_before = len(self._queue)
+            await self._flush_once()
+            depth_after = len(self._queue)
+            sent = depth_before - depth_after
+            if sent <= 0:
+                # Defensive: nothing moved (failure restored the batch).
+                # _flush_once would have raised already; this guards against
+                # zero-progress livelocks if anyone subclasses it.
+                break
+            uploaded += sent
+        return uploaded
+
     # ── Flush + retry ───────────────────────────────────────────────────────
 
     async def _flush_once_safe(self) -> None:

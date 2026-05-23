@@ -1182,6 +1182,178 @@ def pricing_serve(
 
 
 # ---------------------------------------------------------------------------
+# v0.7.0 Item D §7.5 (extension) — `tessera audit emit` + `audit upload`
+# ---------------------------------------------------------------------------
+#
+# `emit` writes one synthetic event to a JSONL outbox at
+# ~/.tessera/audit-outbox.jsonl (a small standalone queue file so emit + upload
+# work as two separate process invocations during smoke-tests + cron-style
+# pushes). `upload --once` drains the outbox by enqueueing every line into
+# AuditCloudUploader and calling flush_once(). Successfully-uploaded events
+# are removed from the outbox; failures leave the file intact for retry.
+#
+# This is intentionally minimal — production wrappers should use
+# AuditEmitter + a SqliteSink + the in-process background uploader, NOT this
+# JSONL outbox path. The outbox is for ad-hoc CLI usage + smoke validation.
+
+
+_AUDIT_OUTBOX_PATH = Path.home() / ".tessera" / "audit-outbox.jsonl"
+
+
+def _audit_outbox_append(event: dict) -> None:
+    _AUDIT_OUTBOX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _AUDIT_OUTBOX_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def _audit_outbox_read() -> list[dict]:
+    if not _AUDIT_OUTBOX_PATH.exists():
+        return []
+    events: list[dict] = []
+    with _AUDIT_OUTBOX_PATH.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return events
+
+
+def _audit_outbox_clear() -> None:
+    if _AUDIT_OUTBOX_PATH.exists():
+        _AUDIT_OUTBOX_PATH.unlink()
+
+
+@audit_app.command("emit")
+def audit_emit(
+    tool: str = typer.Option(..., "--tool", help="Tool name (e.g. demo.tool, aws.s3.PutObject)."),
+    decision: str = typer.Option(
+        "allow",
+        "--decision",
+        help="Decision outcome: allow | deny | observed.",
+    ),
+    scope: str = typer.Option(
+        "default",
+        "--scope",
+        help="Tenant/scope identifier; mirrors the wrapper's local scope.",
+    ),
+    policy_id: str | None = typer.Option(None, "--policy-id", help="Optional policy_id."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional human-readable reason."),
+) -> None:
+    """Write one synthetic audit event to ~/.tessera/audit-outbox.jsonl.
+
+    Use together with `tessera audit upload --once` to validate cloud
+    ingest end-to-end. The event uses a deterministic-but-unique seq based
+    on the current count in the outbox so the cloud sees monotonic seqs
+    across repeated emits in the same outbox.
+    """
+    import datetime as _dt
+    import uuid as _uuid
+
+    outbox = _audit_outbox_read()
+    next_seq = len(outbox) + 1
+    event = {
+        "seq":         next_seq,
+        "event_id":    _uuid.uuid4().hex,
+        "occurred_at": _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "head_hash":   "",
+        "payload": {
+            "tool":      tool,
+            "decision":  decision,
+            "scope":     scope,
+            "policy_id": policy_id or "",
+            "reason":    reason or "",
+            "source":    "cli.audit.emit",
+        },
+    }
+    _audit_outbox_append(event)
+    typer.echo(
+        f"Queued audit event seq={next_seq} tool={tool} decision={decision} "
+        f"(outbox depth: {next_seq})"
+    )
+
+
+@audit_app.command("upload")
+def audit_upload(
+    once: bool = typer.Option(
+        False,
+        "--once",
+        help="Drain the outbox in one shot then exit. Required for v0.7.0.",
+    ),
+    endpoint: str | None = typer.Option(
+        None,
+        "--endpoint",
+        help="Cloud endpoint. Defaults to the issuer the CLI logged into.",
+    ),
+    upload_scope: str = typer.Option(
+        "",
+        "--upload-scope",
+        help="Opaque scope id sent in the request body (mirrors the wrapper's local scope).",
+    ),
+) -> None:
+    """Drain ~/.tessera/audit-outbox.jsonl to /api/tessera/audit/ingest.
+
+    Reads the saved OAuth token from ~/.tessera/oauth.json (must have scope
+    tessera:audit:write) and POSTs every queued event in batches. On full
+    success the outbox is truncated; on any failure the outbox is left
+    intact so the next invocation can retry.
+
+    Background-loop mode (no `--once`) is intentionally not implemented in
+    v0.7.0 — wrappers integrate the uploader directly via
+    `AuditCloudUploader.background_flush_loop()`.
+    """
+    import asyncio
+
+    if not once:
+        typer.echo(
+            "tessera audit upload requires --once in v0.7.0; "
+            "background-loop mode is owned by the wrapper, not the CLI.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    events = _audit_outbox_read()
+    if not events:
+        typer.echo("Outbox is empty — nothing to upload.")
+        return
+
+    tokens = _load_oauth_tokens()
+    if not tokens or not tokens.get("access_token"):
+        typer.echo(
+            "No saved OAuth token at ~/.tessera/oauth.json — run `tessera login` first.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    from tessera.audit.cloud_uploader import AuditCloudUploader
+
+    chosen_endpoint = endpoint or tokens.get("issuer") or _OAUTH_DEFAULT_ISSUER
+    uploader = AuditCloudUploader(
+        endpoint=chosen_endpoint,
+        oauth_token=tokens["access_token"],
+        upload_scope=upload_scope,
+    )
+    for evt in events:
+        uploader.enqueue(evt)
+
+    try:
+        sent = asyncio.run(uploader.flush_once())
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"Upload failed: {exc}", err=True)
+        typer.echo(
+            f"Outbox retained at {_AUDIT_OUTBOX_PATH} for retry.",
+            err=True,
+        )
+        raise typer.Exit(2) from exc
+
+    _audit_outbox_clear()
+    typer.echo(f"{sent} event{'s' if sent != 1 else ''} uploaded.")
+
+
+# ---------------------------------------------------------------------------
 # v0.7.0 Item D §7.5 — `tessera login` (OAuth 2.1 PKCE browser flow)
 # ---------------------------------------------------------------------------
 
