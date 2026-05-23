@@ -986,13 +986,28 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 _enf_block_payload["cost_band"] = _enf_block_cost.confidence_band
             audit_event = _emit(app.state, auth_ctx.scope, "decision", _enf_block_payload)
             _METRICS["requests_total{outcome=block}"] += 1
+            # Surface block as MCP tool-error (result.isError=true) instead
+            # of a JSON-RPC -32603. Reason: -32603 ("Internal error") is the
+            # JSON-RPC signal for transport/system failure, which causes
+            # well-trained agents (Claude, GPT-4) to retry with adjusted
+            # parameters — looping uselessly against a deterministic policy.
+            # A result.isError response is the MCP-spec way to say "the tool
+            # ran and returned a structured failure" — agents read it as
+            # final, surface to the user, and don't retry.
+            block_text = (
+                "POLICY_BLOCK\n"
+                f"policy_id: {decision.policy_id or 'unknown'}\n"
+                f"reason: {decision.reason or 'blocked by policy'}\n\n"
+                "This is a final decision from the Tessera policy gate. "
+                "Do NOT retry with different parameters — the policy will "
+                "reject equivalent calls. Surface this block to the user."
+            )
             resp_body = {
                 "jsonrpc": "2.0",
                 "id": jsonrpc_id,
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": {"reason": decision.reason or "blocked"},
+                "result": {
+                    "content": [{"type": "text", "text": block_text}],
+                    "isError": True,
                 },
             }
             _inject_audit_id(resp_body, audit_event["eventId"])
