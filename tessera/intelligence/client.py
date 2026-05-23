@@ -49,7 +49,7 @@ class PackManifest:
     content_hash: str
     signature: str
     pack_url: str
-    status: str  # "active" | "deprecated" | etc.
+    status: str  # "active" | "production" | "deprecated" | "pre-signed" | etc.
     manifest_url: str = ""  # URL of the per-pack signed manifest.json (packs only)
     tarball_sha256: str = ""  # Populated after fetching+verifying manifest_url
 
@@ -465,7 +465,9 @@ class IntelligenceClient:
                 pack_manifests = self._parse_catalog(catalog_data, kind="pack")
 
                 for manifest in pack_manifests:
-                    if manifest.status != "active":
+                    # CRITICAL-1 (code-audit-2026-05-22): accept "production" — prod catalog
+                    # uses that value, not "active". Without this, zero packs ever downloaded.
+                    if manifest.status not in ("active", "production"):
                         continue
                     if not self._tier_allowed(manifest.min_tier, current_tier):
                         continue
@@ -481,7 +483,8 @@ class IntelligenceClient:
                 mapping_manifests = self._parse_catalog(mapping_data, kind="mapping")
 
                 for manifest in mapping_manifests:
-                    if manifest.status != "active":
+                    # CRITICAL-1 (code-audit-2026-05-22): same as packs above.
+                    if manifest.status not in ("active", "production"):
                         continue
                     if not self._tier_allowed(manifest.min_tier, current_tier):
                         continue

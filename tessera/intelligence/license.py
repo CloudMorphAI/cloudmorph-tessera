@@ -23,13 +23,15 @@ _TIER_ORDER: dict[str, int] = {
     "free": 0,
     "developer": 1,
     "team": 2,
+    "scale": 2,  # CRITICAL-5 (code-audit-2026-05-22): scale-tier customers were silently
+                 # downgraded to free because this dict lacked "scale". Same rank as "team".
     "enterprise": 3,
 }
 
 
 @dataclass
 class LicenseStatus:
-    tier: Literal["free", "developer", "team", "enterprise"]
+    tier: Literal["free", "developer", "team", "scale", "enterprise"]
     expires_at: datetime | None
     seats: int
     customer_id: str | None
