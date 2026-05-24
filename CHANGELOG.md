@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.1] - 2026-05-24 (hotfix)
+
+### Fixed
+- **Bundled OAuth trust anchor missing from wheel.** v0.7.0 shipped without
+  `tessera/auth/oauth_pubkey.pem` in the wheel — the `[tool.setuptools.
+  package-data]` declaration in `pyproject.toml` only included
+  `intelligence/*.pem`, and `MANIFEST.in` only included
+  `tessera/intelligence/public_key.pem`. Result on v0.7.0: every call to
+  `OAuthResourceServer.validate_bearer_token()` silently fell through to
+  the JWKS-fetch path, and the default JWKS URL points at
+  `tessera.cloudmorph.ai` which doesn't currently route to the OAuth
+  Lambda (v0.7.1 server-side fix is the ApiMapping work, see v0.7.0
+  release notes below). 0.7.1 adds `auth/*.pem` to package-data + adds
+  `tessera/auth/oauth_pubkey.pem` to MANIFEST.in so the trust anchor is
+  bundled.
+- **Affected versions**: 0.7.0 only. Workaround for users stuck on 0.7.0:
+  `pip install --upgrade cloudmorph-tessera` (this pulls 0.7.1). No
+  schema or behavioural change otherwise — 0.7.1 is a packaging-only fix.
+
 ## [0.7.0] - 2026-05-24
 
 ### Added — control-plane wiring (Item D of v0.7.0 plan)

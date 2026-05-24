@@ -1,3 +1,4 @@
 include tessera/intelligence/public_key.pem
+include tessera/auth/oauth_pubkey.pem
 recursive-include policies *.yaml
 recursive-include schemas *.json
