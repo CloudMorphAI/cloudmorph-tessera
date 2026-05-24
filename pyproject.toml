@@ -12,7 +12,7 @@ name = "cloudmorph-tessera"
 #   3. README.md — `tessera:<old>` → `tessera:<new>` AND `tessera <old>` → `tessera <new>`
 #   4. docs/INSTALL.md — same search & replace
 #   5. CHANGELOG.md — add a new section
-version = "0.7.0"
+version = "0.7.1"
 description = "The open-source MCP firewall for AI agents"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -118,6 +118,10 @@ tessera = [
     "intelligence/*.pem",
     "intelligence/*.json",
     "policies_default/*.yaml",
+    # v0.7.1 — bundle the Ed25519 OAuth trust anchor. v0.7.0 shipped without
+    # it because only `intelligence/*.pem` was declared; OAuthResourceServer
+    # silently fell through to JWKS-fetch on every verify.
+    "auth/*.pem",
 ]
 
 [tool.ruff]
