@@ -33,7 +33,11 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_CACHE_PATH = Path.home() / ".tessera" / "policy-cache.db"
-_DEFAULT_ENDPOINT = "https://tessera.cloudmorph.ai"
+# v0.7.2: auth.tessera.cloudmorph.ai is the ApiMapping for tessera-api-prod
+# (the HttpApi that hosts /oauth/* + /api/cli/* + /api/tessera/audit/ingest).
+# Up to v0.7.1 this defaulted to https://tessera.cloudmorph.ai which routed
+# to the ECS ALB (Tessera Cloud SaaS) and didn't reach the OAuth Lambda.
+_DEFAULT_ENDPOINT = "https://auth.tessera.cloudmorph.ai"
 _DEFAULT_REFRESH_TTL = 300  # 5 min
 _FETCH_TIMEOUT = 10.0
 

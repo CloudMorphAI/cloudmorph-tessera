@@ -30,7 +30,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_ENDPOINT = "https://tessera.cloudmorph.ai"
+# v0.7.2: auth.tessera.cloudmorph.ai is the ApiMapping for tessera-api-prod.
+# Older versions defaulted to https://tessera.cloudmorph.ai (ECS ALB — wrong
+# service entirely). See CHANGELOG.md.
+_DEFAULT_ENDPOINT = "https://auth.tessera.cloudmorph.ai"
 _DEFAULT_BATCH_SIZE = 100
 _DEFAULT_FLUSH_INTERVAL = 10
 _DEFAULT_MAX_QUEUE = 5000

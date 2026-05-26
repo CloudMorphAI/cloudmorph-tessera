@@ -363,7 +363,11 @@ def _validate_token_for_introspection(
 
 _DEFAULT_TESSERA_ISSUER = "tessera.cloudmorph.ai"
 _DEFAULT_TESSERA_AUDIENCE = "tessera.cloudmorph.ai/api"
-_DEFAULT_TESSERA_JWKS_URL = "https://tessera.cloudmorph.ai/oauth/jwks.json"
+# v0.7.2: JWKS fallback URL points to the auth.tessera.cloudmorph.ai
+# ApiMapping on tessera-api-prod. The `iss` claim of issued tokens stays
+# `tessera.cloudmorph.ai` (unchanged — RFC-7519 issuer is an identifier,
+# not a URL). Only the network-fetch URL for JWKS is updated.
+_DEFAULT_TESSERA_JWKS_URL = "https://auth.tessera.cloudmorph.ai/oauth/jwks.json"
 _DEFAULT_PUBKEY_PATH = str(Path(__file__).parent / "oauth_pubkey.pem")
 _TOKEN_CACHE_TTL_SECONDS = 300
 _TOKEN_CACHE_MAX_SIZE = 1024

@@ -37,7 +37,11 @@ app.add_typer(config_app, name="config")
 
 _OAUTH_TOKEN_DIR = Path.home() / ".tessera"
 _OAUTH_TOKEN_FILE = _OAUTH_TOKEN_DIR / "oauth.json"
-_OAUTH_DEFAULT_ISSUER = "https://tessera.cloudmorph.ai"
+# v0.7.2: auth.tessera.cloudmorph.ai is the ApiMapping for the OAuth Lambda
+# on the tessera-api-prod HttpApi. Older versions defaulted to
+# https://tessera.cloudmorph.ai which routes to the ECS ALB (a different
+# product surface) — that default never worked for OAuth.
+_OAUTH_DEFAULT_ISSUER = "https://auth.tessera.cloudmorph.ai"
 _OAUTH_DEFAULT_CLIENT_ID = "tessera-cli"
 _OAUTH_DEFAULT_SCOPE = "tessera:policies:read tessera:audit:write"
 

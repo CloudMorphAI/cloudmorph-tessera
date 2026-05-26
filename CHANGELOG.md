@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.7.2] - 2026-05-24
+
+### Changed
+- **Default OAuth + cloud endpoints switched to `https://auth.tessera.cloudmorph.ai`.**
+  Up to v0.7.1 the defaults pointed at `https://tessera.cloudmorph.ai` which
+  routes to the ECS ALB (Tessera Cloud SaaS — wrapped-image MCP firewall),
+  a separate service from the OAuth Lambda. The server-side fix is a new
+  ApiMapping on the `tessera-api-prod` HttpApi (lands in cloudmorph-mono-repo
+  commit `338ae27a`); this OSS release flips the client defaults to match.
+  - `tessera.cli._OAUTH_DEFAULT_ISSUER`
+  - `tessera.cloud_sync._DEFAULT_ENDPOINT`
+  - `tessera.audit.cloud_uploader._DEFAULT_ENDPOINT`
+  - `tessera.auth.oauth_rs._DEFAULT_TESSERA_JWKS_URL`
+
+  No `--issuer` / `--endpoint` flag is required on `tessera login` /
+  `tessera config sync` / `tessera audit upload --once` anymore.
+
+  The `iss` claim of issued tokens stays `tessera.cloudmorph.ai`
+  (unchanged — RFC 7519 issuer is an identifier string, not a URL).
+
+### Note
+- Pre-0.7.2 installs that already set `tessera login --issuer https://hiya106w1a...`
+  will keep working — the raw API Gateway URL is still in the Cognito
+  callback allowlist for transition.
+
 ## [0.7.1] - 2026-05-24 (hotfix)
 
 ### Fixed
