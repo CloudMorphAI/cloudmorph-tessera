@@ -238,6 +238,21 @@ async def aggregate_tools_list(state: Any) -> dict[str, Any]:
             logger.warning("event=aggregate_tools_list_upstream_error upstream=%s", upstream_name)
             return []
         tools: list[dict[str, Any]] = response.get("result", {}).get("tools", [])
+
+        # D4 — validate that no native tool name contains TOOL_NAMESPACE_SEPARATOR.
+        # Lazy check: runs on first tools/list aggregation since we don't fetch tool
+        # inventories at startup. If collision detected, disable unified mode so that
+        # subsequent requests return an actionable error.
+        colliding = [t.get("name", "") for t in tools if TOOL_NAMESPACE_SEPARATOR in t.get("name", "")]
+        if colliding:
+            logger.warning(
+                "event=unified_mode_disabled upstream=%s colliding_tools=%s reason=native_tool_name_contains__",
+                upstream_name,
+                colliding,
+            )
+            state.unified_mode_disabled = True
+            return []
+
         namespaced: list[dict[str, Any]] = []
         for tool in tools:
             tool_name: str = tool.get("name", "")
@@ -254,6 +269,18 @@ async def aggregate_tools_list(state: Any) -> dict[str, Any]:
             all_tools.extend(res)
         else:
             logger.warning("event=aggregate_tools_list_gather_error err=%s", res)
+
+    # Re-check after gather: if any upstream set unified_mode_disabled, propagate the error.
+    if getattr(state, "unified_mode_disabled", False):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32603,
+                "message": "Unified mode disabled: one or more upstream tools contain '__' in their name. "
+                           "Use per-upstream routes POST /mcp/<upstream_name> instead.",
+            },
+        }
 
     return {"jsonrpc": "2.0", "id": None, "result": {"tools": all_tools}}
 
@@ -1218,6 +1245,65 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # Fallback — should not happen
         return _jsonrpc_error(jsonrpc_id, -32603, "Internal error", reason="unknown_decision")
 
+    # ── v0.8.0 — Unified MCP route ────────────────────────────────────────────
+
+    @app.post("/mcp")
+    async def proxy_unified(request: Request) -> Response:
+        """Single-entry-point MCP proxy that handles all configured upstreams.
+
+        tools/list  → aggregate across upstreams, namespace tool names as '<upstream>__<tool>'
+        tools/call  → parse namespace from tool name, rewrite to canonical, dispatch
+        everything else (initialize, ping, etc.) → forward to first configured upstream
+        """
+        cfg: TesseraConfig = app.state.config
+
+        # Step 1 — Authenticate (same as per-upstream proxy)
+        try:
+            auth_ctx = app.state.authenticator.authenticate(request)
+        except UnauthorizedError as exc:
+            _METRICS["requests_total{outcome=unauthorized}"] += 1
+            return JSONResponse({"error": str(exc)}, status_code=401)
+
+        # Step 2 — Parse JSON-RPC body
+        try:
+            body = await request.json()
+        except Exception:
+            _METRICS["requests_total{outcome=parse_error}"] += 1
+            return _jsonrpc_error(None, -32700, "Parse error")
+
+        jsonrpc_id = body.get("id", 1)
+        method: str = body.get("method", "")
+
+        # tools/list — aggregate from all upstreams with namespaced tool names
+        if method == "tools/list":
+            return JSONResponse(await aggregate_tools_list(app.state))
+
+        # tools/call — parse namespace, rewrite params.name to canonical, dispatch
+        if method == "tools/call":
+            namespaced_tool: str = body.get("params", {}).get("name", "")
+            try:
+                upstream_name, canonical_tool = parse_namespaced_tool(namespaced_tool)
+            except ValueError as exc:
+                return _jsonrpc_error(
+                    jsonrpc_id, -32602,
+                    "Invalid params",
+                    reason=str(exc),
+                )
+            # Rewrite the body: replace the namespaced tool name with the canonical one.
+            # The policy engine evaluates against canonical names (D2 of spec).
+            rewritten_body = dict(body)
+            rewritten_body["params"] = {**body.get("params", {}), "name": canonical_tool}
+            return await _run_proxy_pipeline(app.state, upstream_name, rewritten_body, auth_ctx)
+
+        # All other methods (initialize, ping, notifications/*, resources/list, etc.) —
+        # forward to the first configured upstream as a representative. The per-upstream
+        # proxy() route already handles these correctly; here we just pick the first upstream.
+        if not cfg.upstreams:
+            return _jsonrpc_error(jsonrpc_id, -32603, "Internal error", reason="no upstreams configured")
+
+        first_upstream = cfg.upstreams[0].name
+        return await _run_proxy_pipeline(app.state, first_upstream, body, auth_ctx)
+
     # ── Metrics endpoint ─────────────────────────────────────────────────────
 
     cfg_for_metrics = config  # captured in closure
@@ -1262,6 +1348,422 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
+
+
+async def _run_proxy_pipeline(
+    state: Any,
+    upstream_name: str,
+    body: dict[str, Any],
+    auth_ctx: Any,
+) -> Response:
+    """Run the full policy+audit+forward pipeline for a pre-authenticated, pre-parsed request.
+
+    Used by proxy_unified (POST /mcp) to share the identical pipeline as proxy()
+    (POST /mcp/{upstream_name}).  Auth and body-parse are done by the caller.
+    body["params"]["name"] must already be the CANONICAL tool name (namespace stripped).
+    """
+    cfg: TesseraConfig = state.config
+    request_id = str(uuid.uuid4())
+
+    jsonrpc_id = body.get("id", 1)
+    method: str = body.get("method", "")
+
+    # Branch on method — pass-throughs forwarded without policy evaluation
+    _engine_eval_data = cfg.policies.engine_eval_data_methods
+    _data_eval_methods = {"resources/read", "sampling/createMessage"}
+    if method.startswith("notifications/") or (
+        method in _PASS_THROUGH_METHODS
+        and not (_engine_eval_data and method in _data_eval_methods)
+    ):
+        return await _handle_pass_through(
+            state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id
+        )
+
+    if method not in ("tools/call", "resources/read", "sampling/createMessage"):
+        _METRICS["requests_total{outcome=unknown_method}"] += 1
+        return _jsonrpc_error(jsonrpc_id, -32601, "Method not found")
+
+    # Extract params
+    params = body.get("params", {})
+    if method == "tools/call":
+        tool_name: str = params.get("name", "")
+        arguments: dict[str, Any] = params.get("arguments", {}) or {}
+        meta: dict[str, Any] | None = params.get("_meta")
+    else:
+        tool_name = method
+        arguments = dict(params) if isinstance(params, dict) else {}
+        meta = arguments.pop("_meta", None) if isinstance(arguments, dict) else None
+
+    # Extract conversation_id from _meta for audit threading
+    _conversation_id: str | None = None
+    if isinstance(meta, dict):
+        _ti = meta.get("tessera_intent")
+        if isinstance(_ti, dict):
+            _conversation_id = _ti.get("conversation_id") or None
+        if _conversation_id is None:
+            _conversation_id = meta.get("conversation_id") or None
+
+    # Extract intent
+    intent: dict[str, Any] | None = None
+    try:
+        intent = extract_intent(
+            meta,
+            meta_key=cfg.intent.meta_key,
+            intent_required=cfg.intent.required,
+        )
+    except PolicyError:
+        audit_event = _emit(
+            state,
+            auth_ctx.scope,
+            "decision",
+            {
+                "mode": cfg.policies.mode.value,
+                "decision": "block",
+                "policy_id": None,
+                "reason": "intent_required",
+                "upstream": upstream_name,
+                "tool_call": {"name": tool_name, "arguments": arguments, "_meta": meta},
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": None,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": tool_name,
+                "conversation_id": _conversation_id,
+            },
+        )
+        resp_body: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": jsonrpc_id,
+            "error": {
+                "code": -32603,
+                "message": "Internal error",
+                "data": {"reason": "intent_required"},
+            },
+        }
+        _inject_audit_id(resp_body, audit_event["eventId"])
+        return JSONResponse(resp_body)
+
+    # Pre-fetch cost
+    cost_backend = getattr(state, "cost_backend", None)
+    aws_mapping_mod = getattr(state, "aws_mapping", None)
+    _t0_cost = perf_counter()
+    cost_cache: dict[str, CostResult] = await _prefetch_cost(tool_name, arguments, cost_backend, aws_mapping_mod)
+    _cost_result_for_latency = cost_cache.get(tool_name)
+    _obs_metrics.tessera_cost_prefetch_latency_seconds.labels(
+        upstream=upstream_name,
+        cost_source=_cost_result_for_latency.source if _cost_result_for_latency is not None else "miss",
+    ).observe(perf_counter() - _t0_cost)
+
+    # Pre-fetch blast-radius
+    blast_radius_cache: dict[str, int] = {}
+    engine_for_prefetch: PolicyEngine | None = getattr(state, "engine", None)
+    blast_radius_backend = getattr(state, "blast_radius_backend", None)
+    if (
+        blast_radius_backend is not None
+        and engine_for_prefetch is not None
+        and engine_for_prefetch.policies_need_blast_radius(tool_name, upstream_name)
+    ):
+        _t0_br = perf_counter()
+        try:
+            count = await asyncio.to_thread(
+                blast_radius_backend.compute, tool_name, arguments
+            )
+            blast_radius_cache[tool_name] = int(count)
+        except Exception:  # noqa: BLE001
+            _METRICS["blast_radius_prefetch_failures_total"] += 1
+        finally:
+            _obs_metrics.tessera_blast_radius_prefetch_latency_seconds.labels(
+                upstream=upstream_name
+            ).observe(perf_counter() - _t0_br)
+
+    # Pre-fetch DataVolume sizes
+    data_vol_cache: dict[str, int] = {}
+    needed_estimators: set[str] = (
+        engine_for_prefetch.policies_need_data_volume(tool_name, upstream_name)
+        if engine_for_prefetch is not None
+        else set()
+    )
+    if "s3_get_byte_estimate" in needed_estimators:
+        try:
+            from tessera.policy.conditions import s3_head_size_sync as _s3_sync
+            cache_key, size = await asyncio.to_thread(_s3_sync, arguments)
+            if size is not None and cache_key:
+                data_vol_cache[cache_key] = size
+        except Exception:  # noqa: BLE001
+            _METRICS["data_volume_prefetch_failures_total"] += 1
+    if "rds_query_result_estimate" in needed_estimators:
+        try:
+            from tessera.policy.conditions import rds_explain_size_sync as _rds_sync
+            cache_key, size = await asyncio.to_thread(_rds_sync, arguments)
+            if size is not None and cache_key:
+                data_vol_cache[cache_key] = size
+        except Exception:  # noqa: BLE001
+            _METRICS["data_volume_prefetch_failures_total"] += 1
+
+    context: dict[str, Any] = {
+        "tool_call": {"name": tool_name, "arguments": arguments, "_meta": meta},
+        "intent": intent,
+        "upstream": upstream_name,
+        "runtime": {"lockdown": cfg.runtime.lockdown},
+        "mode": cfg.policies.mode.value,
+        "policy_id": None,
+        "scope": auth_ctx.scope,
+        "cost_backend": cost_backend,
+        "cost_cache": cost_cache,
+        "aws_mapping": aws_mapping_mod,
+        "blast_radius_backend": blast_radius_backend,
+        "blast_radius_cache": blast_radius_cache,
+        "state_backend": getattr(state, "state_backend", None),
+        "_data_vol_cache": data_vol_cache,
+    }
+
+    # Lockdown check
+    if cfg.runtime.lockdown:
+        audit_event = _emit(
+            state,
+            auth_ctx.scope,
+            "decision",
+            {
+                "mode": cfg.policies.mode.value,
+                "decision": "block",
+                "policy_id": None,
+                "reason": "lockdown_active",
+                "upstream": upstream_name,
+                "tool_call": context["tool_call"],
+                "principal_id": auth_ctx.principal_id,
+                "request_id": request_id,
+                "decision_error": None,
+                "canonical_tool_name": tool_name,
+                "effective_tool_name": context.get("_effective_tool_name", tool_name),
+                "conversation_id": _conversation_id,
+            },
+        )
+        _METRICS["requests_total{outcome=lockdown}"] += 1
+        resp_body = {
+            "jsonrpc": "2.0",
+            "id": jsonrpc_id,
+            "error": {
+                "code": -32603,
+                "message": "Internal error",
+                "data": {"reason": "lockdown_active"},
+            },
+        }
+        _inject_audit_id(resp_body, audit_event["eventId"])
+        return JSONResponse(resp_body)
+
+    # Mode branch
+    mode = cfg.policies.mode
+    engine: PolicyEngine = state.engine
+
+    if mode == PoliciesMode.observation:
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+        if isinstance(upstream_response, JSONResponse):
+            return upstream_response
+
+        _record_daily_spend(state, scope=auth_ctx.scope, tool_name=tool_name, cost_cache=cost_cache)
+
+        _obs_cost = cost_cache.get(tool_name)
+        _obs_payload: dict[str, Any] = {
+            "mode": "observation",
+            "policy_id": None,
+            "reason": None,
+            "upstream": upstream_name,
+            "tool_call": context["tool_call"],
+            "principal_id": auth_ctx.principal_id,
+            "request_id": request_id,
+            "decision_error": None,
+            "canonical_tool_name": tool_name,
+            "effective_tool_name": context.get("_effective_tool_name", tool_name),
+            "conversation_id": _conversation_id,
+        }
+        if _obs_cost is not None:
+            _obs_payload["cost_source"] = _obs_cost.source
+            _obs_payload["cost_band"] = _obs_cost.confidence_band
+        audit_event = _emit(state, auth_ctx.scope, "decision", _obs_payload)
+        _inject_audit_id(upstream_response, audit_event["eventId"])
+        _METRICS["requests_total{outcome=observation}"] += 1
+        return JSONResponse(upstream_response)
+
+    # Evaluate engine with decision cache
+    _t0_eval = perf_counter()
+    _decision_cache: DecisionCache | None = getattr(state, "decision_cache", None)
+    _cache_key_args = context.get("tool_call") or {}
+    decision = None
+    if _decision_cache is not None:
+        decision = _decision_cache.get(auth_ctx.scope, tool_name, _cache_key_args)
+    if decision is None:
+        decision = engine.evaluate(context)
+        if _decision_cache is not None:
+            _decision_cache.put(auth_ctx.scope, tool_name, _cache_key_args, decision)
+        _METRICS["decision_cache_misses_total"] += 1
+    else:
+        _METRICS["decision_cache_hits_total"] += 1
+    _obs_metrics.tessera_decision_latency_seconds.labels(
+        upstream=upstream_name, mode=mode.value
+    ).observe(perf_counter() - _t0_eval)
+    _obs_metrics.tessera_decisions_total.labels(
+        upstream=upstream_name, mode=mode.value, action=decision.action.value
+    ).inc()
+    _METRICS[f"decisions_total{{action={decision.action.value},mode={mode.value}}}"] += 1
+
+    asyncio.create_task(_obs_events.fire_on_decision(decision, context))
+
+    if mode == PoliciesMode.log_only:
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+
+        if decision.policy_id is None:
+            tessera_decision_header = "no_match"
+        elif decision.action == Action.block:
+            tessera_decision_header = "would_block"
+        else:
+            tessera_decision_header = "would_allow"
+
+        _lo_cost = cost_cache.get(tool_name)
+        _lo_payload: dict[str, Any] = {
+            "mode": "log_only",
+            "would_decision": decision.action.value,
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            "upstream": upstream_name,
+            "tool_call": context["tool_call"],
+            "principal_id": auth_ctx.principal_id,
+            "request_id": request_id,
+            "decision_error": decision.decision_error,
+            "canonical_tool_name": tool_name,
+            "effective_tool_name": context.get("_effective_tool_name", tool_name),
+            "conversation_id": _conversation_id,
+        }
+        if _lo_cost is not None:
+            _lo_payload["cost_source"] = _lo_cost.source
+            _lo_payload["cost_band"] = _lo_cost.confidence_band
+        audit_event = _emit(state, auth_ctx.scope, "decision", _lo_payload)
+        _METRICS["requests_total{outcome=log_only_forwarded}"] += 1
+
+        log_only_headers: dict[str, str] = {
+            "X-Tessera-Mode": "log_only",
+            "X-Tessera-Decision": tessera_decision_header,
+        }
+        if tessera_decision_header == "would_block":
+            if decision.policy_id:
+                log_only_headers["X-Tessera-Policy-Id"] = decision.policy_id
+            if decision.reason:
+                log_only_headers["X-Tessera-Reason"] = decision.reason
+
+        if isinstance(upstream_response, JSONResponse):
+            for k, v in log_only_headers.items():
+                upstream_response.headers[k] = v
+            return upstream_response
+
+        _inject_audit_id(upstream_response, audit_event["eventId"])
+        return JSONResponse(upstream_response, headers=log_only_headers)
+
+    # enforcement mode
+    if decision.action in (Action.allow, Action.log_only):
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+        if isinstance(upstream_response, JSONResponse):
+            return upstream_response
+
+        _record_daily_spend(state, scope=auth_ctx.scope, tool_name=tool_name, cost_cache=cost_cache)
+
+        _enf_allow_cost = cost_cache.get(tool_name)
+        _enf_allow_payload: dict[str, Any] = {
+            "mode": "enforcement",
+            "decision": decision.action.value,
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            "upstream": upstream_name,
+            "tool_call": context["tool_call"],
+            "principal_id": auth_ctx.principal_id,
+            "request_id": request_id,
+            "decision_error": decision.decision_error,
+            "canonical_tool_name": tool_name,
+            "effective_tool_name": context.get("_effective_tool_name", tool_name),
+            "conversation_id": _conversation_id,
+        }
+        if _enf_allow_cost is not None:
+            _enf_allow_payload["cost_source"] = _enf_allow_cost.source
+            _enf_allow_payload["cost_band"] = _enf_allow_cost.confidence_band
+        audit_event = _emit(state, auth_ctx.scope, "decision", _enf_allow_payload)
+        _inject_audit_id(upstream_response, audit_event["eventId"])
+        _METRICS["requests_total{outcome=allow}"] += 1
+        return JSONResponse(upstream_response)
+
+    if decision.action == Action.block:
+        _enf_block_cost = cost_cache.get(tool_name)
+        _enf_block_payload: dict[str, Any] = {
+            "mode": "enforcement",
+            "decision": "block",
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            "upstream": upstream_name,
+            "tool_call": context["tool_call"],
+            "principal_id": auth_ctx.principal_id,
+            "request_id": request_id,
+            "decision_error": decision.decision_error,
+            "canonical_tool_name": tool_name,
+            "effective_tool_name": context.get("_effective_tool_name", tool_name),
+            "conversation_id": _conversation_id,
+        }
+        if _enf_block_cost is not None:
+            _enf_block_payload["cost_source"] = _enf_block_cost.source
+            _enf_block_payload["cost_band"] = _enf_block_cost.confidence_band
+        audit_event = _emit(state, auth_ctx.scope, "decision", _enf_block_payload)
+        _METRICS["requests_total{outcome=block}"] += 1
+        block_text = (
+            "POLICY_BLOCK\n"
+            f"policy_id: {decision.policy_id or 'unknown'}\n"
+            f"reason: {decision.reason or 'blocked by policy'}\n\n"
+            "This is a final decision from the Tessera policy gate. "
+            "Do NOT retry with different parameters — the policy will "
+            "reject equivalent calls. Surface this block to the user."
+        )
+        resp_body = {
+            "jsonrpc": "2.0",
+            "id": jsonrpc_id,
+            "result": {
+                "content": [{"type": "text", "text": block_text}],
+                "isError": True,
+            },
+        }
+        _inject_audit_id(resp_body, audit_event["eventId"])
+        return JSONResponse(resp_body)
+
+    if decision.action == Action.require_approval:
+        reason_str = f"approval_required: {decision.reason or ''}"
+        _enf_appr_cost = cost_cache.get(tool_name)
+        _enf_appr_payload: dict[str, Any] = {
+            "mode": "enforcement",
+            "decision": "require_approval",
+            "policy_id": decision.policy_id,
+            "reason": reason_str,
+            "upstream": upstream_name,
+            "tool_call": context["tool_call"],
+            "principal_id": auth_ctx.principal_id,
+            "request_id": request_id,
+            "decision_error": decision.decision_error,
+            "canonical_tool_name": tool_name,
+            "effective_tool_name": context.get("_effective_tool_name", tool_name),
+            "conversation_id": _conversation_id,
+        }
+        if _enf_appr_cost is not None:
+            _enf_appr_payload["cost_source"] = _enf_appr_cost.source
+            _enf_appr_payload["cost_band"] = _enf_appr_cost.confidence_band
+        audit_event = _emit(state, auth_ctx.scope, "decision", _enf_appr_payload)
+        _METRICS["requests_total{outcome=require_approval}"] += 1
+        resp_body = {
+            "jsonrpc": "2.0",
+            "id": jsonrpc_id,
+            "error": {
+                "code": -32604,
+                "message": "Approval required",
+                "data": {"reason": reason_str},
+            },
+        }
+        _inject_audit_id(resp_body, audit_event["eventId"])
+        return JSONResponse(resp_body)
+
+    # Fallback — should not happen
+    return _jsonrpc_error(jsonrpc_id, -32603, "Internal error", reason="unknown_decision")
 
 
 def _get_or_create_emitter(state: Any, scope: str) -> AuditEmitter:
