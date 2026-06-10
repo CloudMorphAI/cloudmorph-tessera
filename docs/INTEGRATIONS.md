@@ -6,10 +6,15 @@ For step-by-step click-through walkthroughs, see [`recipes/cursor-mcp-json.md`](
 
 ## Quick-reference table
 
-| Agent client | Config file | How Tessera plugs in | Recipe |
+| Agent client | Config file | How Tessera plugs in (v0.8 unified) | Recipe |
 |---|---|---|---|
-| **Cursor** | `~/.cursor/mcp.json` or `.cursor/mcp.json` | Replace upstream URL with `http://localhost:8080/mcp/<name>`, add `headers.Authorization` | [`recipes/cursor-mcp-json.md`](../recipes/cursor-mcp-json.md) |
-| **Claude Code** | `~/.claude.json` (global) or `.mcp.json` (project) | Same `mcpServers` structure as Cursor | [`recipes/claude-code.md`](../recipes/claude-code.md) |
+| **Cursor** | `~/.cursor/mcp.json` or `.cursor/mcp.json` | One `"tessera"` entry at `http://localhost:8080/mcp` | [`recipes/cursor-mcp-json.md`](../recipes/cursor-mcp-json.md) |
+| **Claude Code** | `~/.claude.json` (global) or `.mcp.json` (project) | Same unified `"tessera"` entry | [`recipes/claude-code.md`](../recipes/claude-code.md) |
+| **Claude Desktop** | `claude_desktop_config.json` | Same unified `"tessera"` entry | — |
+
+**v0.8 one-liner install:** `tessera install-claude-code` (or `install-cursor`, `install-claude-desktop`) writes the unified entry automatically. Use `--upgrade` to migrate existing per-upstream v0.7.x entries. Use `--legacy-per-upstream` to keep the old per-upstream behavior.
+
+**v0.7.x installs (per-upstream routes):** `POST /mcp/<upstream_name>` routes are kept alive. Existing entries continue to work; re-run `tessera install-claude-code --upgrade` to migrate to unified.
 
 Bearer token background: see [`docs/CONFIGURATION.md`](CONFIGURATION.md).
 
@@ -17,7 +22,57 @@ Bearer token background: see [`docs/CONFIGURATION.md`](CONFIGURATION.md).
 
 ## Worked snippets
 
-### Cursor — `~/.cursor/mcp.json`
+### v0.8 unified entry (recommended)
+
+One entry in the IDE config, regardless of how many upstreams Tessera proxies. Tessera fans out `tools/list` internally and namespaces tools as `<upstream>__<tool>` (e.g. `aws__s3_PutObject`, `github__create_pull_request`).
+
+**Cursor — `~/.cursor/mcp.json`**
+
+```json
+{
+  "mcpServers": {
+    "tessera": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer tk_your_token_here"
+      }
+    }
+  }
+}
+```
+
+**Claude Code — `~/.claude.json` or `.mcp.json`**
+
+```json
+{
+  "mcpServers": {
+    "tessera": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer tk_your_token_here"
+      }
+    }
+  }
+}
+```
+
+Replace `tk_your_token_here` with your Tessera bearer token. Claude Code reads `.mcp.json` fresh each session — no restart required.
+
+**CLI install (writes the entry automatically):**
+
+```bash
+tessera install-claude-code --token tk_your_token_here
+tessera install-cursor --token tk_your_token_here
+tessera install-claude-desktop --token tk_your_token_here
+# Migrate from v0.7.x per-upstream entries:
+tessera install-claude-code --token tk_your_token_here --upgrade
+```
+
+---
+
+### v0.7.x per-upstream entries (legacy — still supported)
+
+The `POST /mcp/<upstream_name>` routes remain active. Existing entries keep working without change.
 
 ```json
 {
@@ -38,30 +93,7 @@ Bearer token background: see [`docs/CONFIGURATION.md`](CONFIGURATION.md).
 }
 ```
 
-Replace `tk_your_token_here` with your Tessera bearer token. Replace `aws` / `github` with upstream names from `tessera.yaml`. Restart Cursor or reload via the MCP panel after saving.
-
-### Claude Code — `~/.claude.json` or `.mcp.json`
-
-```json
-{
-  "mcpServers": {
-    "aws-via-tessera": {
-      "url": "http://localhost:8080/mcp/aws",
-      "headers": {
-        "Authorization": "Bearer tk_your_token_here"
-      }
-    },
-    "github-via-tessera": {
-      "url": "http://localhost:8080/mcp/github",
-      "headers": {
-        "Authorization": "Bearer tk_your_token_here"
-      }
-    }
-  }
-}
-```
-
-Project-scoped `.mcp.json` takes precedence over global `~/.claude.json` for servers with the same key. Claude Code reads `.mcp.json` fresh each session — no restart required.
+Project-scoped `.mcp.json` takes precedence over global `~/.claude.json` for servers with the same key.
 
 ---
 

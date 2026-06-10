@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.8.0] - 2026-06-10
+
+### Added — unified MCP entry point (`POST /mcp`)
+
+- **Unified MCP route** (`tessera/proxy.py` — `POST /mcp`). Single-entry-point proxy that handles all configured upstreams. `tools/list` fans out concurrently to every upstream and returns a merged catalog with tool names namespaced as `<upstream>__<tool>` (e.g. `aws__s3_PutObject`, `gcp__storage_buckets_insert`). `tools/call` parses the namespace, rewrites the tool name to canonical form, and dispatches through the identical policy+audit+forward pipeline as the per-upstream route. Other methods (`initialize`, `ping`, `notifications/*`, etc.) are forwarded to the first configured upstream.
+
+- **Tool namespacing helpers** (`tessera/proxy.py`). `TOOL_NAMESPACE_SEPARATOR = "__"`, `namespace_tool(upstream, tool)`, `parse_namespaced_tool(namespaced)`. Double underscore chosen because single underscore collides with AWS MCP's existing convention (`s3_PutObject`, `ec2_DescribeInstances`).
+
+- **`_run_proxy_pipeline`** (`tessera/proxy.py`). Module-level async helper that encapsulates the full policy+audit+forward pipeline (Steps 3-end from `proxy()`). Used by `proxy_unified` for tools/call dispatch; both routes share identical policy evaluation, decision caching, audit emission, and upstream forwarding.
+
+- **D4 startup validation** (lazy). On first `tools/list` aggregation, validates that no upstream tool name contains `__`. If a collision is detected: logs a warning with the offending tool names and sets `state.unified_mode_disabled = True`. Subsequent `tools/list` calls return a JSON-RPC `-32603` error directing users to the per-upstream `POST /mcp/<upstream_name>` routes. Implemented lazily (not at startup) because the existing code does not fetch tool inventories at startup — adding blocking network calls at startup would be out of pattern.
+
+- **D4 choice**: log warning + DISABLE unified mode (fall back to per-upstream routing) rather than refusing to start. Rationale: refusing to start would break existing v0.7.x deployments that happen to proxy an upstream with `__` in tool names. Disabling unified mode is non-destructive — the per-upstream routes continue working.
+
+- **`install-claude-desktop` unified mode** (`tessera/cli.py`). Matches `install-claude-code` and `install-cursor`: default URL is now `/mcp` (unified), default upstream_name is `tessera`, `--legacy-per-upstream` flag added, `--upgrade` migration removes legacy per-upstream entries and writes the unified entry.
+
+- **Policies use canonical (un-namespaced) tool names** (D2). The namespace is a transport detail; `match.tool_pattern` in `tessera.yaml` continues to reference `s3_PutObject` not `aws__s3_PutObject`. No customer-facing policy change required.
+
+### Changed
+
+- `install-claude-code` and `install-cursor` now default to unified mode (URL = `http://localhost:8080/mcp`, entry key = `tessera`). Previous behavior is available via `--legacy-per-upstream`.
+- `install-claude-desktop` updated to match: unified default + `--legacy-per-upstream` + `--upgrade` migration support.
+- `docs/INTEGRATIONS.md` updated with v0.8 unified snippets (CLI one-liners + JSON examples). Legacy per-upstream snippets retained.
+- `docs/INSTALL.md` version references updated to 0.8.0.
+
+### Compatibility
+
+- `POST /mcp/{upstream_name}` routes are **unchanged** (D3). All v0.7.x IDE configs and direct curl calls to per-upstream routes continue to work without modification.
+- Existing policy YAML files require no changes — canonical tool names in `match.tool_pattern` are unaffected by namespacing.
+
 ## [0.7.2] - 2026-05-24
 
 ### Changed
