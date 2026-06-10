@@ -71,6 +71,26 @@ def test_install_cursor_hooks_platform_detection(tmp_path: Path, platform: str, 
 
 
 def test_install_claude_code(tmp_path: Path) -> None:
+    """v0.8 default: unified entry at /mcp with key 'tessera'."""
+    config_file = tmp_path / "claude.json"
+    result = runner.invoke(
+        app,
+        [
+            "install-claude-code",
+            "--claude-config", str(config_file),
+            "--tessera-url", "http://localhost:8080",
+            "--token", "tk_test_xxxxxxxxxxxx",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    config = json.loads(config_file.read_text())
+    assert "tessera" in config["mcpServers"]
+    assert config["mcpServers"]["tessera"]["url"] == "http://localhost:8080/mcp"
+    assert "Authorization" in config["mcpServers"]["tessera"]["headers"]
+
+
+def test_install_claude_code_legacy_per_upstream(tmp_path: Path) -> None:
+    """--legacy-per-upstream preserves the v0.7.x behavior (per-upstream entry)."""
     config_file = tmp_path / "claude.json"
     result = runner.invoke(
         app,
@@ -80,6 +100,7 @@ def test_install_claude_code(tmp_path: Path) -> None:
             "--tessera-url", "http://localhost:8080",
             "--upstream-name", "github",
             "--token", "tk_test_xxxxxxxxxxxx",
+            "--legacy-per-upstream",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -101,13 +122,12 @@ def test_install_claude_code_merges_existing(tmp_path: Path) -> None:
             "install-claude-code",
             "--claude-config", str(config_file),
             "--tessera-url", "http://localhost:8080",
-            "--upstream-name", "github",
         ],
     )
     assert result.exit_code == 0
     config = json.loads(config_file.read_text())
     assert "existing-server" in config["mcpServers"]
-    assert "github" in config["mcpServers"]
+    assert "tessera" in config["mcpServers"]
 
 
 def test_install_claude_code_no_auth_header_when_no_token(tmp_path: Path) -> None:
@@ -119,12 +139,11 @@ def test_install_claude_code_no_auth_header_when_no_token(tmp_path: Path) -> Non
             "install-claude-code",
             "--claude-config", str(config_file),
             "--tessera-url", "http://localhost:8080",
-            "--upstream-name", "github",
         ],
     )
     assert result.exit_code == 0
     config = json.loads(config_file.read_text())
-    server = config["mcpServers"]["github"]
+    server = config["mcpServers"]["tessera"]
     assert "headers" not in server  # no headers when no token
 
 
