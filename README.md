@@ -31,7 +31,7 @@ tessera init                                        # writes tessera.yaml + poli
 TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve
 ```
 
-Tessera now listens on `http://127.0.0.1:8080/mcp/<upstream>`. Wire it into Cursor / Claude Code / your agent's MCP config (recipes in [recipes/](recipes/)), and every `tools/call` flows through 24 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 19 others.
+Tessera now listens on `http://127.0.0.1:8080/mcp`. Wire it into Cursor / Claude Code / your agent's MCP config with a single "tessera" entry (recipes in [recipes/](recipes/)), and every `tools/call` flows through 24 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 19 others. Tessera fans out tool discovery across all configured upstreams and namespaces tools as `<upstream>__<tool>` in the unified catalog.
 
 ---
 
@@ -63,7 +63,7 @@ Vendor-specific packs (GitHub, Jira, Salesforce, Slack, Postgres, OWASP prompt i
                                                   hash-chain audit log
 ```
 
-Every inbound `POST /mcp/{upstream}` is:
+Every inbound `POST /mcp` is:
 
 1. **Authenticated** — bearer token matched; `AuthContext.scope` assigned (isolates audit streams per token).
 2. **Evaluated** — policy engine walks the sorted set (descending `priority`, first-match-wins). Returns `allow`, `block`, `log_only`, or `require_approval`.

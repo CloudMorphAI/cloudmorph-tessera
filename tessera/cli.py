@@ -809,9 +809,9 @@ def install_claude_code(
         help="Bearer token for Tessera.",
     ),
     upstream_name: str = typer.Option(
-        "github",
+        "tessera",
         "--upstream-name",
-        help="MCP upstream name to configure in Claude Code.",
+        help="MCP entry name to configure in Claude Code. Defaults to 'tessera' (unified mode).",
     ),
     claude_config_path: str = typer.Option(
         None,
@@ -822,6 +822,11 @@ def install_claude_code(
         False,
         "--upgrade",
         help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
+    legacy_per_upstream: bool = typer.Option(
+        False,
+        "--legacy-per-upstream",
+        help="Write a per-upstream entry (old v0.7.x behavior) instead of the unified 'tessera' entry.",
     ),
 ) -> None:
     """Configure Claude Code to use Tessera as MCP proxy via ~/.claude.json."""
@@ -842,30 +847,65 @@ def install_claude_code(
 
     mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
 
-    # Per A-4-8: refuse to overwrite an existing entry unless --upgrade is passed.
-    if upstream_name in mcp_servers and not upgrade:
-        typer.echo(
-            f"ERROR: ~/.claude.json already has an mcpServers entry for '{upstream_name}'. "
-            "Pass --upgrade to replace it.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    mcp_servers[upstream_name] = {
-        "url": f"{tessera_url}/mcp/{upstream_name}",
-        **({"headers": headers} if headers else {}),
-    }
+    if not legacy_per_upstream:
+        # Unified mode (v0.8 default): single "tessera" entry at /mcp
+        entry_key = "tessera"
+        entry_url = f"{tessera_url}/mcp"
 
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        # Migration: detect and remove legacy per-upstream entries pointing at tessera_url/mcp/<something>
+        if upgrade:
+            legacy_prefix = f"{tessera_url}/mcp/"
+            legacy_keys = [k for k, v in mcp_servers.items() if isinstance(v, dict) and v.get("url", "").startswith(legacy_prefix)]
+            if legacy_keys:
+                for k in legacy_keys:
+                    del mcp_servers[k]
+                typer.echo(f"Migrated legacy entries to unified mode: {', '.join(legacy_keys)}")
 
-    typer.echo(f"Updated {config_file}")
-    typer.echo(f"Claude Code → Tessera proxy configured for upstream '{upstream_name}'")
-    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+        # Per A-4-8: refuse to overwrite an existing entry unless --upgrade is passed.
+        if entry_key in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: ~/.claude.json already has an mcpServers entry for '{entry_key}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[entry_key] = {
+            "url": entry_url,
+            **({"headers": headers} if headers else {}),
+        }
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo("Claude Code → Tessera unified proxy configured.")
+        typer.echo(f"URL: {entry_url}")
+    else:
+        # Legacy per-upstream mode: preserves exact v0.7.x behavior
+        if upstream_name in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: ~/.claude.json already has an mcpServers entry for '{upstream_name}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[upstream_name] = {
+            "url": f"{tessera_url}/mcp/{upstream_name}",
+            **({"headers": headers} if headers else {}),
+        }
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo(f"Claude Code → Tessera proxy configured for upstream '{upstream_name}'")
+        typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -887,9 +927,9 @@ def install_cursor(
         help="Bearer token for Tessera.",
     ),
     upstream_name: str = typer.Option(
-        "github",
+        "tessera",
         "--upstream-name",
-        help="MCP upstream name to configure in Cursor.",
+        help="MCP entry name to configure in Cursor. Defaults to 'tessera' (unified mode).",
     ),
     project_dir: str = typer.Option(
         None,
@@ -900,6 +940,11 @@ def install_cursor(
         False,
         "--upgrade",
         help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
+    legacy_per_upstream: bool = typer.Option(
+        False,
+        "--legacy-per-upstream",
+        help="Write a per-upstream entry (old v0.7.x behavior) instead of the unified 'tessera' entry.",
     ),
 ) -> None:
     """Configure Cursor to use Tessera as MCP server via .cursor/mcp.json in the project directory."""
@@ -914,29 +959,64 @@ def install_cursor(
 
     mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
 
-    if upstream_name in mcp_servers and not upgrade:
-        typer.echo(
-            f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
-            "Pass --upgrade to replace it.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    mcp_servers[upstream_name] = {
-        "url": f"{tessera_url}/mcp/{upstream_name}",
-        **({"headers": headers} if headers else {}),
-    }
+    if not legacy_per_upstream:
+        # Unified mode (v0.8 default): single "tessera" entry at /mcp
+        entry_key = "tessera"
+        entry_url = f"{tessera_url}/mcp"
 
-    cursor_dir.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        # Migration: detect and remove legacy per-upstream entries pointing at tessera_url/mcp/<something>
+        if upgrade:
+            legacy_prefix = f"{tessera_url}/mcp/"
+            legacy_keys = [k for k, v in mcp_servers.items() if isinstance(v, dict) and v.get("url", "").startswith(legacy_prefix)]
+            if legacy_keys:
+                for k in legacy_keys:
+                    del mcp_servers[k]
+                typer.echo(f"Migrated legacy entries to unified mode: {', '.join(legacy_keys)}")
 
-    typer.echo(f"Updated {config_file}")
-    typer.echo(f"Cursor → Tessera proxy configured for upstream '{upstream_name}'")
-    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+        if entry_key in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: {config_file} already has an mcpServers entry for '{entry_key}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[entry_key] = {
+            "url": entry_url,
+            **({"headers": headers} if headers else {}),
+        }
+
+        cursor_dir.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo("Cursor → Tessera unified proxy configured.")
+        typer.echo(f"URL: {entry_url}")
+    else:
+        # Legacy per-upstream mode: preserves exact v0.7.x behavior
+        if upstream_name in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[upstream_name] = {
+            "url": f"{tessera_url}/mcp/{upstream_name}",
+            **({"headers": headers} if headers else {}),
+        }
+
+        cursor_dir.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo(f"Cursor → Tessera proxy configured for upstream '{upstream_name}'")
+        typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -958,9 +1038,9 @@ def install_claude_desktop(
         help="Bearer token for Tessera.",
     ),
     upstream_name: str = typer.Option(
-        "github",
+        "tessera",
         "--upstream-name",
-        help="MCP upstream name to configure in Claude Desktop.",
+        help="MCP entry name to configure in Claude Desktop. Defaults to 'tessera' (unified mode).",
     ),
     claude_config_path: str = typer.Option(
         None,
@@ -971,6 +1051,11 @@ def install_claude_desktop(
         False,
         "--upgrade",
         help="Replace existing entry for this upstream. Without --upgrade, refuses to overwrite.",
+    ),
+    legacy_per_upstream: bool = typer.Option(
+        False,
+        "--legacy-per-upstream",
+        help="Write a per-upstream entry (old v0.7.x behavior) instead of the unified 'tessera' entry.",
     ),
 ) -> None:
     """Configure Claude Desktop to use Tessera as MCP server via claude_desktop_config.json."""
@@ -991,29 +1076,64 @@ def install_claude_desktop(
 
     mcp_servers: dict[str, Any] = config.setdefault("mcpServers", {})
 
-    if upstream_name in mcp_servers and not upgrade:
-        typer.echo(
-            f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
-            "Pass --upgrade to replace it.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    mcp_servers[upstream_name] = {
-        "url": f"{tessera_url}/mcp/{upstream_name}",
-        **({"headers": headers} if headers else {}),
-    }
+    if not legacy_per_upstream:
+        # Unified mode (v0.8 default): single "tessera" entry at /mcp
+        entry_key = "tessera"
+        entry_url = f"{tessera_url}/mcp"
 
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        # Migration: detect and remove legacy per-upstream entries pointing at tessera_url/mcp/<something>
+        if upgrade:
+            legacy_prefix = f"{tessera_url}/mcp/"
+            legacy_keys = [k for k, v in mcp_servers.items() if isinstance(v, dict) and v.get("url", "").startswith(legacy_prefix)]
+            if legacy_keys:
+                for k in legacy_keys:
+                    del mcp_servers[k]
+                typer.echo(f"Migrated legacy entries to unified mode: {', '.join(legacy_keys)}")
 
-    typer.echo(f"Updated {config_file}")
-    typer.echo(f"Claude Desktop → Tessera proxy configured for upstream '{upstream_name}'")
-    typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
+        if entry_key in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: {config_file} already has an mcpServers entry for '{entry_key}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[entry_key] = {
+            "url": entry_url,
+            **({"headers": headers} if headers else {}),
+        }
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo("Claude Desktop → Tessera unified proxy configured.")
+        typer.echo(f"URL: {entry_url}")
+    else:
+        # Legacy per-upstream mode: preserves exact v0.7.x behavior
+        if upstream_name in mcp_servers and not upgrade:
+            typer.echo(
+                f"ERROR: {config_file} already has an mcpServers entry for '{upstream_name}'. "
+                "Pass --upgrade to replace it.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        mcp_servers[upstream_name] = {
+            "url": f"{tessera_url}/mcp/{upstream_name}",
+            **({"headers": headers} if headers else {}),
+        }
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+        typer.echo(f"Updated {config_file}")
+        typer.echo(f"Claude Desktop → Tessera proxy configured for upstream '{upstream_name}'")
+        typer.echo(f"URL: {tessera_url}/mcp/{upstream_name}")
 
 
 # ---------------------------------------------------------------------------

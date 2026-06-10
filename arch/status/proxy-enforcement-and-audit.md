@@ -148,4 +148,11 @@ The `tessera audit` subcommand group exposes four inspection operations against 
 - `tessera audit export [--scope S] [--format jsonl|csv] [--output PATH]` — bulk export. `jsonl` emits one full-JSON event per line, suitable for `jq`, Splunk, Vector, Elasticsearch. `csv` emits flat columns (`event_id, scope, event_type, occurred_at, prev_event_hash, event_hash, payload`); the payload column is JSON-stringified with large cells truncated at 4 KB. Both formats preserve the `prev_event_hash` and `event_hash` columns so downstream tools can re-verify the chain offline.
 - `tessera audit inspect <eventId>` — fetch one event by ID and print its full JSON. Delegates to `tessera/audit/inspect.py:fetch_event_by_id` which calls `SqliteSink.fetch_by_id`.
 
-Helper functions (`tail_events`, `export_jsonl`, `export_csv`, `fetch_event_by_id`) live in `tessera/audit/inspect.py`; the CLI subcommands are thin wrappers that handle argument parsing, file I/O, and exit codes. Hash-chain repair (replacing a corrupt event and re-stamping forward) is deliberat
+Helper functions (`tail_events`, `export_jsonl`, `export_csv`, `fetch_event_by_id`) live in `tessera/audit/inspect.py`; the CLI subcommands are thin wrappers that handle argument parsing, file I/O, and exit codes. Hash-chain repair (replacing a corrupt event and re-stamping forward) is deliberately not provided — doing so would defeat tamper-evidence; the correct response to a chain break is a fresh chain start with a documented sequence-break in the incident record.
+
+## Cross-references
+
+- For YAML → runtime decisions: `policy-engine.md`.
+- For the consumer side of signed-content fetch: `intelligence-and-licensing.md`.
+- For AWS-specific upstream and blast-radius wiring: `integrations-and-cost.md`.
+- For the audit event schema: `schemas/audit_event.schema.json` at the repo root.
