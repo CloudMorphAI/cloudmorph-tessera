@@ -182,6 +182,82 @@ _PASS_THROUGH_METHODS = {
 }
 
 
+# ── v0.8.0 — Unified MCP routing helpers ────────────────────────────────────
+
+TOOL_NAMESPACE_SEPARATOR = "__"
+
+
+def namespace_tool(upstream_name: str, tool_name: str) -> str:
+    """Return the namespaced tool name: '<upstream>__<tool>'."""
+    return f"{upstream_name}{TOOL_NAMESPACE_SEPARATOR}{tool_name}"
+
+
+def parse_namespaced_tool(namespaced: str) -> tuple[str, str]:
+    """Return (upstream_name, canonical_tool_name). Raises ValueError if no separator found."""
+    parts = namespaced.split(TOOL_NAMESPACE_SEPARATOR, 1)
+    if len(parts) != 2:
+        raise ValueError(f"tool name {namespaced!r} missing upstream namespace (expected '<upstream>__<tool>')")
+    return parts[0], parts[1]
+
+
+async def aggregate_tools_list(state: Any) -> dict[str, Any]:
+    """Fan out tools/list to every configured upstream and return a merged catalog.
+
+    Tool names are namespaced as '<upstream>__<tool>' so the agent sees a single
+    flat catalog with no collisions between upstreams.
+
+    D4 validation: if unified mode has been disabled at startup (state.unified_mode_disabled
+    is True), returns a JSON-RPC error directing callers to use per-upstream routes.
+
+    Per-upstream errors are logged and skipped — a partial catalog is returned rather
+    than failing the entire aggregation.
+    """
+    if getattr(state, "unified_mode_disabled", False):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32603,
+                "message": "Unified mode disabled: one or more upstream tools contain '__' in their name. "
+                           "Use per-upstream routes POST /mcp/<upstream_name> instead.",
+            },
+        }
+
+    cfg: TesseraConfig = state.config
+    all_tools: list[dict[str, Any]] = []
+
+    async def _fetch_one(upstream_name: str) -> list[dict[str, Any]]:
+        req_body: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "tools/list",
+            "params": {},
+        }
+        response = await _forward_upstream(state, upstream_name, req_body, None)
+        if isinstance(response, JSONResponse):
+            logger.warning("event=aggregate_tools_list_upstream_error upstream=%s", upstream_name)
+            return []
+        tools: list[dict[str, Any]] = response.get("result", {}).get("tools", [])
+        namespaced: list[dict[str, Any]] = []
+        for tool in tools:
+            tool_name: str = tool.get("name", "")
+            renamed = {**tool, "name": namespace_tool(upstream_name, tool_name)}
+            namespaced.append(renamed)
+        return namespaced
+
+    results = await asyncio.gather(
+        *[_fetch_one(u.name) for u in cfg.upstreams],
+        return_exceptions=True,
+    )
+    for res in results:
+        if isinstance(res, list):
+            all_tools.extend(res)
+        else:
+            logger.warning("event=aggregate_tools_list_gather_error err=%s", res)
+
+    return {"jsonrpc": "2.0", "id": None, "result": {"tools": all_tools}}
+
+
 # ── JSON-RPC helpers ─────────────────────────────────────────────────────────
 
 
