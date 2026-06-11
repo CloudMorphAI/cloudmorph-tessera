@@ -285,6 +285,70 @@ class IntelligenceClient:
         current_rank = _TIER_ORDER.get(current_tier, 0)
         return current_rank >= pack_rank
 
+    # ── Sibling signed-manifest verification (P0-9) ──────────────────────────
+
+    async def _fetch_and_verify_sibling_signed_json(
+        self,
+        bundle_url: str,
+        client: httpx.AsyncClient,
+    ) -> str | None:
+        """Fetch and Ed25519-verify the sibling ``.signed.json`` for a bundle.
+
+        The sibling URL is ``<bundle_url>.signed.json``.  Format::
+
+            {
+              "kind": "mapping_bundle"|"blast_radius_bundle"|"combination_bundle",
+              "target_file": "<filename>.tar.gz",
+              "content_hash": "<sha256-hex-of-tarball>",
+              "signature": "<base64-ed25519-sig-over-content_hash-utf8>",
+              "signed_at": "<ISO-timestamp>"
+            }
+
+        Returns the verified ``content_hash`` hex string on success.
+        Returns ``None`` when the sibling is absent (404) — caller falls back
+        to catalog ``content_hash``.  Raises on any verification failure so
+        the caller can fail-closed.
+        """
+        sibling_url = bundle_url + ".signed.json"
+        try:
+            resp = await client.get(sibling_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "event=sibling_signed_json_fetch_error url=%s error=%s",
+                sibling_url, exc,
+            )
+            return None
+
+        if resp.status_code == 404:
+            # Sibling absent — caller will warn and fall back.
+            return None
+
+        resp.raise_for_status()
+        meta: dict[str, Any] = resp.json()
+
+        content_hash = meta.get("content_hash", "") or ""
+        signature = meta.get("signature", "") or ""
+
+        if not content_hash or not signature:
+            raise ValueError(
+                f"sibling .signed.json at {sibling_url} missing content_hash or signature"
+            )
+
+        # Ed25519-verify: sign_pack.py signs content_hash.encode("utf-8")
+        try:
+            sig_bytes = base64.b64decode(signature)
+            self._public_key.verify(sig_bytes, content_hash.encode("utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                f"sibling .signed.json Ed25519 verify failed at {sibling_url}: {exc}"
+            ) from exc
+
+        logger.debug(
+            "event=sibling_signed_json_verified url=%s content_hash=%s",
+            sibling_url, content_hash[:16],
+        )
+        return content_hash
+
     # ── Pack download + extract ───────────────────────────────────────────────
 
     async def _download_and_extract(
@@ -295,19 +359,16 @@ class IntelligenceClient:
     ) -> bool:
         """Download, verify, and extract a pack or mapping archive. Returns True on success.
 
-        Verification flow (post-2026-05-15 cross-repo audit fix):
+        Verification flow (P0-9 updated):
 
-        * If the catalog entry carries ``manifest_url`` (packs do; mapping bundles
-          do not until producer-side signing lands), fetch + Ed25519-verify the
-          signed manifest first.  The verified manifest's ``tarball_sha256`` is
-          authoritative for the downloaded tarball — the catalog-declared
-          ``content_hash`` is the manifest hash, not the tarball hash, so using
-          it directly against the tarball was a pre-existing bug.
-        * If ``manifest_url`` is absent (mapping bundles today), fall back to
-          the catalog signature path (verified earlier in ``refresh()`` step 2
-          via ``_require_or_skip_catalog_sig``).  Once mapping-bundle signing
-          ships (P0-9 in nextsteps.md), this branch will also fetch a sibling
-          ``.signed.json`` to verify.
+        * If the catalog entry carries ``manifest_url`` (packs), fetch + Ed25519-verify
+          the signed manifest first.  The verified manifest's ``tarball_sha256`` is
+          authoritative for the downloaded tarball.
+        * If ``manifest_url`` is absent (mapping/blast-radius/combination bundles),
+          try to fetch the sibling ``<pack_url>.signed.json`` (P0-9).  If found,
+          Ed25519-verify the ``content_hash`` field and use it to verify the tarball.
+          If absent (404), warn once and fall back to the catalog-declared
+          ``content_hash`` as a best-effort check.
         """
         # ── Step A: fetch + verify the signed manifest (packs only) ──
         verified_tarball_sha256: str = ""
@@ -327,6 +388,29 @@ class IntelligenceClient:
                 )
                 return False
 
+        # ── Step A2: P0-9 sibling .signed.json (mapping/blast-radius/combination) ──
+        sibling_verified_hash: str = ""
+        if not manifest.manifest_url and manifest.pack_url:
+            try:
+                result = await self._fetch_and_verify_sibling_signed_json(
+                    manifest.pack_url, client,
+                )
+                if result is not None:
+                    sibling_verified_hash = result
+                else:
+                    # Sibling absent — warn, fall back to catalog content_hash.
+                    logger.warning(
+                        "event=sibling_signed_json_absent name=%s url=%s "
+                        "falling_back_to=catalog_content_hash",
+                        manifest.name, manifest.pack_url + ".signed.json",
+                    )
+            except Exception as exc:  # noqa: BLE001 — verify failure = fail-closed
+                logger.error(
+                    "event=sibling_signed_json_verify_failed name=%s error=%s",
+                    manifest.name, exc,
+                )
+                return False
+
         # ── Step B: fetch tarball ──
         try:
             response = await client.get(manifest.pack_url)
@@ -339,8 +423,9 @@ class IntelligenceClient:
             )
             return False
 
-        # ── Step C: verify tarball SHA-256 (mandatory when manifest_url is present) ──
+        # ── Step C: verify tarball SHA-256 ──
         if verified_tarball_sha256:
+            # Pack path: use manifest-bound tarball hash.
             try:
                 self._verify_tarball_hash(raw, verified_tarball_sha256)
             except Exception as exc:  # noqa: BLE001 — TamperDetected
@@ -349,11 +434,19 @@ class IntelligenceClient:
                     manifest.name, exc,
                 )
                 return False
+        elif sibling_verified_hash:
+            # P0-9 bundle path: sibling .signed.json content_hash IS the tarball hash.
+            try:
+                self._verify_tarball_hash(raw, sibling_verified_hash)
+            except Exception as exc:  # noqa: BLE001 — TamperDetected
+                logger.error(
+                    "event=tarball_hash_mismatch name=%s error=%s",
+                    manifest.name, exc,
+                )
+                return False
         elif manifest.content_hash and not manifest.content_hash.startswith("PLACEHOLDER"):  # noqa: SIM102
-            # Legacy mapping-bundle path: until P0-9 ships per-bundle signing,
-            # we fall back to the catalog-declared content_hash as a best-effort
-            # tarball check. Once mappings carry .signed.json siblings, this
-            # branch goes away.
+            # Legacy fallback: sibling absent + no manifest_url.  Use catalog
+            # content_hash for a best-effort tarball integrity check.
             if not self._verify_content_hash(raw, manifest.content_hash):
                 logger.error(
                     "event=pack_hash_mismatch name=%s expected=%s",
