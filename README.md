@@ -11,6 +11,8 @@
 
 Tessera is a deterministic in-process firewall that sits between an AI agent and every MCP server, evaluates each tool call against a YAML policy bench, and either forwards, blocks, or routes for approval — writing each decision to a hash-chained audit log.
 
+**Semver policy (from v1.0.0):** Tessera follows [Semantic Versioning 2.0.0](https://semver.org/). The stable API surface is: the `tessera` CLI commands listed in `tessera --help`, the `tessera.yaml` configuration schema, and the `cloudmorph-tessera` PyPI package name. Internal Python modules (anything not listed in `tessera/__init__.__all__`) are private and may change in any release.
+
 ## v0.7.0 benchmarks (single worker, loopback, 24 bundled policies)
 
 | Metric | Value | Conditions |
@@ -94,10 +96,10 @@ pip install cloudmorph-tessera
 pip install "cloudmorph-tessera[aws,gemini,intelligence,infracost,observability]"
 
 # Production deploy (recommended)
-docker pull ghcr.io/cloudmorphai/tessera:0.7.0
+docker pull ghcr.io/cloudmorphai/tessera:1.0.0
 ```
 
-After install: `tessera version` prints `tessera 0.7.0`. Full install matrix + supported Python versions: [docs/INSTALL.md](docs/INSTALL.md).
+After install: `tessera version` prints `tessera 1.0.0`. Full install matrix + supported Python versions: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Wire it into Cursor
 

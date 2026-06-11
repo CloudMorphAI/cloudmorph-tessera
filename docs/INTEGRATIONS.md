@@ -6,15 +6,15 @@ For step-by-step click-through walkthroughs, see [`recipes/cursor-mcp-json.md`](
 
 ## Quick-reference table
 
-| Agent client | Config file | How Tessera plugs in (v0.8 unified) | Recipe |
+| Agent client | Config file | How Tessera plugs in (v1.0 unified) | Recipe |
 |---|---|---|---|
 | **Cursor** | `~/.cursor/mcp.json` or `.cursor/mcp.json` | One `"tessera"` entry at `http://localhost:8080/mcp` | [`recipes/cursor-mcp-json.md`](../recipes/cursor-mcp-json.md) |
 | **Claude Code** | `~/.claude.json` (global) or `.mcp.json` (project) | Same unified `"tessera"` entry | [`recipes/claude-code.md`](../recipes/claude-code.md) |
 | **Claude Desktop** | `claude_desktop_config.json` | Same unified `"tessera"` entry | — |
 
-**v0.8 one-liner install:** `tessera install-claude-code` (or `install-cursor`, `install-claude-desktop`) writes the unified entry automatically. Use `--upgrade` to migrate existing per-upstream v0.7.x entries. Use `--legacy-per-upstream` to keep the old per-upstream behavior.
+**One-liner install:** `tessera install-claude-code` (or `install-cursor`, `install-claude-desktop`) writes the unified entry automatically. Use `--upgrade` to migrate existing per-upstream pre-v0.8 entries. Use `--legacy-per-upstream` to keep the old per-upstream behavior.
 
-**v0.7.x installs (per-upstream routes):** `POST /mcp/<upstream_name>` routes are kept alive. Existing entries continue to work; re-run `tessera install-claude-code --upgrade` to migrate to unified.
+**Pre-v0.8 installs (per-upstream routes):** `POST /mcp/<upstream_name>` routes are kept alive. Existing entries continue to work; re-run `tessera install-claude-code --upgrade` to migrate to unified.
 
 Bearer token background: see [`docs/CONFIGURATION.md`](CONFIGURATION.md).
 
@@ -22,7 +22,7 @@ Bearer token background: see [`docs/CONFIGURATION.md`](CONFIGURATION.md).
 
 ## Worked snippets
 
-### v0.8 unified entry (recommended)
+### Unified entry (recommended — v1.0)
 
 One entry in the IDE config, regardless of how many upstreams Tessera proxies. Tessera fans out `tools/list` internally and namespaces tools as `<upstream>__<tool>` (e.g. `aws__s3_PutObject`, `github__create_pull_request`).
 
@@ -64,13 +64,13 @@ Replace `tk_your_token_here` with your Tessera bearer token. Claude Code reads `
 tessera install-claude-code --token tk_your_token_here
 tessera install-cursor --token tk_your_token_here
 tessera install-claude-desktop --token tk_your_token_here
-# Migrate from v0.7.x per-upstream entries:
+# Migrate from pre-v0.8 per-upstream entries:
 tessera install-claude-code --token tk_your_token_here --upgrade
 ```
 
 ---
 
-### v0.7.x per-upstream entries (legacy — still supported)
+### Pre-v0.8 per-upstream entries (legacy — still supported)
 
 The `POST /mcp/<upstream_name>` routes remain active. Existing entries keep working without change.
 

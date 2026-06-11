@@ -3,8 +3,8 @@
 This document describes the current feature state and planned work for the OSS
 distribution. It is updated on each minor release.
 
-Current stable: **v0.8.0** (released 2026-06-10).
-Next milestone: **v0.9.0** (in progress — hardening sprint).
+Current stable: **v1.0.0** (released YYYY-MM-DD).
+Next milestone: **v1.1.0** (planned — post-GA improvements; see plan/1.1.0/ in the workspace).
 
 Where a version is listed the feature is on the roadmap. Where it says
 "not planned" the feature is intentionally out of scope for the OSS
@@ -12,7 +12,25 @@ distribution; it may exist in Tessera Cloud.
 
 ---
 
-## What shipped in v0.8.0
+## What is new in v1.0.0
+
+- **API surface frozen** — the `tessera` CLI commands, `tessera.yaml` config schema, and
+  `cloudmorph-tessera` PyPI package name are the stable public contract. Semver policy
+  is now in effect (see README).
+- **`Production/Stable` PyPI classifier** — Development Status bumped from Beta.
+- **Durable SQLite-backed revocation store** — token revocations survive process
+  restarts (persisted next to the audit DB).
+- **Realm-aware price-field selection** — `fixed_monthly` reads `price_usd_per_month`;
+  `per_tb_scanned` reads `price_usd_per_tb_scanned`.
+- **`resources/read` + `sampling/createMessage` now policy-evaluated by default** — opt
+  out with `policies.engine_eval_data_methods: false`.
+- **Per-bundle sibling `.signed.json` Ed25519 verification** — mapping / blast-radius /
+  combination bundles verified client-side before tarball hash check.
+- **`audit verify-chain` is a deprecated alias** for `audit verify`; removed in 2.0.
+
+## What shipped in v0.9.0 / v0.8.0
+
+> v0.8.0 was never published to PyPI; all features below shipped together in v0.9.0.
 
 - **Unified MCP entry point** (`POST /mcp`). Single-entry-point proxy that
   fans out `tools/list` to every configured upstream and returns a merged
@@ -25,23 +43,6 @@ distribution; it may exist in Tessera Cloud.
   `--legacy-per-upstream` flag available.
 - Per-upstream routes (`POST /mcp/<upstream_name>`) remain unchanged — all
   v0.7.x IDE configs continue to work.
-
-## What is landing in v0.9.0
-
-- **Realm-aware price-field selection** — `fixed_monthly` reads
-  `price_usd_per_month`; `per_tb_scanned` reads `price_usd_per_tb_scanned`.
-- **SQLite-backed `RevocationStore`** — token revocations survive process
-  restarts (persisted next to the audit DB).
-- **`resources/read` + `sampling/createMessage` engine-evaluated by default**
-  (D5) — previously these two data-exfil-risk methods bypassed policy
-  enforcement. They now go through the policy engine. Opt out with
-  `policies.engine_eval_data_methods: false`.
-- **Per-bundle sibling `.signed.json` verification** (P0-9) — mapping /
-  blast-radius / combination bundles now have their Ed25519 signature verified
-  client-side before the tarball hash check, closing a gap where bundle
-  integrity relied solely on the catalog signature.
-- **CLI dedup** — `audit verify` and `audit verify-chain` shared a near-identical
-  implementation. Merged; `verify-chain` is now a deprecated alias.
 
 ---
 
@@ -135,18 +136,20 @@ complex logic within a single policy.
 
 | Feature | Target |
 | --- | --- |
-| Realm-aware price fields | v0.9.0 |
-| SQLite RevocationStore | v0.9.0 |
-| Data-method enforcement by default (D5) | v0.9.0 |
-| Per-bundle sibling verify (P0-9) | v0.9.0 |
-| CLI audit verify dedup | v0.9.0 |
-| OAuth 2.1 PKCE polish | v0.9 / v1.0 |
-| Native per-token rate limiting | v0.9+ |
-| Postgres sink | v0.9+ |
-| Per-policy version pinning | v0.9+ |
-| stdio transport | v1.0 |
-| Policy composition (chaining) | v1.0 |
-| Shadow MCP discovery via MDM | v1.0+ |
+| Realm-aware price fields | shipped v0.9.0 / v1.0.0 |
+| SQLite RevocationStore | shipped v0.9.0 / v1.0.0 |
+| Data-method enforcement by default (D5) | shipped v0.9.0 / v1.0.0 |
+| Per-bundle sibling verify (P0-9) | shipped v0.9.0 / v1.0.0 |
+| CLI audit verify dedup | shipped v0.9.0 / v1.0.0 |
+| API surface freeze + semver policy | shipped v1.0.0 |
+| Production/Stable classifier | shipped v1.0.0 |
+| OAuth 2.1 PKCE polish | v1.1.0 |
+| Native per-token rate limiting | v1.1.0+ |
+| Postgres sink | v1.1.0+ |
+| Per-policy version pinning | v1.1.0+ |
+| stdio transport | v1.1.0+ |
+| Policy composition (chaining) | v1.1.0+ |
+| Shadow MCP discovery via MDM | v1.1.0+ |
 | Multi-tenant in OSS | not planned |
 | ML intent inference | not planned |
 
