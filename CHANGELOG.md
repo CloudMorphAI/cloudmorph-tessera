@@ -5,8 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-06-11
 
-## [Unreleased] — 0.9.0
+> Includes the unified-MCP work originally scoped as 0.8.0 (see the [0.8.0] section below); 0.8.0 was never published to PyPI, so 0.9.0 is the first release carrying both the unified `/mcp` entry point and the hardening changes below.
 
 ### Added
 

@@ -20,7 +20,7 @@ Docker is the recommended path for production. pip install is for local developm
 ## 1. Docker install (recommended)
 
 ```bash
-docker pull ghcr.io/cloudmorphai/tessera:0.8.0
+docker pull ghcr.io/cloudmorphai/tessera:0.9.0
 ```
 
 ```bash
@@ -31,7 +31,7 @@ docker run -d \
   -v "$PWD/policies:/etc/tessera/policies:ro" \
   -v tessera_audit:/var/lib/tessera \
   -e TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" \
-  ghcr.io/cloudmorphai/tessera:0.8.0
+  ghcr.io/cloudmorphai/tessera:0.9.0
 ```
 
 | Flag | Purpose |
@@ -246,14 +246,14 @@ Images are signed with Sigstore (keyless OIDC) via cosign.
 cosign verify \
   --certificate-identity-regexp 'https://github.com/cloudmorphai/cloudmorph-tessera/.github/workflows/release.yml' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/cloudmorphai/tessera:0.8.0
+  ghcr.io/cloudmorphai/tessera:0.9.0
 ```
 
 **SBOM:**
 
 ```bash
 cosign download attestation \
-  ghcr.io/cloudmorphai/tessera:0.8.0 \
+  ghcr.io/cloudmorphai/tessera:0.9.0 \
   | jq '.payload | @base64d | fromjson'
 ```
 
