@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -122,18 +121,18 @@ def serve(
 
 
 # ---------------------------------------------------------------------------
-# audit verify
+# audit verify  (canonical implementation)
+# audit verify-chain  (alias — deprecated in v0.9.0, delegates here)
 # ---------------------------------------------------------------------------
 
 
-@audit_app.command("verify")
-def audit_verify(
-    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
-    scope: str = typer.Option(None, "--scope"),
-    all_scopes: bool = typer.Option(False, "--all"),
-    json_output: bool = typer.Option(False, "--json"),
+def _run_audit_verify(
+    audit_path: str,
+    scope: str | None,
+    all_scopes: bool,
+    json_output: bool,
 ) -> None:
-    """Verify the audit hash chain integrity."""
+    """Shared implementation for `audit verify` and `audit verify-chain`."""
     from tessera.audit.sinks.sqlite import SqliteSink
     from tessera.audit.verifier import verify_chain
 
@@ -157,14 +156,9 @@ def audit_verify(
         return
 
     sink = SqliteSink(audit_path)
-
     try:
         if all_scopes:
-            # Query distinct scopes from the DB
-            conn = sqlite3.connect(audit_path)
-            rows = conn.execute("SELECT DISTINCT scope FROM audit_events").fetchall()
-            conn.close()
-            scopes = [row[0] for row in rows] if rows else ["default"]
+            scopes = list(sink.iter_scopes()) or ["default"]
         elif scope:
             scopes = [scope]
         else:
@@ -179,17 +173,36 @@ def audit_verify(
     else:
         for r in results:
             status = "ok" if r["ok"] else "FAILED"
-            typer.echo(f"scope={r['scope']}  events={r['events_checked']}  status={status}")
-            if not r["ok"] and r["first_failure"]:
+            typer.echo(
+                f"scope={r['scope']}  events={r['events_checked']}  status={status}"
+            )
+            if r.get("first_event_at"):
+                typer.echo(f"  first event: {r['first_event_at']}")
+            if r.get("last_event_at"):
+                typer.echo(f"  last event:  {r['last_event_at']}")
+            if not r["ok"] and r.get("first_failure"):
                 f = r["first_failure"]
                 typer.echo(
-                    f"  first_failure: seq={f['seq']} event_id={f['event_id']} kind={f['kind']}",
-                    err=True,
+                    f"  FAILED at seq={f['seq']} event_id={f['event_id']}", err=True
                 )
+                typer.echo(f"  kind: {f['kind']}", err=True)
+                typer.echo(f"  expected: {f.get('expected_event_hash', '')}", err=True)
+                typer.echo(f"  computed: {f.get('computed_event_hash', '')}", err=True)
 
     any_failed = any(not r["ok"] for r in results)
     if any_failed:
         raise typer.Exit(3)
+
+
+@audit_app.command("verify")
+def audit_verify(
+    audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
+    scope: str = typer.Option(None, "--scope"),
+    all_scopes: bool = typer.Option(False, "--all"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Verify the audit hash chain integrity."""
+    _run_audit_verify(audit_path, scope, all_scopes, json_output)
 
 
 # ---------------------------------------------------------------------------
@@ -256,71 +269,13 @@ def audit_verify_chain(
     all_scopes: bool = typer.Option(False, "--all"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Walk the audit hash chain and print first broken link or OK."""
-    from tessera.audit.sinks.sqlite import SqliteSink
-    from tessera.audit.verifier import verify_chain
+    """Walk the audit hash chain and print first broken link or OK.
 
-    db_path = Path(audit_path)
-    if not db_path.exists():
-        results: list[dict[str, Any]] = [
-            {
-                "scope": scope or "default",
-                "events_checked": 0,
-                "first_event_at": None,
-                "last_event_at": None,
-                "ok": True,
-                "first_failure": None,
-            }
-        ]
-        if json_output:
-            typer.echo(json.dumps(results))
-        else:
-            typer.echo(f"scope={results[0]['scope']}  events=0  ok=true")
-        return
-
-    sink = SqliteSink(audit_path)
-    try:
-        if all_scopes:
-            scopes = list(sink.iter_scopes()) or ["default"]
-        elif scope:
-            scopes = [scope]
-        else:
-            scopes = ["default"]
-
-        results = [verify_chain(sink, s) for s in scopes]
-    finally:
-        sink.close()
-
-    if json_output:
-        typer.echo(json.dumps(results))
-    else:
-        for r in results:
-            status = "ok" if r["ok"] else "FAILED"
-            typer.echo(
-                f"scope={r['scope']}  events={r['events_checked']}  status={status}"
-            )
-            if r.get("first_event_at"):
-                typer.echo(f"  first event: {r['first_event_at']}")
-            if r.get("last_event_at"):
-                typer.echo(f"  last event:  {r['last_event_at']}")
-            if not r["ok"] and r.get("first_failure"):
-                f = r["first_failure"]
-                typer.echo(
-                    f"  FAILED at seq={f['seq']} event_id={f['event_id']}", err=True
-                )
-                typer.echo(
-                    f"  kind: {f['kind']}", err=True
-                )
-                typer.echo(
-                    f"  expected: {f.get('expected_event_hash', '')}", err=True
-                )
-                typer.echo(
-                    f"  computed: {f.get('computed_event_hash', '')}", err=True
-                )
-
-    any_failed = any(not r["ok"] for r in results)
-    if any_failed:
-        raise typer.Exit(3)
+    DEPRECATED in v0.9.0: identical to `audit verify`. Use `tessera audit verify`
+    instead. This alias is kept for backward compatibility and will be removed
+    in a future major release.
+    """
+    _run_audit_verify(audit_path, scope, all_scopes, json_output)
 
 
 # ---------------------------------------------------------------------------
