@@ -88,9 +88,11 @@ class PoliciesConfig(BaseModel):
     mode: PoliciesMode = PoliciesMode.log_only
     default_action: str = "block"
     # v0.5.0: when True, resources/read and sampling/createMessage are promoted from
-    # pass-through-with-audit to engine-evaluated. Default False for backward compat.
-    # Operators opt in by setting policies.engine_eval_data_methods: true.
-    engine_eval_data_methods: bool = False
+    # pass-through-with-audit to engine-evaluated.
+    # v0.9.0 BREAKING: default flipped to True (D5 founder decision).
+    # Operators who want the old pass-through behaviour must set
+    # policies.engine_eval_data_methods: false in tessera.yaml.
+    engine_eval_data_methods: bool = True
 
 
 class IntentConfig(BaseModel):

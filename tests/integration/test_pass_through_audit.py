@@ -39,12 +39,25 @@ def _make_transport(resp: dict[str, Any] | None = None) -> httpx.MockTransport:
     return httpx.MockTransport(_handler)
 
 
-def _build_config(tmp_db: str, flag_data_leak: bool = True, policy_dir: str | None = None) -> TesseraConfig:
+def _build_config(
+    tmp_db: str,
+    flag_data_leak: bool = True,
+    policy_dir: str | None = None,
+    engine_eval_data_methods: bool = False,
+) -> TesseraConfig:
     return TesseraConfig(
         audit=AuditConfig(path=tmp_db, flag_data_leak_passthrough=flag_data_leak),
         # v0.2.0 fix: tests must point policies.dir at a tmp path; the default
         # /etc/tessera/policies doesn't exist on dev machines (esp. Windows).
-        policies=PoliciesConfig(dir=policy_dir or tempfile.mkdtemp(prefix="tessera_policies_"), reload="none"),
+        # v0.9.0: engine_eval_data_methods defaults False here so that
+        # resources/read and sampling/createMessage flow through the
+        # pass-through path (which emits the data_leak_candidate event).
+        # The default-True behaviour is tested in test_proxy_round_trip.py.
+        policies=PoliciesConfig(
+            dir=policy_dir or tempfile.mkdtemp(prefix="tessera_policies_"),
+            reload="none",
+            engine_eval_data_methods=engine_eval_data_methods,
+        ),
         upstreams=[UpstreamConfig(name="test-upstream", url="http://mock-upstream")],
     )
 

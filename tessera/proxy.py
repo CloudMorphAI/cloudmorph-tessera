@@ -148,18 +148,18 @@ class DecisionCache:
             self._cache.clear()
 
 # MCP-AUDIT-2026-05-11: The following methods are passed-through without policy
-# evaluation, even though they are MCP "action" category and *could* leak data:
+# evaluation, even though some are MCP "action" category and *could* leak data:
 #   - prompts/get          (prompt arguments may contain PII/secrets)
-#   - resources/read       (could exfiltrate via resource URI)
 #   - resources/subscribe  (subscription is a write-ish action)
 #   - completion/complete  (arguments may contain PII/secrets)
-#   - sampling/createMessage (arguments may contain PII/secrets)
-# Audit-only handling (v0.2.0, OQ-1): these 5 methods emit a separate
-# passthrough_data_leak_candidate audit event in addition to the normal
-# passthrough event. The audit flag is configurable via
-# audit.flag_data_leak_passthrough (default True). Policy evaluation for these
-# methods is deferred to a future release once real-world traffic patterns are
-# understood.
+# These 3 still emit a passthrough_data_leak_candidate audit event (v0.2.0,
+# OQ-1) when audit.flag_data_leak_passthrough is True. They remain in
+# pass-through pending a future release with real-world traffic data.
+#
+# v0.9.0 D5: resources/read and sampling/createMessage are NO LONGER in this
+# set — they are engine-evaluated by default (policies.engine_eval_data_methods
+# defaults True). Operators who need the old pass-through behaviour can set
+# policies.engine_eval_data_methods: false in tessera.yaml.
 _PASS_THROUGH_METHODS = {
     # Lifecycle
     "initialize",
@@ -171,14 +171,15 @@ _PASS_THROUGH_METHODS = {
     "roots/list",
     # Config / admin — no data exfil risk
     "logging/setLevel",
-    # Resource actions — pass-through for v0.1.1 (see MCP-AUDIT above)
+    # Resource actions — pass-through for v0.1.1
     "resources/unsubscribe",
-    # Action-category methods passed through pending founder decision (see MCP-AUDIT above)
+    # Action-category methods still deferred (see MCP-AUDIT above)
     "prompts/get",
-    "resources/read",
     "resources/subscribe",
     "completion/complete",
-    "sampling/createMessage",
+    # NOTE: resources/read and sampling/createMessage removed from this set
+    # in v0.9.0 — they are now engine-evaluated when
+    # policies.engine_eval_data_methods is True (default).
 }
 
 
@@ -809,8 +810,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         method: str = body.get("method", "")
 
         # Step 3 — Branch on method
-        # v0.5.0: resources/read and sampling/createMessage can be promoted to
-        # engine-evaluated when policies.engine_eval_data_methods is True.
+        # v0.9.0 D5: resources/read and sampling/createMessage are engine-evaluated
+        # by default (engine_eval_data_methods defaults True). Operators can opt
+        # out by setting policies.engine_eval_data_methods: false in tessera.yaml
+        # to restore the old pass-through behaviour.
         _engine_eval_data = cfg.policies.engine_eval_data_methods
         _data_eval_methods = {"resources/read", "sampling/createMessage"}
         if method.startswith("notifications/") or (
@@ -1368,7 +1371,10 @@ async def _run_proxy_pipeline(
     jsonrpc_id = body.get("id", 1)
     method: str = body.get("method", "")
 
-    # Branch on method — pass-throughs forwarded without policy evaluation
+    # Branch on method — pass-throughs forwarded without policy evaluation.
+    # v0.9.0 D5: resources/read and sampling/createMessage are engine-evaluated
+    # when engine_eval_data_methods is True (default). Opt out via
+    # policies.engine_eval_data_methods: false in tessera.yaml.
     _engine_eval_data = cfg.policies.engine_eval_data_methods
     _data_eval_methods = {"resources/read", "sampling/createMessage"}
     if method.startswith("notifications/") or (

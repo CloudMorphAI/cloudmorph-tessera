@@ -492,7 +492,7 @@ class OAuthResourceServer:
     Configuration is sourced from env vars (overridable at construction):
         TESSERA_OAUTH_ISSUER         (default: "tessera.cloudmorph.ai")
         TESSERA_OAUTH_AUDIENCE       (default: "tessera.cloudmorph.ai/api")
-        TESSERA_OAUTH_JWKS_FALLBACK  (default: "https://tessera.cloudmorph.ai/oauth/jwks.json")
+        TESSERA_OAUTH_JWKS_FALLBACK  (default: "https://auth.tessera.cloudmorph.ai/oauth/jwks.json")
         TESSERA_OAUTH_PUBKEY_PATH    (default: bundled tessera/auth/oauth_pubkey.pem)
     """
 

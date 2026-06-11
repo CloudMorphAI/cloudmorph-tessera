@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] — 0.9.0
+
+### Added
+
+- **Realm-aware price-field selection** (`tessera/cost/price_table.py`).
+  `fixed_monthly` realm reads `price_usd_per_month`; `per_tb_scanned` reads
+  `price_usd_per_tb_scanned`.  Falls back to `price_usd_per_hour` / `price_usd`
+  with a one-time `WARNING` log per operation when the new field is absent
+  (back-compat with pre-0.9.0 price-table artifacts).
+
+- **SQLite-backed `RevocationStore`** (`tessera/auth/oauth_rs.py`).
+  `SqliteRevocationStore` persists revoked JTIs to a file at
+  `<audit_db_dir>/revocation.db` (mirrors `AuditConfig.path`).  Made the
+  module-level default when the directory is writable; falls back to
+  `InMemoryRevocationStore` with a warning when it is not.
+
+### Changed (breaking)
+
+- **`policies.engine_eval_data_methods` default flipped `False → True`** (D5
+  founder decision).  `resources/read` and `sampling/createMessage` are now
+  **engine-evaluated by default** instead of passing through without policy
+  enforcement.  Deployments that need the old pass-through behaviour must opt
+  out explicitly:
+
+  ```yaml
+  # tessera.yaml
+  policies:
+    engine_eval_data_methods: false
+  ```
+
+  Impact: with the default policy set or `default_action: block`, those two
+  methods will be **blocked** until an explicit `allow` policy is added for
+  them.  With `default_action: allow` or `policies.mode: log_only`, behaviour
+  is unchanged.
+
+### Fixed
+
+- Updated `oauth_rs.py` docstring — `TESSERA_OAUTH_JWKS_FALLBACK` default URL
+  now documented as `https://auth.tessera.cloudmorph.ai/oauth/jwks.json`
+  (was stale `tessera.cloudmorph.ai` reference in the `OAuthResourceServer`
+  class docstring).
 
 ## [0.8.0] - 2026-06-10
 
