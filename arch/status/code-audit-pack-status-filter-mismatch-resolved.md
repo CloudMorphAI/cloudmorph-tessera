@@ -1,3 +1,6 @@
+> STATUS: Resolved. client.py filter accepts "production" and "active" as active statuses.
+> Confirmed at session start 2026-06-11.
+
 # code-audit: pack status filter "active" vs producer "production" — zero packs downloaded (CRITICAL)
 
 **Discovered**: 2026-05-22 code-audit overnight pass
