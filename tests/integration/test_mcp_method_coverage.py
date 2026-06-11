@@ -104,9 +104,14 @@ def test_tools_call_is_policy_evaluated(test_config: TesseraConfig) -> None:
         )
     assert resp.status_code == 200
     body = resp.json()
-    # default_action=block in test_config → unknown tool must be blocked
-    assert body.get("error") is not None, "tools/call with unknown tool should be policy-blocked"
-    assert body["error"]["code"] == -32603, "policy block must use -32603"
+    # default_action=block in test_config → unknown tool must be blocked.
+    # Blocks surface as MCP tool-errors (result.isError=true), not JSON-RPC
+    # -32603 — agents treat -32603 as transient and retry; isError reads as
+    # final. See the enforcement-path comment in proxy.py.
+    result = body.get("result")
+    assert result is not None, "tools/call with unknown tool should be policy-blocked"
+    assert result.get("isError") is True, "policy block must set result.isError"
+    assert "POLICY_BLOCK" in result["content"][0]["text"]
 
 
 # ── Test 3: Unknown methods still return -32601 ───────────────────────────────
@@ -169,8 +174,8 @@ def test_notifications_prefix_passes_through(method: str, test_config: TesseraCo
 # ── Test 5: Policy block error contract ───────────────────────────────────────
 
 
-def test_policy_block_uses_32603_with_data_reason(test_config: TesseraConfig) -> None:
-    """Policy block responses must use code -32603 and include data.reason."""
+def test_policy_block_uses_tool_error_with_reason(test_config: TesseraConfig) -> None:
+    """Policy blocks surface as MCP tool-errors (result.isError=true) with a reason line."""
     with _proxy_client(test_config, _make_mock_transport()) as (client, app):
         resp = client.post(
             "/mcp/mock",
@@ -184,6 +189,8 @@ def test_policy_block_uses_32603_with_data_reason(test_config: TesseraConfig) ->
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["error"]["code"] == -32603
-    assert "data" in body["error"]
-    assert "reason" in body["error"]["data"]
+    result = body["result"]
+    assert result["isError"] is True
+    block_text = result["content"][0]["text"]
+    assert "POLICY_BLOCK" in block_text
+    assert "reason:" in block_text
