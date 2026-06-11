@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — YYYY-MM-DD
+
+### What's new
+- API surface frozen; semver policy in effect from this release.
+- `Production/Stable` PyPI classifier.
+- Durable SQLite-backed revocation store (token revocations survive restarts).
+- Realm-aware price-field selection (`fixed_monthly` reads `price_usd_per_month`).
+- `resources/read` and `sampling/createMessage` now policy-evaluated by default (opt out: `policies.engine_eval_data_methods: false`).
+- Per-bundle sibling `.signed.json` Ed25519 verification (P0-9).
+- `audit verify-chain` is now a deprecated alias for `audit verify`.
+
+### Breaking changes (from 0.x)
+None. All v0.9.0 configs and CLI invocations continue to work.
+
+### 0.x → 1.0 upgrade guide
+1. `pip install --upgrade cloudmorph-tessera` — no config changes required.
+2. If you use `tessera audit verify-chain` in scripts, replace with `tessera audit verify`.
+3. If you call `tessera/cost/infracost.py` directly (bypassing `cost_for_call()`), switch to `tessera.cost.cost_for_call()` — the direct pattern is discouraged (not removed).
+4. If your policy YAML does NOT want `resources/read` or `sampling/createMessage` to go through the policy engine, add `policies.engine_eval_data_methods: false` to `tessera.yaml`.
+
+---
+
 ## [0.9.0] — 2026-06-11
 
 > Includes the unified-MCP work originally scoped as 0.8.0 (see the [0.8.0] section below); 0.8.0 was never published to PyPI, so 0.9.0 is the first release carrying both the unified `/mcp` entry point and the hardening changes below.
