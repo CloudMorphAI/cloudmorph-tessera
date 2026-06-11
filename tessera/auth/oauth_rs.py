@@ -43,6 +43,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -79,9 +80,109 @@ class InMemoryRevocationStore:
         return jti in self._revoked
 
 
-# Module-level singleton for v0.4.0 single-instance deployments.
-# Production deployments swap this out for a Redis/DDB backend via the Protocol.
-_revocation_store: RevocationStore = InMemoryRevocationStore()
+_REVOCATION_TABLE = """
+CREATE TABLE IF NOT EXISTS revoked_jtis (
+  jti         TEXT PRIMARY KEY,
+  revoked_at  TEXT NOT NULL
+);
+"""
+
+
+class SqliteRevocationStore:
+    """SQLite-backed revocation store — survives process restarts.
+
+    The database file is created at ``path`` on first open.  ``path``
+    is derived from the audit DB path by replacing the filename with
+    ``revocation.db`` in the same directory, matching
+    ``AuditConfig.path`` conventions.  Callers may also pass an
+    explicit path for testing.
+
+    Thread-safe: all writes are protected by a threading.Lock.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = str(path)
+        self._lock = threading.Lock()
+        self._init_db()
+
+    def _init_db(self) -> None:
+        conn = sqlite3.connect(self._path)
+        try:
+            conn.execute(_REVOCATION_TABLE)
+            conn.commit()
+        finally:
+            conn.close()
+
+    async def revoke(self, jti: str) -> None:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            conn = sqlite3.connect(self._path)
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO revoked_jtis (jti, revoked_at) VALUES (?, ?)",
+                    (jti, now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    async def is_revoked(self, jti: str) -> bool:
+        conn = sqlite3.connect(self._path)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM revoked_jtis WHERE jti = ? LIMIT 1", (jti,)
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+
+def _default_revocation_db_path() -> str | None:
+    """Return a path for the revocation DB, mirroring the audit DB location.
+
+    Reads ``TESSERA_AUDIT_PATH`` env var first; if absent uses the
+    ``AuditConfig`` default ``/var/lib/tessera/audit.db``.  Returns
+    ``None`` when the parent directory does not exist and cannot be
+    created (e.g. read-only container at import time).
+    """
+    audit_path = os.environ.get("TESSERA_AUDIT_PATH", "/var/lib/tessera/audit.db")
+    parent = Path(audit_path).parent
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        return str(parent / "revocation.db")
+    except OSError:
+        return None
+
+
+def _build_default_revocation_store() -> RevocationStore:
+    """Return a SqliteRevocationStore when a writable path is available.
+
+    Falls back to InMemoryRevocationStore and logs a warning when the
+    persistence path cannot be created.
+    """
+    path = _default_revocation_db_path()
+    if path is not None:
+        try:
+            store = SqliteRevocationStore(path)
+            logger.info("event=revocation_store_sqlite path=%s", path)
+            return store
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "event=revocation_store_sqlite_init_failed path=%s reason=%s "
+                "falling_back_to=in_memory",
+                path, exc,
+            )
+    logger.warning(
+        "event=revocation_store_in_memory reason=no_persistence_path "
+        "note=revocations_will_vanish_on_restart"
+    )
+    return InMemoryRevocationStore()
+
+
+# Module-level singleton — SqliteRevocationStore by default when the
+# persistence path is available; InMemoryRevocationStore as explicit fallback.
+_revocation_store: RevocationStore = _build_default_revocation_store()
 
 
 def get_revocation_store() -> RevocationStore:
