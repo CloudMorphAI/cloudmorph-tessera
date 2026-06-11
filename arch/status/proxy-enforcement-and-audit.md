@@ -37,7 +37,23 @@ Resolution is `module.path:ClassName` via `tessera/pluggable.py:resolve()`. Pure
 3. **Branch on method.** `notifications/*` and an 11-method pass-through set (`initialize`, `ping`, the four `*/list`, `logging/setLevel`, `resources/unsubscribe`, and the five data-exfil-risk methods) are forwarded without policy evaluation. The five data-leak methods (`prompts/get`, `resources/read`, `resources/subscribe`, `completion/complete`, `sampling/createMessage`) additionally emit a `passthrough_data_leak_candidate` audit event when `audit.flag_data_leak_passthrough: true` (the default). Method ≠ `tools/call` and not in the pass-through set returns `-32601`.
 4. **Extract intent.** `tessera/intent.py:extract_intent()` reads `params._meta[<intent.meta_key>]` (default `tessera_intent`). When `intent.required: true` and intent is absent, the call is blocked with reason `intent_required`. Off-the-shelf agents (Cursor, Claude Desktop, Windsurf) typically don't supply intent; policies that need it are skipped via `match.require_intent: true`.
 5. **Pre-fetch cost.** If both an Infracost backend and an `aws_mapping` module are configured, the proxy calls `aws_mapping.map_request(tool_name, args)` to build a query and then `cost_backend.query_sku(...)` to fetch a price. Result is stored in `context["cost_cache"][tool_name]`. This is the async→sync bridge that lets the synchronous `predicted_cost` condition evaluator consult cost data without spinning an event loop inside the engine.
-6. **Build evaluation context.** A dict with `tool_call`, `intent`, `upstream`, `runtime`, `mode`, `policy_id`, `scope`, `cost_backend`, `cost_cache`, `aws_mapping`, `blast_radius_backend`, `state_backend`. The engine reads everything it needs from this context.
+6. **Build evaluation context.** A dict with the following keys; the engine reads everything it needs from this context.
+
+   | Key | Type | Purpose |
+   |---|---|---|
+   | `tool_call` | dict | Parsed JSON-RPC `params` for the `tools/call` method. |
+   | `intent` | dict \| None | Parsed `tessera_intent` envelope from `_meta`, or `None`. |
+   | `upstream` | str | The upstream name from the URL path (`/mcp/{upstream_name}`). |
+   | `runtime` | `RuntimeConfig` | Holds `lockdown` flag. |
+   | `mode` | str | `"enforcement"` / `"log_only"` / `"observation"`. |
+   | `policy_id` | str \| None | Populated during engine evaluation; `None` at context build time. |
+   | `scope` | str | `AuthContext.scope`; used as the per-tenant chain key. |
+   | `cost_backend` | backend \| None | Infracost backend, or `None` if not configured. |
+   | `cost_cache` | dict | Pre-fetched cost results keyed by `tool_name`; populated in step 5. |
+   | `aws_mapping` | module \| None | The AWS cost-mapping module, or `None`. |
+   | `blast_radius_backend` | backend \| None | Blast-radius evaluator, or `None`. |
+   | `state_backend` | `DailySpendState` \| None | Cumulative-spend SQLite backend, or `None`. |
+   | `combination_tracker` | `CombinationTracker` \| None | Chain-tracker for multi-op combination conditions (v0.6.0). Currently reached via the module-level singleton (`get_global_tracker()`) rather than direct context injection; the context key is reserved for Tessera Cloud and test overrides. Every successful call (allow / log\_only / observation) appends to the chain **after** the response is forwarded, via `record_op()` called in the proxy's post-forward path. See `arch/status/combinations.md`. |
 7. **Lockdown short-circuit.** `runtime.lockdown: true` blocks every call before the engine runs. The reason field on the audit event is `lockdown_active`. This is a kill-switch for incident response.
 8. **Decision cache lookup (v0.7.0).** Before invoking the engine, `app.state.decision_cache.get(scope, tool_name, tool_call)` is consulted. On hit, the cached `allow`/`observed` decision is reused — sub-microsecond. On miss, evaluate then `put(...)`. `block` and `require_approval` decisions are NEVER cached (they always re-evaluate against current policy so a fix-up rule takes effect immediately). Cache cleared on every `CloudPolicySync` reload — see `arch/status/control-plane-v0.7.0.md`.
 9. **Mode branch.**
