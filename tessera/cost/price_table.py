@@ -21,6 +21,13 @@ The artifact format is the v1 schema produced by tessera-intelligence:
       }
     }
 
+Realm-aware price fields (v0.9.0):
+  - realm ``fixed_monthly``:  entry carries ``price_usd_per_month``
+  - realm ``per_tb_scanned``:  entry carries ``price_usd_per_tb_scanned``
+  - all other realms:          entry carries ``price_usd_per_hour`` (legacy
+                                alias ``price_usd`` still accepted with a
+                                one-time warning per operation)
+
 The index built at ``__init__`` time is a dict keyed
 ``(operation, realm, frozenset(param_items))`` → price_usd, enabling
 sub-millisecond lookups by turning the ``params`` dict into a frozenset of
@@ -42,6 +49,52 @@ logger = logging.getLogger(__name__)
 # typical 4-6 args per tool call this is comfortable; if a caller passes
 # more we skip Tier 2 and fall through to the Tier 3 wildcard.
 _SUBSET_MATCH_MAX_ARGS = 10
+
+# ── Realm-aware price-field selection ────────────────────────────────────────
+
+# Map realm → the canonical field name that the producer writes.
+_REALM_PRICE_FIELD: dict[str, str] = {
+    "fixed_monthly": "price_usd_per_month",
+    "per_tb_scanned": "price_usd_per_tb_scanned",
+}
+
+# Tracks which operations have already fired the legacy-field fallback warning
+# so we only warn once per process per operation.
+_legacy_field_warned: set[str] = set()
+
+
+def _price_from_entry(entry: dict[str, Any], realm: str, op_name: str) -> float:
+    """Extract the price value from a lookup entry using realm-aware field selection.
+
+    For realms with a dedicated field (``fixed_monthly``, ``per_tb_scanned``)
+    the new field is tried first.  If absent, falls back to ``price_usd_per_hour``
+    / ``price_usd`` with a one-time warning per operation.
+
+    For all other realms the classic ``price_usd_per_hour`` / ``price_usd``
+    chain is used (no warning).
+    """
+    dedicated = _REALM_PRICE_FIELD.get(realm)
+    if dedicated is not None:
+        val = entry.get(dedicated)
+        if val is not None:
+            return float(val)
+        # Fallback to legacy field — warn once per operation.
+        legacy_key = f"{op_name}:{realm}"
+        if legacy_key not in _legacy_field_warned:
+            _legacy_field_warned.add(legacy_key)
+            logger.warning(
+                "event=price_table_legacy_field_fallback op=%s realm=%s "
+                "expected_field=%s fell_back_to=price_usd_per_hour",
+                op_name, realm, dedicated,
+            )
+    # Classic hourly / generic field chain.
+    hourly = entry.get("price_usd_per_hour")
+    if hourly is not None:
+        return float(hourly)
+    generic = entry.get("price_usd")
+    if generic is not None:
+        return float(generic)
+    return 0.0
 
 # ── Index key type ────────────────────────────────────────────────────────────
 
@@ -115,9 +168,9 @@ class PriceTable:
             lookups: list[dict[str, Any]] = op_body.get("lookups", [])
             for entry in lookups:
                 params: dict[str, str] = entry.get("params", {})
-                price = float(entry.get("price_usd_per_hour", entry.get("price_usd", 0.0)))
                 param_key = frozenset(params.items())
                 for realm in realms:
+                    price = _price_from_entry(entry, realm, op_name)
                     idx: _IndexKey = (op_name, realm, param_key)
                     self._index[idx] = (price, params)
 
