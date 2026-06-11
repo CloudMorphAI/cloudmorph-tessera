@@ -67,8 +67,8 @@ class InfracostClient:
     requested operation.  The primary entry point is ``tessera.cost.cost_for_call()``,
     which consults the price-table first and reaches this client only on a miss.
     The client itself is not deprecated; only the pattern of calling it directly
-    (bypassing ``cost_for_call``) is the legacy path scheduled for removal in
-    v0.4.0.
+    (bypassing ``cost_for_call``) is discouraged but not removed — call
+    ``tessera.cost.cost_for_call()`` instead.
     """
 
     def __init__(

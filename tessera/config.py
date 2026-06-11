@@ -193,6 +193,7 @@ class IntelligenceConfig(BaseModel):
     allow_unsigned_catalog: bool = False
 
 
+# No 'version' field: config schema versioning is 2.0 scope. Freeze as-is for 1.0.
 class TesseraConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

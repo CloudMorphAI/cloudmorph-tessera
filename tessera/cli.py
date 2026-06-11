@@ -273,7 +273,7 @@ def audit_verify_chain(
 
     DEPRECATED in v0.9.0: identical to `audit verify`. Use `tessera audit verify`
     instead. This alias is kept for backward compatibility and will be removed
-    in a future major release.
+    in 2.0.
     """
     _run_audit_verify(audit_path, scope, all_scopes, json_output)
 
