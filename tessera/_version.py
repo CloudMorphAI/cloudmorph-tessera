@@ -8,4 +8,4 @@ try:
     __version__ = version("cloudmorph-tessera")
 except PackageNotFoundError:
     # Development mode (not pip-installed) — fall back to literal.
-    __version__ = "0.9.0"  # KEEP IN SYNC with pyproject.toml; will be auto-bumped by scripts/bump_version.py
+    __version__ = "1.0.0"  # KEEP IN SYNC with pyproject.toml; will be auto-bumped by scripts/bump_version.py
