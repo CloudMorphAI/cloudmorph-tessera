@@ -204,9 +204,9 @@ def test_price_table_path_blocks_with_cost_source(tmp_path: Path) -> None:
 
     assert resp.status_code == 200
     body = resp.json()
-    assert "error" in body, f"Expected block, got: {body}"
-    assert body["error"]["code"] == -32603
-    assert body["error"]["data"]["reason"] == "cost_threshold_exceeded"
+    result = body.get("result", {})
+    assert result.get("isError") is True, f"Expected policy block (result.isError), got: {body}"
+    assert "cost_threshold_exceeded" in result["content"][0]["text"]
 
     # Check audit event
     event = _read_last_audit_event(audit_db)
@@ -274,9 +274,9 @@ def test_infracost_live_fallback_blocks_with_cost_source(tmp_path: Path) -> None
 
     assert resp.status_code == 200
     body = resp.json()
-    assert "error" in body, f"Expected block, got: {body}"
-    assert body["error"]["code"] == -32603
-    assert body["error"]["data"]["reason"] == "cost_threshold_exceeded"
+    result = body.get("result", {})
+    assert result.get("isError") is True, f"Expected policy block (result.isError), got: {body}"
+    assert "cost_threshold_exceeded" in result["content"][0]["text"]
 
     # Check audit event
     event = _read_last_audit_event(audit_db)

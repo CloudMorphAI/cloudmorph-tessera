@@ -816,9 +816,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # to restore the old pass-through behaviour.
         _engine_eval_data = cfg.policies.engine_eval_data_methods
         _data_eval_methods = {"resources/read", "sampling/createMessage"}
-        if method.startswith("notifications/") or (
-            method in _PASS_THROUGH_METHODS
-            and not (_engine_eval_data and method in _data_eval_methods)
+        if (
+            method.startswith("notifications/")
+            or method in _PASS_THROUGH_METHODS
+            or (not _engine_eval_data and method in _data_eval_methods)
         ):
             return await _handle_pass_through(
                 app.state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id
@@ -1377,9 +1378,10 @@ async def _run_proxy_pipeline(
     # policies.engine_eval_data_methods: false in tessera.yaml.
     _engine_eval_data = cfg.policies.engine_eval_data_methods
     _data_eval_methods = {"resources/read", "sampling/createMessage"}
-    if method.startswith("notifications/") or (
-        method in _PASS_THROUGH_METHODS
-        and not (_engine_eval_data and method in _data_eval_methods)
+    if (
+        method.startswith("notifications/")
+        or method in _PASS_THROUGH_METHODS
+        or (not _engine_eval_data and method in _data_eval_methods)
     ):
         return await _handle_pass_through(
             state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id

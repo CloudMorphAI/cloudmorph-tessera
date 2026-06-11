@@ -7,10 +7,13 @@ Each test mocks the underlying SDK client and verifies that:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+_anthropic_available = importlib.util.find_spec("anthropic") is not None
 
 _VALID_POLICY_YAML = """\
 id: test-block
@@ -34,6 +37,7 @@ _VALID_ITEM = {
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not _anthropic_available, reason="anthropic SDK not installed")
 @patch("tessera.llm.anthropic.anthropic.Anthropic")
 def test_anthropic_instantiates_and_proposes(mock_anthropic_cls):
     """AnthropicPolicyAuthor instantiates and propose_policies returns a list."""

@@ -129,7 +129,7 @@ def test_allow_tool_call(test_config: TesseraConfig) -> None:
 
 
 def test_block_tool_call(test_config: TesseraConfig) -> None:
-    """Enforcement mode: tool matched by block policy → JSON-RPC error -32603."""
+    """Enforcement mode: tool matched by block policy → MCP tool-error (result.isError)."""
     with _proxy_client(test_config, _make_mock_transport()) as (client, app):
         resp = client.post(
             "/mcp/mock",
@@ -138,9 +138,9 @@ def test_block_tool_call(test_config: TesseraConfig) -> None:
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert "error" in body
-    assert body["error"]["code"] == -32603
-    assert "reason" in body["error"]["data"]
+    result = body.get("result", {})
+    assert result.get("isError") is True, f"expected policy block via result.isError, got: {body}"
+    assert "POLICY_BLOCK" in result["content"][0]["text"]
 
 
 def test_lockdown_blocks_all(test_config_lockdown: TesseraConfig) -> None:
@@ -406,19 +406,18 @@ def test_data_methods_engine_evaluated_by_default(test_config: TesseraConfig) ->
 
 def test_data_methods_pass_through_when_opt_out(test_config: TesseraConfig) -> None:
     """When engine_eval_data_methods=False, resources/read and sampling/createMessage pass through."""
-    import dataclasses
-
     from tessera.config import PoliciesConfig
 
-    opt_out_config = dataclasses.replace(
-        test_config,
-        policies=PoliciesConfig(
-            dir=test_config.policies.dir,
-            reload="none",
-            mode=test_config.policies.mode,
-            default_action="block",
-            engine_eval_data_methods=False,
-        ),
+    opt_out_config = test_config.model_copy(
+        update={
+            "policies": PoliciesConfig(
+                dir=test_config.policies.dir,
+                reload="none",
+                mode=test_config.policies.mode,
+                default_action="block",
+                engine_eval_data_methods=False,
+            )
+        }
     )
     for method in ("resources/read", "sampling/createMessage"):
         with _proxy_client(opt_out_config, _make_mock_transport({"jsonrpc": "2.0", "id": 1, "result": {}})) as (client, app):
@@ -429,8 +428,10 @@ def test_data_methods_pass_through_when_opt_out(test_config: TesseraConfig) -> N
             )
         assert resp.status_code == 200, f"method={method!r}: expected HTTP 200"
         body = resp.json()
-        assert "error" not in body or body.get("error") is None, (
-            f"method={method!r} opt-out: expected pass-through (no error), got {body}"
+        result = body.get("result")
+        assert result is not None, f"method={method!r} opt-out: expected upstream result, got {body}"
+        assert result.get("isError") is not True, (
+            f"method={method!r} opt-out: expected pass-through (not blocked), got {body}"
         )
 
 

@@ -7,11 +7,17 @@ object whose .post() method is mockable via respx.
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("mcp_proxy_for_aws") is None,
+    reason="mcp_proxy_for_aws not installed",
+)
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
