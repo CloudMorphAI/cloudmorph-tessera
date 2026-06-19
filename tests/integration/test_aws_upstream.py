@@ -14,8 +14,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+def _mcp_proxy_is_real() -> bool:
+    """Return True only when the *real* mcp_proxy_for_aws package is installed.
+
+    importlib.util.find_spec raises ValueError when the module exists in
+    sys.modules but has __spec__ = None — which happens when unit test stubs
+    inject a types.ModuleType() placeholder.  In that case the package is not
+    really installed, so we treat it the same as absent.
+    """
+    try:
+        return importlib.util.find_spec("mcp_proxy_for_aws") is not None
+    except ValueError:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    importlib.util.find_spec("mcp_proxy_for_aws") is None,
+    not _mcp_proxy_is_real(),
     reason="mcp_proxy_for_aws not installed",
 )
 
