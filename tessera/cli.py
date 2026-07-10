@@ -144,8 +144,50 @@ def _run_audit_verify(
     scope: str | None,
     all_scopes: bool,
     json_output: bool,
+    file: str | None = None,
+    dir_: str | None = None,
 ) -> None:
-    """Shared implementation for `audit verify` and `audit verify-chain`."""
+    """Shared implementation for `audit verify` and `audit verify-chain`.
+
+    `file`/`dir_` (when set) verify an exported bundle/JSONL fully offline
+    instead of reading the live SQLite audit database — see
+    `tessera.audit.verifier.verify_events_file` / `verify_bundle_dir`.
+    """
+    if file and dir_:
+        typer.echo("Pass only one of --file or --dir, not both.", err=True)
+        raise typer.Exit(2)
+
+    if file or dir_:
+        from tessera.audit.verifier import verify_bundle_dir, verify_events_file
+
+        result = verify_bundle_dir(dir_) if dir_ else verify_events_file(file)  # type: ignore[arg-type]
+
+        if json_output:
+            typer.echo(json.dumps(result))
+        else:
+            status = "ok" if result["ok"] else "FAILED"
+            typer.echo(
+                f"source={result['source']}  events={result['events_checked']}  status={status}"
+            )
+            if result.get("signature_ok") is not None:
+                typer.echo(f"  signature: {'ok' if result['signature_ok'] else 'FAILED'}")
+            if result.get("first_event_at"):
+                typer.echo(f"  first event: {result['first_event_at']}")
+            if result.get("last_event_at"):
+                typer.echo(f"  last event:  {result['last_event_at']}")
+            if not result["ok"] and result.get("first_failure"):
+                f = result["first_failure"]
+                typer.echo(
+                    f"  FAILED at seq={f['seq']} event_id={f['event_id']}", err=True
+                )
+                typer.echo(f"  kind: {f['kind']}", err=True)
+                typer.echo(f"  expected: {f.get('expected_event_hash', '')}", err=True)
+                typer.echo(f"  computed: {f.get('computed_event_hash', '')}", err=True)
+
+        if not result["ok"]:
+            raise typer.Exit(3)
+        return
+
     from tessera.audit.sinks.sqlite import SqliteSink
     from tessera.audit.verifier import verify_chain
 
@@ -213,9 +255,24 @@ def audit_verify(
     scope: str = typer.Option(None, "--scope"),
     all_scopes: bool = typer.Option(False, "--all"),
     json_output: bool = typer.Option(False, "--json"),
+    file: str = typer.Option(
+        None, "--file", help="Verify a bare JSONL events file (chain-only, offline)."
+    ),
+    dir_: str = typer.Option(
+        None,
+        "--dir",
+        help="Verify an evidence bundle directory (events.jsonl + manifest.json): "
+        "chain AND Ed25519 signature, fully offline.",
+    ),
 ) -> None:
-    """Verify the audit hash chain integrity."""
-    _run_audit_verify(audit_path, scope, all_scopes, json_output)
+    """Verify the audit hash chain integrity.
+
+    Default mode reads the live SQLite audit database (--audit-path/--scope/--all).
+    Pass --file or --dir to instead verify an exported bundle fully offline —
+    exit code 0 on success, non-zero (CI-friendly) reporting the first broken
+    event on hash/chain/signature failure.
+    """
+    _run_audit_verify(audit_path, scope, all_scopes, json_output, file=file, dir_=dir_)
 
 
 # ---------------------------------------------------------------------------
@@ -300,17 +357,71 @@ def audit_verify_chain(
 def audit_export(
     audit_path: str = typer.Option("/var/lib/tessera/audit.db", "--audit-path"),
     scope: str = typer.Option(None, "--scope"),
-    fmt: str = typer.Option("jsonl", "--format", help="jsonl or csv"),
-    output: str = typer.Option("-", "--output", help="Output path or - for stdout"),
+    fmt: str = typer.Option("jsonl", "--format", help="jsonl or csv (ignored when --out is set)"),
+    output: str = typer.Option("-", "--output", help="Output path or - for stdout (ignored when --out is set)"),
+    from_ts: str = typer.Option(
+        None, "--from", help="Range start (ISO-8601). With --out, builds an evidence bundle."
+    ),
+    to_ts: str = typer.Option(
+        None, "--to", help="Range end (ISO-8601, defaults to now). Requires --out."
+    ),
+    out: str = typer.Option(
+        None,
+        "--out",
+        help="Directory to write a signed evidence bundle to (events.jsonl, manifest.json, "
+        "summary.html, VERIFY.md). Switches this command from bulk jsonl/csv export to "
+        "evidence-bundle mode.",
+    ),
+    signing_key: str = typer.Option(
+        None,
+        "--signing-key",
+        help="Path to the Ed25519 instance signing key (auto-generated on first use if absent). "
+        "Overrides TESSERA_AUDIT_SIGNING_KEY_PATH and the ~/.tessera/audit-signing-key.pem default.",
+    ),
+    mappings_dir: str = typer.Option(
+        None,
+        "--mappings-dir",
+        help="Override the compliance-mapping YAML directory "
+        "(default: tessera/compliance/mappings/); omitted from summary.html if absent.",
+    ),
 ) -> None:
-    """Bulk export the audit log in JSONL or CSV format."""
-    from tessera.audit.inspect import export_csv, export_jsonl
+    """Bulk export the audit log (jsonl/csv), or build a signed evidence bundle with --out."""
     from tessera.audit.sinks.sqlite import SqliteSink
 
     db_path = Path(audit_path)
     if not db_path.exists():
         typer.echo("No audit database found at: " + audit_path, err=True)
         raise typer.Exit(1)
+
+    if out:
+        from tessera.audit.export import export_evidence_bundle
+
+        sink = SqliteSink(audit_path)
+        try:
+            manifest = export_evidence_bundle(
+                sink,
+                scope=scope or "default",
+                from_ts=from_ts,
+                to_ts=to_ts,
+                out_dir=out,
+                signing_key_path=signing_key,
+                mappings_dir=mappings_dir,
+            )
+        except ValueError as exc:
+            typer.echo(f"Export failed: {exc}", err=True)
+            raise typer.Exit(2) from exc
+        finally:
+            sink.close()
+
+        counts = manifest["event_counts"]
+        typer.echo(
+            f"Evidence bundle written to {out}: {counts['total']} events "
+            f"(allow={counts['allow']} block={counts['block']} approval={counts['approval']}) "
+            f"range {manifest['range']['from']} -> {manifest['range']['to']}"
+        )
+        return
+
+    from tessera.audit.inspect import export_csv, export_jsonl
 
     if fmt not in ("jsonl", "csv"):
         typer.echo(f"Unknown format: {fmt!r}. Choose jsonl or csv.", err=True)
