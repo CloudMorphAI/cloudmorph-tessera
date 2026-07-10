@@ -1,0 +1,104 @@
+framework: "Digital Personal Data Protection Act, 2023 (India)"
+version: >
+  Sections 8-10 (Data Fiduciary obligations); DPDP Rules 2025 notified
+  2025-11-14. Commencement of the substantive Sections 8-10 obligations is
+  phased and was still being rolled out as of this writing (mid-2026) — public
+  reporting is inconsistent about the exact commencement date for these
+  sections specifically. CONFIRM current commencement status against the
+  official MeitY notification before using this mapping in any customer-facing
+  compliance claim.
+
+# Scope note: Tessera enforces and logs at the MCP tool-call boundary. It is
+# not a consent-management platform, does not classify personal data, and does
+# not itself detect breaches — it produces a tamper-evident record of tool-call
+# decisions that can support (not replace) the obligations below.
+
+obligations:
+  - id: security-safeguards-logging
+    obligation: >
+      A Data Fiduciary must protect personal data in its possession or under
+      its control by implementing reasonable security safeguards to prevent
+      personal data breaches. The prescribed minimum safeguards include
+      maintaining logs and visibility of access sufficient to enable
+      detection, investigation, and remediation of unauthorised access.
+    source: >
+      DPDP Act 2023 Section 8(5) (reasonable security safeguards), read with
+      DPDP Rules 2025, Rule 6 (minimum safeguards, including the access-logging
+      requirement)
+    tessera_controls:
+      - "deterministic policy enforcement at the MCP boundary"
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "per-decision policy_id + reason recorded"
+    evidenced_by: >
+      Every tool call that touches an upstream data-access action is logged
+      with tool, policy_id, reason, and timestamp in a tamper-evident chain —
+      directly supporting Rule 6's "maintaining logs and visibility of access"
+      safeguard for the tool-invocation surface. This is one of several
+      safeguards Rule 6 lists (alongside encryption, access control, backups,
+      and processor contractual flow-down); Tessera does not provide the
+      others.
+
+  - id: breach-investigation-evidence
+    obligation: >
+      On becoming aware of a personal data breach, a Data Fiduciary must give
+      the Data Protection Board and each affected Data Principal intimation of
+      the breach, including its nature, extent, likely consequences, and
+      remedial measures taken.
+    source: "DPDP Act 2023 Section 8(6) (breach intimation)"
+    tessera_controls:
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "Ed25519-signed, offline-verifiable evidence export"
+      - "per-decision policy_id + reason recorded"
+    evidenced_by: >
+      When an incident involves an MCP-mediated tool call, the signed,
+      tamper-evident audit export reconstructs exactly which tool calls were
+      allowed, blocked, or required approval, with reasons and timestamps —
+      supporting the factual narrative (nature, extent, timeline) required in
+      a breach intimation. Tessera does not detect breaches itself; it
+      supplies evidence for a breach already identified by other means.
+
+  - id: significant-data-fiduciary-audit
+    obligation: >
+      A Significant Data Fiduciary must undertake an independent data audit,
+      performed by an independent data auditor, at least once every twelve
+      months to evaluate compliance with the Act.
+    source: >
+      DPDP Act 2023 Section 10(2), read with DPDP Rules 2025, Rule 13
+      (Significant Data Fiduciary obligations)
+    tessera_controls:
+      - "Ed25519-signed, offline-verifiable evidence export"
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "deterministic policy enforcement at the MCP boundary"
+    evidenced_by: >
+      The signed evidence export gives an independent auditor an
+      offline-verifiable record of every enforcement decision at the MCP
+      boundary over the audit period, without requiring the auditor to have
+      access to production systems. This covers the tool-invocation-control
+      portion of an SDF audit; it does not substitute for the full-scope
+      compliance audit Section 10(2) requires.
+
+  - id: accountability-and-processor-oversight
+    obligation: >
+      A Data Fiduciary is responsible for complying with the Act in respect of
+      all processing undertaken by it, or on its behalf by a Data Processor,
+      irrespective of any contrary agreement — and remains accountable for
+      demonstrating the safeguards applied to that processing.
+    source: >
+      DPDP Act 2023 Section 8 (general obligations of Data Fiduciary,
+      including Data Fiduciary-Data Processor accountability) — the exact
+      subsection number for this specific accountability clause is not
+      confirmed
+    review: FOUNDER
+    tessera_controls:
+      - "deterministic policy enforcement at the MCP boundary"
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "per-decision policy_id + reason recorded"
+    evidenced_by: >
+      Where a Data Processor's tool access is routed through the same MCP
+      boundary Tessera enforces, the resulting tamper-evident audit trail
+      gives the Data Fiduciary an evidentiary record of what the processor's
+      tooling actually did — supporting the demonstrable-accountability
+      requirement. This only covers processor activity that flows through
+      Tessera's enforcement point; processing outside the MCP boundary is not
+      evidenced. Confirm the exact subsection citation with counsel before
+      customer-facing use.

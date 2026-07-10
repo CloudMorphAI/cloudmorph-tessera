@@ -1,0 +1,85 @@
+framework: "SOC 2 (AICPA Trust Services Criteria — Security category, Common Criteria series)"
+version: "2017 TSC framework (as revised), Common Criteria (CC) series"
+
+# Scope note: SOC 2 criteria describe an entity's overall control environment.
+# Tessera is a policy-enforcement and audit-logging component that a service
+# organization can deploy at the MCP tool-call boundary of its AI agents; it
+# evidences the slice of each criterion below that concerns that boundary. It
+# is not a substitute for identity/access management, vulnerability
+# management, or a change-management program.
+
+obligations:
+  - id: security-event-monitoring
+    obligation: >
+      The entity monitors system components and the operation of those
+      components for anomalies that are indicative of malicious acts, natural
+      disasters, and errors affecting the entity's ability to meet its
+      security objectives, and analyzes anomalies to determine whether they
+      represent security events.
+    source: "SOC 2 Common Criteria CC7.2 (Security event and anomaly detection)"
+    tessera_controls:
+      - "deterministic policy enforcement at the MCP boundary"
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "per-decision policy_id + reason recorded"
+    evidenced_by: >
+      Every tool call is evaluated against policy in real time, and every
+      decision (allow/block/require_approval/log_only) is written to the
+      tamper-evident log with tool, policy_id, reason, and timestamp — a
+      continuous, reviewable monitoring stream for the MCP tool-invocation
+      surface. This covers monitoring at the enforcement boundary; it does
+      not cover host- or network-level anomaly detection outside MCP traffic.
+
+  - id: incident-detection-and-response-evidence
+    obligation: >
+      The entity evaluates security events to determine whether they could or
+      did result in a failure to meet its objectives (security incidents),
+      and takes action to prevent or address such failures.
+    source: "SOC 2 Common Criteria CC7.3 (Incident detection and response)"
+    tessera_controls:
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "Ed25519-signed, offline-verifiable evidence export"
+    evidenced_by: >
+      The signed, exportable audit trail gives incident responders an
+      offline-verifiable timeline of every blocked, allowed, and
+      pending-approval tool call across the incident window, supporting
+      root-cause analysis and scoping. Tessera does not itself triage or
+      classify events as incidents — that judgment happens downstream of the
+      log.
+
+  - id: logical-access-restriction
+    obligation: >
+      The entity implements logical access security software, infrastructure,
+      and architectures over protected information assets to restrict logical
+      access to only those with a business need, and to protect those assets
+      from security events.
+    source: "SOC 2 Common Criteria CC6.1 (Logical and physical access controls)"
+    tessera_controls:
+      - "deterministic policy enforcement at the MCP boundary (allow/block/require_approval/log_only)"
+    evidenced_by: >
+      Policy-driven allow/block/require_approval decisions at the MCP boundary
+      enforce which tool calls — and, by extension, which downstream API
+      actions — are permitted per request, restricting an AI agent's logical
+      access to only the tool actions its policy allows. Tessera does not
+      manage user or service identity or authentication; it enforces policy on
+      already-authenticated MCP traffic, so it evidences only the
+      tool-authorization portion of CC6.1, not the full criterion (which also
+      covers authentication, network segmentation, and asset inventory).
+
+  - id: policy-change-attribution
+    obligation: >
+      The entity authorizes, designs, develops or acquires, configures,
+      documents, tests, approves, and implements changes to infrastructure,
+      data, software, and procedures to meet its objectives.
+    source: "SOC 2 Common Criteria CC8.1 (Change management)"
+    tessera_controls:
+      - "SHA-256 hash-chained tamper-evident audit log"
+      - "per-decision policy_id + reason recorded"
+    evidenced_by: >
+      Each decision event records the policy_id in effect at that moment, so
+      a hash-chained history of which policy version governed which decisions
+      is reconstructable after the fact — corroborating evidence for when a
+      policy change took effect. Tessera does not provide the
+      authorization/testing/approval workflow for policy changes itself (that
+      lives in the deployer's own change-management process, e.g. code review
+      of policy YAML); this entry evidences only the "when did the change
+      take effect" portion of CC8.1, not the full criterion.
