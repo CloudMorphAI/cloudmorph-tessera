@@ -662,6 +662,65 @@ def version(json_output: bool = typer.Option(False, "--json")) -> None:
 
 
 # ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def doctor(
+    bind: str = typer.Option(
+        "127.0.0.1:8080",
+        "--bind",
+        help="host:port to probe for a running `tessera serve`.",
+    ),
+    policy_dir: str = typer.Option(
+        None,
+        "--policy-dir",
+        help="Override the policy directory used for the local policy-count check "
+        "(default: read from tessera.yaml / TESSERA_POLICY_DIR, falling back to 'policies/').",
+    ),
+) -> None:
+    """Diagnose the local Tessera environment.
+
+    Read-only checks: MCP client configs (Cursor, Claude Desktop, Claude
+    Code), the saved OAuth token, the local policy-sync cache, whether
+    cloud-loader mode is active, whether a `tessera serve` is reachable, and
+    local/cloud policy counts. Never writes or mutates anything.
+    """
+    from tessera.doctor import run_doctor
+
+    host, port_str = bind.rsplit(":", 1)
+    try:
+        port = int(port_str)
+    except ValueError:
+        typer.echo(f"Invalid --bind port: {port_str!r}", err=True)
+        raise typer.Exit(2) from None
+
+    results = run_doctor(bind_host=host, bind_port=port, policy_dir=policy_dir, echo=typer.echo)
+    if any(not r.ok for r in results):
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# demo
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def demo() -> None:
+    """Run a self-contained, offline demo of the policy firewall.
+
+    No cloud account, no network access, and no login required. Blocks a
+    dangerous call (deleting an RDS instance without a final snapshot),
+    allows a safe one, then exports a signed, offline-verifiable evidence
+    bundle from the resulting audit trail. Completes in well under a minute.
+    """
+    from tessera.demo import run_demo
+
+    run_demo(echo=typer.echo)
+
+
+# ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------
 
