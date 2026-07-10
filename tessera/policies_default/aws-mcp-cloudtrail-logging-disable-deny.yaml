@@ -1,0 +1,45 @@
+id: aws-mcp-cloudtrail-logging-disable-deny
+name: AWS CloudTrail Logging Disable — Hard Deny
+description: |
+  Hard-deny cloudtrail:StopLogging and cloudtrail:DeleteTrail — the two
+  operations that turn off an account's audit trail. Disabling (or
+  deleting) CloudTrail is the canonical first move in an attack chain: an
+  attacker (or a compromised/malfunctioning MCP agent) blinds the audit log
+  before performing the actions it doesn't want traced.
+
+  This is a hard block, not require_approval like aws-mcp-passrole-guard or
+  aws-mcp-kms-deletion-approval. The reasoning is deliberate: an
+  approval-gated action still depends on the audit trail existing to record
+  what happened and who approved it. Removing that trail undermines every
+  other policy's evidentiary value, so there is no "approve and proceed"
+  posture that preserves the safety property this policy protects. There is
+  no legitimate reason for an autonomous MCP agent — as opposed to a human
+  security engineer performing a planned trail migration from a
+  human-operator session — to ever stop or delete an account's trail.
+
+  Match strategy: both operations take a `Name` (trail name or ARN)
+  parameter; any non-empty value is sufficient to fire, since there is no
+  "safe" StopLogging/DeleteTrail call — the danger is inherent to the
+  operation, not conditional on its arguments (mirrors the KMS
+  ScheduleKeyDeletion "any KeyId fires" pattern).
+priority: 99
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_cloudtrail_(StopLogging|stop_logging|DeleteTrail|delete_trail)$"
+
+when:
+  - condition: arg_matches_regex
+    arg: Name
+    pattern: ".+"
+
+action: block
+reason: |
+  CloudTrail StopLogging/DeleteTrail is denied. Disabling or deleting an
+  account's audit trail is the canonical first move in an attack chain —
+  it blinds the very mechanism used to detect and investigate misuse,
+  including misuse of this proxy's own approval flows. There is no
+  legitimate reason for an autonomous MCP agent to stop or delete a trail.
+  If a planned trail migration or decommission is genuinely required,
+  perform it from a human-operator session with explicit change-management
+  approval, not via MCP.

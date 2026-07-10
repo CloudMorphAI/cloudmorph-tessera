@@ -1,0 +1,84 @@
+id: aws-mcp-s3-public-access-deny
+name: AWS S3 Public Bucket Exposure — Hard Deny
+description: |
+  Hard-deny three S3 operations that expose a bucket (or its contents) to the
+  public internet in a single call:
+    1. s3:PutBucketPolicy with a bucket-policy statement granting
+       Principal="*" (or Principal.AWS="*") under Effect:Allow — a
+       world-readable/writable bucket policy.
+    2. s3:PutBucketAcl using a canned public ACL ("public-read" /
+       "public-read-write") or an explicit grant to the AllUsers /
+       AuthenticatedUsers predefined groups.
+    3. s3:PutPublicAccessBlock that disables any of the four account/bucket
+       -level protections (BlockPublicAcls, BlockPublicPolicy,
+       IgnorePublicAcls, RestrictPublicBuckets) — the classic precursor move
+       before making a bucket public via (1) or (2).
+
+  A publicly-readable or publicly-writable S3 bucket is one of the single
+  most common cloud data-breach root causes. There is effectively no
+  legitimate scenario where an MCP agent should flip a bucket to public —
+  that should be a deliberate human decision made outside an automated
+  agent loop. Customers with a genuine static-website / public-asset bucket
+  requirement should perform that change from a human-operator session, not
+  via MCP, or fork this policy with an explicit bucket-name allow-list.
+
+  Match strategy: `Policy` (bucket policy) arrives as a JSON-formatted
+  string per the S3 API contract, so it is matched with a JSON-quote regex
+  (mirrors the aws-mcp-admin-policy-deny PolicyDocument approach). ACL
+  grant headers (GrantFullControl/GrantWrite/GrantRead) and
+  PublicAccessBlockConfiguration are matched with case-insensitive,
+  quote-flexible patterns since MCP servers may pass structured params as
+  native dicts (Python repr, single-quoted) or as pre-serialized JSON
+  (double-quoted).
+priority: 97
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_s3_(PutBucketPolicy|put_bucket_policy|PutBucketAcl|put_bucket_acl|PutPublicAccessBlock|put_public_access_block)$"
+
+when:
+  - condition: any_of
+    conditions:
+      # PutBucketPolicy: statement grants Principal "*" under Effect:Allow (either key order)
+      - condition: arg_matches_regex
+        arg: Policy
+        pattern: '"Effect"\s*:\s*"Allow"[^}]{0,300}"Principal"\s*:\s*("\*"|\{[^}]{0,100}"AWS"\s*:\s*"\*"[^}]{0,100}\})'
+      - condition: arg_matches_regex
+        arg: Policy
+        pattern: '"Principal"\s*:\s*("\*"|\{[^}]{0,100}"AWS"\s*:\s*"\*"[^}]{0,100}\})[^}]{0,300}"Effect"\s*:\s*"Allow"'
+      # PutBucketAcl: canned public ACL
+      - condition: arg_in_set
+        arg: ACL
+        values: ["public-read", "public-read-write"]
+      # PutBucketAcl: explicit grant to the AllUsers / AuthenticatedUsers predefined group
+      - condition: arg_matches_regex
+        arg: GrantFullControl
+        pattern: "(?i)(AllUsers|AuthenticatedUsers)"
+      - condition: arg_matches_regex
+        arg: GrantWrite
+        pattern: "(?i)(AllUsers|AuthenticatedUsers)"
+      - condition: arg_matches_regex
+        arg: GrantRead
+        pattern: "(?i)(AllUsers|AuthenticatedUsers)"
+      - condition: arg_matches_regex
+        arg: GrantWriteACP
+        pattern: "(?i)(AllUsers|AuthenticatedUsers)"
+      - condition: arg_matches_regex
+        arg: GrantReadACP
+        pattern: "(?i)(AllUsers|AuthenticatedUsers)"
+      # PutPublicAccessBlock: any of the four protections set to false
+      - condition: arg_matches_regex
+        arg: PublicAccessBlockConfiguration
+        pattern: "(?i)(BlockPublicAcls|BlockPublicPolicy|IgnorePublicAcls|RestrictPublicBuckets)['\"]?\\s*[:=]\\s*['\"]?false"
+
+action: block
+reason: |
+  S3 bucket public-exposure change is denied. The request either grants a
+  bucket policy statement with Principal="*" (world access), applies a
+  public-read/public-read-write ACL or an AllUsers/AuthenticatedUsers grant,
+  or disables one of the four PublicAccessBlock protections. Public bucket
+  exposure is one of the most common cloud data-breach root causes and
+  should never be an automated-agent default. If a public bucket is
+  genuinely required (e.g. static website hosting), perform the change from
+  a human-operator session with explicit sign-off, or fork this policy with
+  a bucket-name allow-list.

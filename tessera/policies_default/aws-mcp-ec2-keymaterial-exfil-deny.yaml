@@ -1,0 +1,67 @@
+id: aws-mcp-ec2-keymaterial-exfil-deny
+name: AWS EC2 Key-Material / Snapshot-Sharing Exfiltration — Hard Deny
+description: |
+  Hard-deny two related EC2 exfiltration primitives:
+    1. ec2:CreateKeyPair / ec2:ImportKeyPair — mints a new SSH keypair (or
+       registers an attacker-supplied public key) that can be attached to
+       any future instance launch. The private key material is returned
+       directly in the CreateKeyPair response, making this a one-call
+       credential-capture vector analogous to iam:CreateAccessKey. There is
+       no legitimate reason for an autonomous MCP agent to provision new
+       long-lived SSH key material — instances should be accessed via SSM
+       Session Manager / EC2 Instance Connect, and keypair provisioning
+       should be a deliberate human action.
+    2. ec2:ModifySnapshotAttribute / ec2:ModifyImageAttribute that shares
+       an EBS snapshot or AMI with the special "all" group — this makes the
+       snapshot/AMI (and everything on the underlying disk) discoverable
+       and copyable by any AWS account on the planet. Same severity class
+       as aws-mcp-rds-public-deny: a one-call data-exfiltration setup with
+       no legitimate default use.
+
+  Targeted, controlled sharing (adding a specific known AWS account ID to
+  UserIds, without the "all" group) is NOT gated by this policy — that is
+  the normal cross-account AMI/snapshot-sharing workflow.
+
+  Match strategy: CreateKeyPair/ImportKeyPair fire unconditionally on any
+  call (mirrors admin-tier CreateAccessKey reasoning: capture happens the
+  moment the call succeeds, regardless of arguments). Public-group sharing
+  is matched against both the legacy list params (GroupNames/UserGroups)
+  and the structured Add/Group params (CreateVolumePermission/
+  LaunchPermission), covering native-dict and JSON-string transport shapes.
+priority: 95
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_ec2_(CreateKeyPair|create_key_pair|ImportKeyPair|import_key_pair|ModifySnapshotAttribute|modify_snapshot_attribute|ModifyImageAttribute|modify_image_attribute)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: tool_name_in
+        values:
+          - aws_ec2_CreateKeyPair
+          - aws_ec2_create_key_pair
+          - aws_ec2_ImportKeyPair
+          - aws_ec2_import_key_pair
+      - condition: arg_matches_regex
+        arg: GroupNames
+        pattern: "(?i)\\ball\\b"
+      - condition: arg_matches_regex
+        arg: UserGroups
+        pattern: "(?i)\\ball\\b"
+      - condition: arg_matches_regex
+        arg: CreateVolumePermission
+        pattern: "(?i)['\"]?Group['\"]?\\s*[:=]\\s*['\"]?all['\"]?"
+      - condition: arg_matches_regex
+        arg: LaunchPermission
+        pattern: "(?i)['\"]?Group['\"]?\\s*[:=]\\s*['\"]?all['\"]?"
+
+action: block
+reason: |
+  EC2 key-material or snapshot/AMI public-sharing operation is denied. The
+  call either mints new SSH key material (CreateKeyPair/ImportKeyPair — a
+  one-call credential-capture vector) or shares an EBS snapshot/AMI with
+  the public "all" group, exposing its contents to every AWS account.
+  Neither has a legitimate default use for an autonomous MCP agent. Access
+  instances via SSM Session Manager instead of static keypairs; share
+  snapshots/AMIs with specific known account IDs, not the "all" group.

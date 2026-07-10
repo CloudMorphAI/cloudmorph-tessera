@@ -1,0 +1,57 @@
+id: aws-mcp-lambda-public-invoke-deny
+name: AWS Lambda Public Invoke Exposure — Hard Deny
+description: |
+  Hard-deny two Lambda operations that grant unauthenticated/public invoke
+  access to a function in a single call — the classic Lambda "backdoor"
+  technique:
+    1. lambda:AddPermission with Principal="*" — attaches a resource-based
+       policy statement allowing ANY AWS principal (in practice, treated as
+       public when combined with a permissive SourceArn/no SourceArn) to
+       invoke the function.
+    2. lambda:CreateFunctionUrlConfig / lambda:UpdateFunctionUrlConfig with
+       AuthType="NONE" — exposes the function over a public HTTPS endpoint
+       with zero authentication; anyone with the URL can invoke it.
+
+  Both are one-call, no-legitimate-default-use public-exposure primitives,
+  same severity class as aws-mcp-rds-public-deny / aws-mcp-s3-public-access
+  -deny. Scoped, specific-principal AddPermission calls (e.g. granting
+  events.amazonaws.com or a specific AWS account ID invoke rights to wire
+  up an EventBridge rule or a known caller) are NOT gated — that is the
+  normal, frequent way Lambda triggers get wired up via MCP and blocking it
+  by default would break a huge fraction of real infrastructure work.
+
+  Deliberately out of scope: lambda:UpdateFunctionCode (silent code-swap /
+  supply-chain risk) is a related but distinct concern. It is not covered
+  here because legitimate CI/CD-via-MCP deploy flows call it routinely and
+  there is no deterministic, low-false-positive signal distinguishing a
+  backdoor code swap from a normal deploy at the policy layer. Tenants who
+  want deploys gated should rely on the generic `write-action-approval`
+  default (require_approval on write.update) or fork this policy to add
+  UpdateFunctionCode explicitly.
+priority: 94
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_lambda_(AddPermission|add_permission|CreateFunctionUrlConfig|create_function_url_config|UpdateFunctionUrlConfig|update_function_url_config)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_equals
+        arg: Principal
+        value: "*"
+      - condition: arg_equals
+        arg: AuthType
+        value: "NONE"
+
+action: block
+reason: |
+  Lambda public-invoke exposure is denied. The request either grants
+  invoke permission to Principal="*" via a resource-based policy statement,
+  or configures a Function URL with AuthType="NONE" (no authentication).
+  Both grant unauthenticated invoke access to the function — the classic
+  Lambda backdoor pattern — with no legitimate default use for an
+  autonomous MCP agent. Scope AddPermission to a specific service principal
+  or AWS account, or set Function URL AuthType="AWS_IAM". If public HTTP
+  access is genuinely required, perform the change from a human-operator
+  session with explicit sign-off.

@@ -1,0 +1,71 @@
+id: aws-mcp-sg-open-ingress-deny
+name: AWS EC2 Security Group Open Ingress on Sensitive Ports — Hard Deny
+description: |
+  Hard-deny ec2:AuthorizeSecurityGroupIngress calls that open a sensitive
+  port (SSH 22, RDP 3389, MySQL 3306, PostgreSQL 5432, MSSQL 1433, Redis
+  6379, MongoDB 27017, Elasticsearch 9200, CouchDB 5984, Memcached 11211)
+  — or all ports/all protocols (IpProtocol="-1") — to the entire internet
+  (CidrIp 0.0.0.0/0 or CidrIpv6 ::/0).
+
+  A security-group rule that exposes a management or database port to
+  0.0.0.0/0 is one of the most common initial-access vectors: automated
+  internet-wide scanners (Shodan-class) find and brute-force/exploit these
+  within minutes of the rule going live. There is essentially no legitimate
+  reason to expose SSH/RDP/a database port to the whole internet — use a
+  bastion, VPN, Session Manager, or a scoped CIDR/security-group-reference
+  instead.
+
+  This policy intentionally does NOT fire on 0.0.0.0/0 ingress for common
+  public web ports (80, 443) — that is a normal, frequent, legitimate
+  pattern (public web servers / ALBs) and blocking it by default would
+  break a huge fraction of real MCP-driven infrastructure work.
+
+  Match strategy: legacy top-level params (CidrIp/CidrIpv6/FromPort/
+  IpProtocol) are matched directly. The newer `IpPermissions` list-of-dicts
+  form is matched via a scoped regex against that single top-level arg's
+  string representation (which contains the full nested structure,
+  including CidrIp/FromPort, regardless of whether the transport passed a
+  native dict or JSON text).
+priority: 96
+
+match:
+  upstream: "*"
+  tool_pattern: "^aws_ec2_(AuthorizeSecurityGroupIngress|authorize_security_group_ingress)$"
+
+when:
+  - condition: any_of
+    conditions:
+      - condition: arg_equals
+        arg: CidrIp
+        value: "0.0.0.0/0"
+      - condition: arg_equals
+        arg: CidrIpv6
+        value: "::/0"
+      - condition: arg_matches_regex
+        arg: IpPermissions
+        pattern: "(0\\.0\\.0\\.0/0|::/0)"
+  - condition: any_of
+    conditions:
+      - condition: arg_in_set
+        arg: FromPort
+        values: [22, 3389, 3306, 5432, 1433, 6379, 27017, 9200, 5984, 11211]
+      - condition: arg_equals
+        arg: IpProtocol
+        value: "-1"
+      - condition: arg_matches_regex
+        arg: IpPermissions
+        pattern: "(?i)['\"]?FromPort['\"]?\\s*[:=]\\s*(22|3389|3306|5432|1433|6379|27017|9200|5984|11211)\\b"
+      - condition: arg_matches_regex
+        arg: IpPermissions
+        pattern: "(?i)['\"]?IpProtocol['\"]?\\s*[:=]\\s*['\"]?-1['\"]?"
+
+action: block
+reason: |
+  Security-group ingress rule is denied. The rule opens a sensitive
+  management/database port (or all ports/protocols) to the entire internet
+  (0.0.0.0/0 / ::/0). This is a common initial-access vector — automated
+  internet scanners find and attack such rules within minutes. Restrict the
+  CIDR to a known range, or front the service with a bastion, VPN, or AWS
+  Session Manager. If a public web port (80/443) is what you intended, this
+  policy does not apply — only management/database ports and all-protocol
+  rules are gated.
