@@ -1,5 +1,14 @@
 framework: "EU AI Act"
-version: "obligations applicable 2026-08-02 (Title III high-risk AI system requirements, Regulation (EU) 2024/1689)"
+version: >
+  Title III / Chapter III high-risk AI system requirements, Regulation (EU)
+  2024/1689. Article/paragraph numbers below are current and verified. EFFECTIVE
+  DATE — review: FOUNDER: the original Article 113 date for standalone (Annex III)
+  high-risk obligations was 2026-08-02, but the 2026 "AI Omnibus" amendment
+  (final approval European Parliament 2026-06-16, Council 2026-06-29; Official
+  Journal publication pending as of authoring) DEFERS these obligations to
+  2027-12-02 (product-embedded high-risk systems to 2028-08-02). Confirm the
+  effective date against the amended Article 113 / the published OJ text before
+  any customer-facing compliance claim; the obligations themselves are unchanged.
 
 # Scope note: these obligations apply to the *AI system* as a whole. Tessera sits
 # at the MCP tool-call boundary of an agentic AI system — it does not see, and

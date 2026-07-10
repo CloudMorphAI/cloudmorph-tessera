@@ -85,9 +85,10 @@ obligations:
       demonstrating the safeguards applied to that processing.
     source: >
       DPDP Act 2023 Section 8 (general obligations of Data Fiduciary,
-      including Data Fiduciary-Data Processor accountability) — the exact
-      subsection number for this specific accountability clause is not
-      confirmed
+      including Data Fiduciary-Data Processor accountability). Secondary
+      reproductions of the bare Act text attribute this accountability clause
+      specifically to Section 8(1); confirm against the primary gazette text
+      before customer-facing use.
     review: FOUNDER
     tessera_controls:
       - "deterministic policy enforcement at the MCP boundary"
