@@ -202,7 +202,7 @@ Design notes:
 - **EC2 IMDSv1 detection uses arg-spanning regex.** `MetadataOptions` is a nested dict on `RunInstances` and a top-level `HttpTokens` on `ModifyInstanceAttribute`. The v0.2.x schema does not support dot-path argument access for `arg_matches_regex` (only `_meta.<key>` via `meta_field_equals`). The bundled policy works around this by using `arg: "*"` to iterate every top-level argument value and apply the `"HttpTokens":"optional"` regex against the JSON-serialized form. This is a slight over-match (any arg value containing that JSON fragment fires) which is acceptable for a default.
 - **Action verb safety.** Every bundled YAML uses one of the schema-enum action verbs (`block`, `require_approval`, `log_only`, `allow`); the corpus test `tests/test_policies_default.py::test_all_default_policy_actions_in_schema_enum` enforces this for every file shipped in `policies_default/`.
 
-The hierarchy across the now-18-strong default set: PII (100) > admin-policy (99) > KMS deletion (98) > CreateAccessKey (97) = RDS public (97) > IMDSv1 (96) > cost-runaway (95) = PassRole (95) = secret-leak (95) > blast-radius (90) = prod-protection (90) > region-allowlist / approval (80–70) > read-only (60) > cost-cap (50). Security-critical policies fire before resource-protection policies fire before cost policies. The AWS-MCP defaults occupy the 95–99 band because they each represent a single-call full-account-compromise primitive.
+The hierarchy across the P0-1..6 band of the now-25-strong default set: PII (100) > admin-policy (99) > KMS deletion (98) > CreateAccessKey (97) = RDS public (97) > IMDSv1 (96) > cost-runaway (95) = PassRole (95) = secret-leak (95) > blast-radius (90) = prod-protection (90) > region-allowlist / approval (80–70) > read-only (60) > cost-cap (50). Security-critical policies fire before resource-protection policies fire before cost policies. The AWS-MCP defaults occupy the 95–99 band because they each represent a single-call full-account-compromise primitive. (The 6 AWS-MCP policies added since P0-1..6 — S3 public-access deny, security-group open-ingress deny, Secrets Manager bulk-read approval, EC2 key-material/snapshot-sharing exfil deny, CloudTrail logging-disable deny, Lambda public-invoke deny — are documented in their own YAML files under `tessera/policies_default/`; this hierarchy walk-through predates them and covers only the original 6.)
 
 ## P0-12 — `bucket_region_lookup` audit-false-positive resolution
 
@@ -235,11 +235,11 @@ Off-the-shelf agents that don't supply intent simply produce `context["intent"] 
 What ships bundled:
 
 - **Universal AWS attack vectors** as canonicalized by AWS / CIS Benchmarks / NIST. If AWS, CIS, or NIST publishes it as a must-defend primitive, it ships OSS by default. No exceptions.
-- **Generic guardrails**: PII block, secret leak block, prod protection, data residency, write-action approval, read-only mode, cost cap (the existing 12).
+- **Generic guardrails**: PII block, secret leak block, prod protection, data residency, write-action approval, read-only mode, cost cap, plus the 6 Batch 8 additions (intent, business-hours, oversized-payload, tool-allowlist, prompt-injection, non-prod-only) — the existing 13.
 
-Current OSS headcount: 18 policies (12 generic + 6 AWS-MCP P0-1..6: PassRole, admin-policy, CreateAccessKey, KMS deletion, RDS public, IMDSv1).
+Current OSS headcount: 25 policies (13 generic + 12 AWS-MCP: the original P0-1..6 set — PassRole, admin-policy, CreateAccessKey, KMS deletion, RDS public, IMDSv1 — plus 6 shipped since: S3 public-access deny, security-group open-ingress deny, Secrets Manager bulk-read approval, EC2 key-material/snapshot-sharing exfil deny, CloudTrail logging-disable deny, Lambda public-invoke deny).
 
-Target OSS headcount: ~25-30 policies covering the canonical primitive surface. Future additions include Bedrock guardrails-bypass deny, Lambda function-URL public deny, S3 bucket-policy public-grant deny, EBS unencrypted-volume deny, RDS publicly-accessible-snapshot-share deny, VPC default-SG-with-0.0.0.0/0-ingress deny, IAM CreateUser-with-console-password deny.
+Target OSS headcount: ~25-30 policies covering the canonical primitive surface — the current 25 meet the floor of that target. Remaining future additions: Bedrock guardrails-bypass deny, EBS unencrypted-volume deny, RDS publicly-accessible-snapshot-share deny, IAM CreateUser-with-console-password deny.
 
 ### Paid scope (`tessera-intelligence/packs/`)
 

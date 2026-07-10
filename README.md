@@ -2,16 +2,66 @@
 
 <!-- mcp-name: io.github.CloudMorphAI/tessera -->
 
-**The deterministic firewall for AI agent and MCP tool calls.**
+**Deterministic policy enforcement and audit-grade compliance evidence for AI agent tool calls.**
 
 [![PyPI version](https://img.shields.io/pypi/v/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
 [![Python versions](https://img.shields.io/pypi/pyversions/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fcloudmorphai%2Ftessera-blue.svg)](https://ghcr.io/cloudmorphai/tessera)
 
-Tessera is a deterministic in-process firewall that sits between an AI agent and every MCP server, evaluates each tool call against a YAML policy bench, and either forwards, blocks, or routes for approval — writing each decision to a hash-chained audit log.
-
 **Semver policy (from v1.0.0):** Tessera follows [Semantic Versioning 2.0.0](https://semver.org/). The stable API surface is: the `tessera` CLI commands listed in `tessera --help`, the `tessera.yaml` configuration schema, and the `cloudmorph-tessera` PyPI package name. Internal Python modules (anything not listed in `tessera/__init__.__all__`) are private and may change in any release.
+
+## The problem
+
+AI agents now take real, irreversible actions through MCP tool calls — delete a production database, attach an admin IAM policy, exfiltrate a secret into a log line. An agent doesn't need to be malicious for this to happen; a bad prompt, a hallucinated argument, or a compromised upstream MCP server is enough. Once the call reaches AWS, GCP, or Azure, there is no undo.
+
+Regulators are catching up to this. The EU AI Act's Title III record-keeping and traceability obligations (Articles 12, 19, 26) apply from **2026-08-02** — high-risk AI systems must automatically log their operation and retain those logs for at least six months. "We have application logs" is not the same as a tamper-evident, independently verifiable record of what an AI system did and why it was allowed or blocked.
+
+Tessera is a policy firewall at the MCP boundary: it sits between the agent and every MCP server, evaluates each tool call deterministically against a YAML policy bench, and writes every decision — allow, block, or require-approval — to a signed, hash-chained audit log you can export and verify offline.
+
+## Deterministic enforcement
+
+Every `tools/call` is evaluated in-process against the policy bench before it reaches the upstream. A blocked call never touches AWS/GCP/Azure — it returns immediately as a structured, final decision:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "POLICY_BLOCK\npolicy_id: prod-protection\nreason: Delete blocked on production resource\n\nThis is a final decision from the Tessera policy gate. Do NOT retry with different parameters — the policy will reject equivalent calls. Surface this block to the user."
+    }],
+    "isError": true
+  }
+}
+```
+
+No LLM call, no heuristic scoring, no adaptive model in the decision path. The same policy set given the same tool call always produces the same verdict — that determinism is what makes the resulting audit trail defensible evidence rather than a best-effort log.
+
+## Audit-grade compliance evidence
+
+Every decision Tessera makes — not just blocks — is written to a SHA-256 hash-chained audit log. On demand, `tessera audit export` turns a time range of that log into a self-contained, Ed25519-signed **evidence bundle**:
+
+```bash
+tessera audit export --from 2026-06-01 --to 2026-06-30 --out ./evidence-june
+```
+
+```
+evidence-june/
+├── events.jsonl    # every decision event in range, one JSON object per line
+├── manifest.json   # range, counts, chain head/tail hashes, signing public key
+├── summary.html    # human-readable report, compliance mappings rendered in
+└── VERIFY.md       # exact steps to verify this bundle with no network access
+```
+
+```bash
+tessera audit verify --dir ./evidence-june
+```
+
+`audit verify --dir` recomputes the hash chain and the Ed25519 signature independently from `events.jsonl` — it does not trust `manifest.json`'s stated values — and runs fully offline. A tampered event, a gap in the chain, or a forged manifest is caught, not glossed over.
+
+`summary.html` renders the events against built-in compliance mappings — **EU AI Act**, **India DPDP**, and **SOC 2** — showing which of the framework's obligations are evidenced by the bundle and exactly what is (and is not) covered. This is the artifact that answers "prove your AI agent's actions were governed" to an auditor or a customer's security review, without granting them access to your live systems.
 
 ## Performance
 
@@ -35,21 +85,21 @@ tessera init                                        # writes tessera.yaml + poli
 TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve
 ```
 
-Tessera now listens on `http://127.0.0.1:8080/mcp`. Wire it into Cursor / Claude Code / your agent's MCP config with a single "tessera" entry (recipes in [recipes/](recipes/)), and every `tools/call` flows through 24 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 19 others. Tessera fans out tool discovery across all configured upstreams and namespaces tools as `<upstream>__<tool>` in the unified catalog.
+Tessera now listens on `http://127.0.0.1:8080/mcp`. Wire it into Cursor / Claude Code / your agent's MCP config with a single "tessera" entry (recipes in [recipes/](recipes/)), and every `tools/call` flows through 25 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 20 others. Tessera fans out tool discovery across all configured upstreams and namespaces tools as `<upstream>__<tool>` in the unified catalog.
 
 ---
 
 ## What this protects against
 
-Concrete categories the 24 bundled policies cover out of the box:
+Concrete categories the 25 bundled policies cover out of the box:
 
 - **Cost spikes** — `cost-cap`, `aws-bedrock-cost-ceiling-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`, `aws-ec2-cost-cap-EXAMPLE`. Per-call ceiling, daily cumulative ceiling, model-specific Bedrock ceiling.
 - **IAM blast-radius expansion** — `aws-mcp-passrole-guard`, `aws-mcp-admin-policy-deny`, `aws-mcp-create-access-key-deny`, `aws-iam-blast-radius-EXAMPLE`. PassRole approval gate, AWS-managed-admin attach hard-deny, access-key creation deny, principal-count guard.
 - **Destructive operations on production** — `prod-protection`, `non-prod-only`, `write-action-approval`. Block by tag or name pattern, default-deny writes on prod, require human approval for delete-class actions.
-- **Secret / PII exfiltration in arguments** — `secret-leak-block`, `pii-block`. Regex bench for API keys + tokens + SSN + credit-card numbers in tool-call args.
+- **Secret / credential / PII exfiltration** — `secret-leak-block`, `pii-block`, `aws-mcp-secrets-bulk-read-approval`, `aws-mcp-ec2-keymaterial-exfil-deny`. Regex bench for API keys + tokens + SSN + credit-card numbers in tool-call args, approval gate on bulk secrets/parameter reads, hard-deny on SSH-keypair and snapshot/AMI exfil primitives.
 - **Prompt injection signals** — `prompt-injection-heuristic`. Regex bench for common jailbreak strings (`ignore previous`, `system: you are now`, etc.).
 - **Region / data-residency violations** — `data-residency-eu`, `aws-region-allowlist-EXAMPLE`. Block ops outside permitted regions.
-- **MCP server hygiene** — `aws-mcp-rds-public-deny`, `aws-mcp-ec2-imdsv1-deny`, `aws-mcp-kms-deletion-approval`. RDS public-access block, EC2 IMDSv1 deny, KMS deletion approval gate.
+- **Public exposure / audit tampering** — `aws-mcp-rds-public-deny`, `aws-mcp-ec2-imdsv1-deny`, `aws-mcp-kms-deletion-approval`, `aws-mcp-s3-public-access-deny`, `aws-mcp-sg-open-ingress-deny`, `aws-mcp-lambda-public-invoke-deny`, `aws-mcp-cloudtrail-logging-disable-deny`. RDS public-access block, EC2 IMDSv1 deny, KMS deletion approval gate, S3/security-group/Lambda public-exposure hard-denies, CloudTrail disable hard-deny.
 
 Vendor-specific packs (GitHub, Jira, Salesforce, Slack, Postgres, OWASP prompt injection, OWASP tool poisoning) are available via the Tessera Cloud premium pack `vendor-mcp-protection` — `tessera intelligence pull vendor-mcp-protection`.
 
@@ -89,14 +139,14 @@ Tessera raises the cost of a mistake and leaves a tamper-evident record of every
 
 ## Tier levels
 
-| Tier | Engine + 24 bundled policies | Premium packs |
+| Tier | Engine + 25 bundled policies | Premium packs |
 |---|---|---|
 | **Free** | Yes (local enforcement, hash-chain audit, multi-token scoping) | None |
 | **Developer** | Yes | `aws-cost-aware-defaults`, `vendor-mcp-protection` |
 | **Team** | Yes | + `hipaa-guardrails`, `pci-dss-controls` |
 | **Enterprise** | Yes | All 15 production packs (tri-cloud AWS+Azure+GCP), custom-pack authoring |
 
-Premium packs are fetched from the Tessera Cloud CDN, Ed25519-signature-verified, and cached locally. Free-tier installs continue to enforce 24 bundled policies with no network calls.
+Premium packs are fetched from the Tessera Cloud CDN, Ed25519-signature-verified, and cached locally. Free-tier installs continue to enforce 25 bundled policies with no network calls.
 
 ## Installation
 
@@ -214,7 +264,7 @@ tessera policy test --policy-dir policies/ --fixture-dir tests/fixtures/
 
 ## What ships
 
-- **24 bundled defensive policies** — 7 generic + 6 AWS-MCP defaults + 5 AWS-illustrative + 6 Batch 8 (intent / business-hours / oversized-payload / tool-allowlist / prompt-injection / non-prod-only).
+- **25 bundled default policies** (enabled out of the box) — 13 generic (7 original + 6 Batch 8: intent / business-hours / oversized-payload / tool-allowlist / prompt-injection / non-prod-only) + 12 AWS-MCP security defaults. Plus **5 AWS-illustrative example policies** (opt-in templates, not enabled by default) demonstrating cost/blast-radius conditions.
 - **Hash-chained audit log** — SQLite-backed; per-token scope isolation; `tessera audit verify` detects gap or tamper.
 - **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` resolved via importlib at startup. Same Protocols in Tessera Cloud (which swaps in Cognito + DynamoDB implementations).
 - **Three enforcement modes** — `enforcement`, `log_only`, `observation`.
