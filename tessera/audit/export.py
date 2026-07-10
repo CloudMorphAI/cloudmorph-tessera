@@ -506,8 +506,8 @@ evidence bundle for scope `{scope}`.
 
 ## Steps
 
-1. Install `tessera` (or use the same version that produced this bundle):
-   `pip install tessera`
+1. Install Tessera (or use the same version that produced this bundle):
+   `pip install cloudmorph-tessera`
 
 2. From a shell, run (no network access required):
 

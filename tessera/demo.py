@@ -7,7 +7,7 @@ exports a signed, offline-verifiable evidence bundle from the resulting
 audit trail.
 
 Designed to run start-to-finish in well under 60 seconds on a machine with
-nothing configured: ``pip install tessera && tessera demo``.
+nothing configured: ``pip install cloudmorph-tessera && tessera demo``.
 
 This module never touches cloud endpoints, never requires authentication,
 and never reads or generates production key material — the only signing
