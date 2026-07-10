@@ -55,6 +55,27 @@ def _sign_catalog(priv: Ed25519PrivateKey, payload: dict) -> dict:
     return {**payload, "body_bytes_hex": body_bytes.hex(), "signature": sig}
 
 
+def _make_license_jwt(priv: Ed25519PrivateKey, claims: dict) -> str:
+    """Build an EdDSA (Ed25519) JWT the LicenseValidator will accept.
+
+    Mirrors the license server's signTierJWT: header ``{"alg":"EdDSA"}``, the
+    claims payload, and an Ed25519 signature over ``header_b64.payload_b64``.
+    Signed with the test key so a validator constructed with the matching public
+    key verifies it. Since unsigned responses are capped to free by design, tiers
+    must arrive in a signed token like this.
+    """
+    import base64
+
+    def _b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    header_b64 = _b64url(json.dumps({"alg": "EdDSA", "typ": "JWT"}).encode())
+    payload_b64 = _b64url(json.dumps(claims).encode())
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    sig_b64 = _b64url(priv.sign(signing_input))
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+
 def _make_config(tmp_path: Path, **overrides) -> IntelligenceConfig:
     defaults = {
         "enabled": True,
@@ -419,19 +440,29 @@ async def test_concurrent_refresh_deduplicated(tmp_path, respx_mock):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_tier_downgrade_after_server_response_changes(tmp_path, respx_mock):
-    """When license server returns a lower tier on second check, client updates."""
+    """When the license server returns a lower tier on the second check, the client updates.
+
+    Tiers must arrive in a signed Ed25519 token (unsigned bodies are capped to
+    free by design), so this signs both responses with a test key and points the
+    validator at the matching public key.
+    """
     from tessera.intelligence.license import LicenseValidator
 
     config = _make_config(tmp_path)
 
-    import importlib.resources as _ilr
-    pub_key_pem = (_ilr.files("tessera.intelligence") / "public_key.pem").read_bytes()
-
+    priv = Ed25519PrivateKey.generate()
+    pub_key_pem = priv.public_key().public_bytes(
+        encoding=Encoding.PEM, format=PublicFormat.SubjectPublicKeyInfo
+    )
     validator = LicenseValidator(config=config, public_key_pem=pub_key_pem)
 
-    # First call returns team tier
+    exp = int(time.time()) + 3600
+
+    # First call returns team tier (signed)
     respx_mock.post("https://license.test/v1/check").respond(
-        json={"tier": "team", "seats": 10, "customer_id": "cust-1", "expires_at": None}
+        json={"token": _make_license_jwt(
+            priv, {"tier": "team", "seats": 10, "customer_id": "cust-1", "exp": exp}
+        )}
     )
 
     import os
@@ -441,9 +472,11 @@ async def test_tier_downgrade_after_server_response_changes(tmp_path, respx_mock
         status1 = await validator.check(force=True)
         assert status1.tier == "team"
 
-        # Second call: server downgrades to developer
+        # Second call: server downgrades to developer (signed)
         respx_mock.post("https://license.test/v1/check").respond(
-            json={"tier": "developer", "seats": 3, "customer_id": "cust-1", "expires_at": None}
+            json={"token": _make_license_jwt(
+                priv, {"tier": "developer", "seats": 3, "customer_id": "cust-1", "exp": exp}
+            )}
         )
 
         status2 = await validator.check(force=True)
