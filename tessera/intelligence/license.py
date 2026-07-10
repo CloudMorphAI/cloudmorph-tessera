@@ -118,50 +118,41 @@ class LicenseValidator:
         """Parse and validate the license server response.
 
         The server returns a JSON body with tier, expires_at, seats, customer_id.
-        If a JWT token is present under 'token', we verify it with the Ed25519 key.
+        If a signed JWT is present under 'token', its Ed25519 signature is verified
+        against the bundled public key and the JWT claims take precedence. A token
+        that fails verification raises — there is NO code path that trusts an
+        unsigned or tampered response body at an elevated tier. A response with NO
+        token is capped at the free tier (the license server always includes one,
+        so a missing token means a tampered or non-genuine response). Callers treat
+        a raise like an unreachable server (fall back to cache, else free tier).
         """
         jwt_token = response_data.get("token")
         if jwt_token:
-            # Verify Ed25519 JWT signature using python-jose if available, else manual
-            try:
-                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-                from cryptography.hazmat.primitives.serialization import load_pem_public_key
-                from jose import jwt as jose_jwt
+            claims = self._verify_jwt_ed25519(jwt_token)
 
-                pub_key = load_pem_public_key(self._public_key_pem)
-                assert isinstance(pub_key, Ed25519PublicKey)
+            exp = claims.get("exp")
+            if exp and time.time() > exp:
+                raise ValueError("License JWT has expired")
 
-                # jose uses raw key bytes for Ed25519
-                pub_key_bytes = pub_key.public_bytes_raw()
-                claims = jose_jwt.decode(
-                    jwt_token,
-                    pub_key_bytes,
-                    algorithms=["EdDSA"],
-                )
-
-                # Validate expiry
-                exp = claims.get("exp")
-                if exp and time.time() > exp:
-                    raise ValueError("License JWT has expired")
-
-                tier = claims.get("tier", response_data.get("tier", "free"))
-                expires_at_ts = claims.get("exp")
-                expires_at = (
-                    datetime.fromtimestamp(expires_at_ts, tz=UTC)
-                    if expires_at_ts
-                    else None
-                )
-                seats = int(claims.get("seats", response_data.get("seats", 1)))
-                customer_id = claims.get("customer_id", response_data.get("customer_id"))
-            except ImportError:
-                # python-jose not installed — fall back to plain response parsing
-                tier = response_data.get("tier", "free")
-                expires_raw = response_data.get("expires_at")
-                expires_at = datetime.fromisoformat(expires_raw) if expires_raw else None
-                seats = int(response_data.get("seats", 1))
-                customer_id = response_data.get("customer_id")
+            tier = claims.get("tier", response_data.get("tier", "free"))
+            expires_at_ts = claims.get("exp")
+            expires_at = (
+                datetime.fromtimestamp(expires_at_ts, tz=UTC)
+                if expires_at_ts
+                else None
+            )
+            seats = int(claims.get("seats", response_data.get("seats", 1)))
+            customer_id = claims.get("customer_id", response_data.get("customer_id"))
         else:
-            tier = response_data.get("tier", "free")
+            # Fail closed: an unsigned response body must never grant a paid
+            # tier. The license server always returns a signed `token`
+            # (signTierJWT), so a missing token means a stripped, forged, or
+            # non-genuine response — cap at free rather than trust the body.
+            logger.warning(
+                "event=license_response_unsigned action=tier_capped_free "
+                "reason=no_ed25519_token_in_response"
+            )
+            tier = "free"
             expires_raw = response_data.get("expires_at")
             expires_at = datetime.fromisoformat(expires_raw) if expires_raw else None
             seats = int(response_data.get("seats", 1))
@@ -178,6 +169,51 @@ class LicenseValidator:
             from_cache=False,
             jwt=jwt_token,
         )
+
+    def _verify_jwt_ed25519(self, token: str) -> dict[str, Any]:
+        """Verify an EdDSA (Ed25519) JWT against the bundled public key.
+
+        Uses ``cryptography`` directly — always present with the ``[intelligence]``
+        extra — so verification does NOT depend on python-jose being installed
+        (the previous jose-only path silently trusted the raw response body when
+        jose was absent, which is the default for ``pip install
+        "cloudmorph-tessera[intelligence]"``). Raises on ANY verification failure:
+        malformed token, a non-EdDSA ``alg`` (rejects ``alg=none`` and
+        algorithm-confusion downgrades), or a bad signature. A raise means
+        "untrusted — do not grant tier".
+        """
+        import base64
+
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+        def _b64url_decode(segment: str) -> bytes:
+            padding = "=" * (-len(segment) % 4)
+            return base64.urlsafe_b64decode(segment + padding)
+
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise ValueError("Malformed license JWT: expected 3 dot-separated segments")
+        header_b64, payload_b64, sig_b64 = parts
+
+        header = json.loads(_b64url_decode(header_b64))
+        alg = header.get("alg")
+        if alg != "EdDSA":
+            raise ValueError(f"Unsupported license JWT alg {alg!r} (expected EdDSA)")
+
+        pub_key = load_pem_public_key(self._public_key_pem)
+        if not isinstance(pub_key, Ed25519PublicKey):
+            raise ValueError("Bundled license public key is not an Ed25519 key")
+
+        signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+        signature = _b64url_decode(sig_b64)
+        try:
+            pub_key.verify(signature, signing_input)
+        except InvalidSignature as exc:
+            raise ValueError("License JWT signature verification failed") from exc
+
+        return json.loads(_b64url_decode(payload_b64))
 
     async def check(self, force: bool = False) -> LicenseStatus:
         """Check license status.

@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.CloudMorphAI/tessera -->
 
-**Runtime intelligent firewall for AI agent and MCP tool calls.**
+**The deterministic firewall for AI agent and MCP tool calls.**
 
 [![PyPI version](https://img.shields.io/pypi/v/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
 [![Python versions](https://img.shields.io/pypi/pyversions/cloudmorph-tessera.svg)](https://pypi.org/project/cloudmorph-tessera/)
@@ -13,17 +13,19 @@ Tessera is a deterministic in-process firewall that sits between an AI agent and
 
 **Semver policy (from v1.0.0):** Tessera follows [Semantic Versioning 2.0.0](https://semver.org/). The stable API surface is: the `tessera` CLI commands listed in `tessera --help`, the `tessera.yaml` configuration schema, and the `cloudmorph-tessera` PyPI package name. Internal Python modules (anything not listed in `tessera/__init__.__all__`) are private and may change in any release.
 
-## v0.7.0 benchmarks (single worker, loopback, 24 bundled policies)
+## Performance
 
-| Metric | Value | Conditions |
+Policy evaluation is in-process and deterministic — no network round-trip, no LLM call. The decision engine resolves a tool call against the bundled policy set in well under a millisecond.
+
+| Bench (`engine.evaluate()`) | p50 | p99 |
 |---|---|---|
-| p50 HTTP cycle | **6.40 ms** | 10 concurrent conns, full proxy stack (auth + 24-policy eval + SQLite audit write) |
-| p99 HTTP cycle | **12.30 ms** | 10 concurrent conns, SQLite write jitter is dominant |
-| Sustained throughput | **2,009 RPS** | 200 concurrent conns, single uvicorn worker (linear with N workers behind nginx) |
-| Engine-eval microbench | 25-86 µs | in-process only, no HTTP, no audit |
-| HTTP overhead above engine | ~6.3 ms p50 | uvicorn + auth + audit write + JSON serde |
+| Safe tool call — full ruleset walk, no match | 120.6 µs | 136.1 µs |
+| Blocked — IAM PassRole | 63.0 µs | 76.0 µs |
+| Blocked — admin-policy attach | 25.1 µs | 34.9 µs |
 
-Hardware: Intel Core Ultra 5 115U (15W mobile chip), WSL2. Honest developer-hardware numbers — not inflated production claims. Full methodology: [benchmarks/results/v0.4.0-production.md](benchmarks/results/v0.4.0-production.md).
+Measured on v0.7.2 over the 18-policy default set, GitHub Actions `ubuntu-latest`, Python 3.12.13 — CI-reproducible developer-hardware numbers, not inflated production claims. Full per-bench methodology: [benchmarks/results/v0.7.2.md](benchmarks/results/v0.7.2.md).
+
+End-to-end HTTP throughput (sustained RPS, full-cycle latency) has **not** yet been formally benchmarked on production-spec hardware; earlier loopback figures were withdrawn pending a clean production run.
 
 ## Install + first block in 60 seconds
 
@@ -73,7 +75,17 @@ Every inbound `POST /mcp` is:
 
 In `enforcement` mode a `block` returns a JSON-RPC error and never touches the upstream. In `log_only` mode the upstream is always called and the decision rides in `X-Tessera-Decision` / `X-Tessera-Policy-Id` / `X-Tessera-Reason` response headers.
 
-The engine is pure Python — no OPA, no LLM round-trip, no cloud credentials. Policy outcomes are deterministic.
+The engine is pure Python — no OPA, no LLM round-trip, no cloud credentials. Policy outcomes are deterministic. (The optional `tessera analyze` and `tessera policy author` commands call an LLM to *draft* policies offline — a design-time convenience, never in the enforcement path.)
+
+## Limitations — what Tessera does *not* see
+
+Tessera is a policy boundary at the MCP layer, not an OS- or network-level sandbox. Its edges, stated plainly:
+
+- **It only sees calls routed through it.** An agent that reaches a cloud MCP server — or a raw SDK / HTTP endpoint — directly, bypassing the proxy, is invisible to Tessera. Making Tessera the *default* route is a prompt-level convention (see [Routing pattern](#routing-pattern--make-tessera-the-agents-default)), not a technical guarantee; a compromised or adversarial agent can call upstream directly.
+- **Intent is self-declared.** The `_meta.tessera_intent` field is supplied by the caller and only shape-validated. Tessera does not independently verify that a declared intent matches the tool being called or its arguments.
+- **Cost ceilings fail open on missing data.** When no price data is available for an operation, `predicted_cost` conditions evaluate to "allow" rather than block — Tessera will not block a call it cannot price. Pair cost policies with name/tag-based `block` rules for hard stops.
+
+Tessera raises the cost of a mistake and leaves a tamper-evident record of every decision it *does* see. It is one enforcement layer, not a complete containment boundary.
 
 ## Tier levels
 
@@ -82,7 +94,7 @@ The engine is pure Python — no OPA, no LLM round-trip, no cloud credentials. P
 | **Free** | Yes (local enforcement, hash-chain audit, multi-token scoping) | None |
 | **Developer** | Yes | `aws-cost-aware-defaults`, `vendor-mcp-protection` |
 | **Team** | Yes | + `hipaa-guardrails`, `pci-dss-controls` |
-| **Enterprise** | Yes | All 12 packs (tri-cloud AWS+Azure+GCP), custom-pack authoring |
+| **Enterprise** | Yes | All 15 production packs (tri-cloud AWS+Azure+GCP), custom-pack authoring |
 
 Premium packs are fetched from the Tessera Cloud CDN, Ed25519-signature-verified, and cached locally. Free-tier installs continue to enforce 24 bundled policies with no network calls.
 
@@ -198,7 +210,7 @@ tessera policy lint --policy-dir policies/
 tessera policy test --policy-dir policies/ --fixture-dir tests/fixtures/
 ```
 
-18 condition primitives shipped (`arg_equals`, `arg_matches_regex`, `arg_path_matches_regex`, `arg_in_set`, `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, `sts_chain_depth_greater_than`, `time_of_day_outside`, `any_of`, `none_of`, plus 6 more). Full catalog + fixture format: [docs/POLICIES.md](docs/POLICIES.md).
+27 condition primitives shipped (`arg_equals`, `arg_matches_regex`, `arg_path_matches_regex`, `arg_in_set`, `predicted_cost`, `blast_radius`, `affected_resource_count`, `cumulative_spend_today`, `sts_chain_depth_greater_than`, `time_of_day_outside`, `any_of`, `none_of`, plus 15 more). Full catalog + fixture format: [docs/POLICIES.md](docs/POLICIES.md).
 
 ## What ships
 

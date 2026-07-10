@@ -80,12 +80,25 @@ def serve(
     policy_dir: str = typer.Option(None, "--policy-dir"),
     bind: str = typer.Option(None, "--bind", help="host:port (e.g., 0.0.0.0:8080)"),
     log_level: str = typer.Option(None, "--log-level"),
+    cloud: bool = typer.Option(
+        False,
+        "--cloud",
+        help="Also enforce your Tessera Cloud dashboard policies (synced via "
+        "`tessera config sync`) alongside local YAML.",
+    ),
 ) -> None:
     """Start the Tessera proxy server."""
     import uvicorn
 
     from tessera.config import load_config
     from tessera.proxy import create_app
+
+    # --cloud selects the cache-backed loader via the existing pluggable seam
+    # (create_app reads TESSERA_POLICY_LOADER). An explicit env var still wins.
+    if cloud and not os.environ.get("TESSERA_POLICY_LOADER"):
+        os.environ["TESSERA_POLICY_LOADER"] = (
+            "tessera.policy.cloud_loader:CloudBackedPolicyLoader"
+        )
 
     try:
         cfg = load_config(config)
@@ -1641,7 +1654,7 @@ def config_sync(
 
     Reads the OAuth token from ~/.tessera/oauth.json (created by `tessera login`),
     fetches /api/cli/policies, and writes the response to the local SQLite cache
-    used by `tessera serve`. Prints a count of policies cached on success.
+    consumed by `tessera serve --cloud`. Prints a count of policies cached on success.
     """
     import asyncio
 

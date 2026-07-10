@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — YYYY-MM-DD
+## [1.0.0] — Unreleased
+
+> Staged for release; the API surface is frozen. Not yet published to PyPI — the latest published release is [0.9.0](#090--2026-06-11). Fill in the release date on publish.
 
 ### What's new
 - API surface frozen; semver policy in effect from this release.
@@ -15,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resources/read` and `sampling/createMessage` now policy-evaluated by default (opt out: `policies.engine_eval_data_methods: false`).
 - Per-bundle sibling `.signed.json` Ed25519 verification (P0-9).
 - `audit verify-chain` is now a deprecated alias for `audit verify`.
+- **Cloud policy enforcement** (`tessera/policy/cloud_loader.py` — `CloudBackedPolicyLoader`). `tessera serve --cloud` (or `TESSERA_POLICY_LOADER=tessera.policy.cloud_loader:CloudBackedPolicyLoader`) merges your Tessera Cloud dashboard policies — synced to `~/.tessera/policy-cache.db` via `tessera config sync` — into the local enforcement engine alongside local YAML, with background refresh and `DecisionCache` invalidation on change. Cloud policies override local YAML on an id collision; a malformed remote policy is isolated (surfaced in loader `state()`) and never crashes the proxy, while local-file errors still hard-fail the boot. Cache path overridable via `TESSERA_POLICY_CACHE`. This completes the cloud→local loop that `CloudPolicySync` (0.7.0) only wrote the cache half of. (Requires the backend `/api/cli/policies` response to include `yaml_text`.)
 
 ### Breaking changes (from 0.x)
 None. All v0.9.0 configs and CLI invocations continue to work.
@@ -149,7 +152,7 @@ None. All v0.9.0 configs and CLI invocations continue to work.
 
 ### Added — control-plane wiring (Item D of v0.7.0 plan)
 - **OAuth 2.1 resource server validator** (`tessera/auth/oauth_rs.py:372` — `OAuthResourceServer`). Verifies Ed25519 access tokens against the bundled `tessera/auth/oauth_pubkey.pem` trust anchor with JWKS fetch fallback at `https://tessera.cloudmorph.ai/oauth/.well-known/jwks.json`. Surfaces RFC 9728 protected-resource metadata, RFC 7591 DCR proxy, RFC 7662 introspection, RFC 7009 revocation. `require_scope(scope)` decorator helper for route protection. Gap analysis vs the §7.1 spec at `plan/v0.7.0-item-D-oauth_rs-gaps.md`.
-- **Cloud policy sync** (`tessera/cloud_sync.py` — `CloudPolicySync`). Periodic background pull from `/api/cli/policies` into the local SQLite policy cache. Configurable refresh interval (default 5 min). Invalidates the proxy `DecisionCache` on every policy change so a tightened rule takes effect on the very next call. Failure-isolated: cloud unreachable does not break local enforcement.
+- **Cloud policy sync** (`tessera/cloud_sync.py` — `CloudPolicySync`). Pull from `/api/cli/policies` into the local SQLite policy cache (`tessera config sync`). Failure-isolated: cloud unreachable does not break local enforcement. _(Correction: at 0.7.0 this only **wrote** the cache — nothing read it back into the engine, so a synced policy did not actually enforce. The serve-side consumer `CloudBackedPolicyLoader` + background refresh + `DecisionCache` invalidation landed in 1.0.0 under `tessera serve --cloud`; see the [1.0.0] entry.)_
 - **Audit cloud uploader** (`tessera/audit/cloud_uploader.py` — `AuditCloudUploader`). Background batched POST to `/api/tessera/audit/ingest` with exponential-backoff retry. Carries the local hash-chain head per batch; server stores raw and chain-verifies on read.
 - **DecisionCache** (`tessera/proxy.py:82` — `DecisionCache`). LRU + 60s TTL memoization on the per-call hot path. Bounded at 1024 entries. Caches `allow` and `observed` decisions only — `block` and `require_approval` are always re-evaluated against current policy. Cache key is `sha256(canonical_json({scope, tool, args}))` so arg-ordering doesn't fragment the cache. Cleared on every `CloudPolicySync` reload.
 - **`tessera login` CLI command** (`tessera/cli.py:1189`). Browser-based PKCE flow against the new cloudmorph.ai OAuth server. Spawns a one-shot localhost listener, exchanges the auth code for an access + refresh JWT pair, and persists them at `~/.tessera/oauth.json`.

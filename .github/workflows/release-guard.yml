@@ -1,0 +1,44 @@
+# release-guard — blocks a tagged release that still carries placeholder
+# values or version-string drift (root cause: the 5-file manual bump
+# checklist in pyproject.toml). Runs only on release tags, so day-to-day
+# pushes and the "Unreleased" changelog heading are unaffected.
+name: release-guard
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No placeholders may ship in a tagged release
+        run: |
+          set -euo pipefail
+          if grep -RInE "YYYY-MM-DD|PLACEHOLDER|Unreleased" README.md CHANGELOG.md docs/ROADMAP.md; then
+            echo "::error::Placeholder text found in release-facing docs — fill in real values before tagging."
+            exit 1
+          fi
+
+      - name: Changelog must date the tagged version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          if ! grep -qE "^## \[${TAG//./\\.}\] — [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no dated '## [${TAG}] — YYYY-MM-DD' section for this tag."
+            exit 1
+          fi
+
+      - name: Version strings must match the tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"${TAG}\"" pyproject.toml || { echo "::error::pyproject.toml version != ${TAG}"; exit 1; }
+          grep -q "${TAG}" tessera/_version.py || { echo "::error::tessera/_version.py does not carry ${TAG}"; exit 1; }
+          if grep -RIn "0\.6\.0" README.md docs/INSTALL.md 2>/dev/null; then
+            echo "::error::Stale 0.6.0 version strings in customer-facing docs."
+            exit 1
+          fi

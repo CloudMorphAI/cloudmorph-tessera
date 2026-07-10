@@ -3,7 +3,8 @@
 This document describes the current feature state and planned work for the OSS
 distribution. It is updated on each minor release.
 
-Current stable: **v1.0.0** (released YYYY-MM-DD).
+Current stable: **v1.0.0** — API surface frozen, Semantic Versioning in effect.
+Publication status: v1.0.0 is staged (code complete) but **not yet published to PyPI** — the latest published release is v0.9.0 (2026-06-11).
 Next milestone: **v1.1.0** (planned — post-GA improvements; see plan/1.1.0/ in the workspace).
 
 Where a version is listed the feature is on the roadmap. Where it says
