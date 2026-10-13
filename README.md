@@ -11,6 +11,20 @@
 
 **Semver policy (from v1.0.0):** Tessera follows [Semantic Versioning 2.0.0](https://semver.org/). The stable API surface is: the `tessera` CLI commands listed in `tessera --help`, the `tessera.yaml` configuration schema, and the `cloudmorph-tessera` PyPI package name. Internal Python modules (anything not listed in `tessera/__init__.__all__`) are private and may change in any release.
 
+## Repository role and current maintenance
+
+This is the public customer-installed Python runtime, CLI, policy engine and MCP
+proxy. Premium authored content belongs in the sibling `tessera-intelligence/`
+repository. The application monorepo's `tessera-cloud-wrapper/` is an optional
+hosted adapter, currently dormant; it is not required for the synthetic pilot.
+
+For current bounded MCP behavior use [the transport contract](docs/STREAMABLE_HTTP.md)
+and [synthetic pilot instructions](examples/synthetic_pilot/README.md). Offline
+acceptance does not establish every desktop client's compatibility. Premium packs
+need runtime-schema, native-tool matching and input verification before use;
+missing price data and unsupported predicates remain explicit content gates.
+Amplify deployment does not release this Python package or signed intelligence.
+
 ## The problem
 
 AI agents now take real, irreversible actions through MCP tool calls — delete a production database, attach an admin IAM policy, exfiltrate a secret into a log line. An agent doesn't need to be malicious for this to happen; a bad prompt, a hallucinated argument, or a compromised upstream MCP server is enough. Once the call reaches AWS, GCP, or Azure, there is no undo.

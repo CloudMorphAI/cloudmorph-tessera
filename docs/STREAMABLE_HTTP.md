@@ -78,10 +78,38 @@ No automatic original-call replay follows an upstream failure. Session404 drops
 local session state so a **new caller request** can initialize again. Timeout or
 disconnect may leave execution outcome unknown; investigate before repeating a
 mutation. Server-to-client requests, SSE resumability, legacy HTTP+SSE endpoints,
-pagination completeness and broad desktop-client certification are not supplied
+unbounded catalog traversal and broad desktop-client certification are not supplied
 by this stage. Proxy policy enforcement applies only to routed methods according
 to the existing policy configuration; protocol compatibility does not remove
 the documented passthrough-method and bypass boundaries.
+
+## tools/list pagination (v0.8.0 unified route)
+
+The unified `POST /mcp` `tools/list` implements bounded traversal of all pages
+from each upstream to build a merged namespaced catalog.
+
+### Measured bounds
+
+- **Pages per upstream:** at most 8 (including page 8). A 9th page is never requested.
+- **Tools per upstream:** at most 4096 total. Exceeding this rejects the upstream.
+- **Cursor length:** each `nextCursor` must be ≤ 2048 characters. Longer cursors reject.
+- **Timeout per upstream:** 10 seconds total for all pages combined, including initialization.
+- **Cursor cycle detection:** repeated cursors terminate traversal without re-requesting.
+
+### Error behavior
+
+- A malformed envelope, result, tools array, or tool object rejects the entire upstream.
+- Missing, null, or empty `nextCursor` terminates traversal successfully.
+- A non-string cursor, cursor too long, or repeated cursor rejects the upstream.
+- A failure or timeout during any page discards all results from that upstream; healthy upstream catalogs remain available.
+- Duplicate native tool names within or across pages reject only that upstream.
+- A native tool name containing `__` on any page disables the whole unified route (D4); use the per-upstream routes instead.
+
+### Session isolation
+
+Each page for an upstream shares the same `session_scope` derived from the authenticated
+principal and scope. A fresh request ID is generated per page. No global cursor cache;
+cursors are treated as opaque strings.
 
 ## Collect acceptance evidence
 

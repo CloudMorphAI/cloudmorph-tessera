@@ -188,6 +188,12 @@ _PASS_THROUGH_METHODS = {
 
 TOOL_NAMESPACE_SEPARATOR = "__"
 
+# ── Bounded pagination constants for aggregate_tools_list ────────────────────
+_PAGINATION_MAX_PAGES = 8
+_PAGINATION_MAX_TOOLS = 4096
+_PAGINATION_MAX_CURSOR_LEN = 2048
+_PAGINATION_TIMEOUT_SECONDS = 10.0
+
 
 def namespace_tool(upstream_name: str, tool_name: str) -> str:
     """Return the namespaced tool name: '<upstream>__<tool>'."""
@@ -235,52 +241,87 @@ async def aggregate_tools_list(state: Any, auth_ctx: Any = None) -> dict[str, An
     cfg: TesseraConfig = state.config
     all_tools: list[dict[str, Any]] = []
 
+    session_scope = _upstream_session_scope(auth_ctx)
+
     async def _fetch_one(upstream_name: str) -> list[dict[str, Any]]:
-        req_body: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "tools/list",
-            "params": {},
-        }
-        response = await _forward_upstream(
-            state, upstream_name, req_body, req_body["id"],
-            session_scope=_upstream_session_scope(auth_ctx),
-        )
-        if isinstance(response, JSONResponse):
-            logger.warning("event=aggregate_tools_list_upstream_error upstream=%s", upstream_name)
-            return []
-        tools: list[dict[str, Any]] = response.get("result", {}).get("tools", [])
+        """Return this upstream's catalog only after every page succeeds."""
+        page_tools: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        native_names_seen: set[str] = set()
 
-        # D4 — validate that no native tool name contains TOOL_NAMESPACE_SEPARATOR.
-        # Lazy check: runs on first tools/list aggregation since we don't fetch tool
-        # inventories at startup. If collision detected, disable unified mode so that
-        # subsequent requests return an actionable error.
-        colliding = [t.get("name", "") for t in tools if TOOL_NAMESPACE_SEPARATOR in t.get("name", "")]
-        if colliding:
-            logger.warning(
-                "event=unified_mode_disabled upstream=%s colliding_tools=%s reason=native_tool_name_contains__",
-                upstream_name,
-                colliding,
+        for page_index in range(_PAGINATION_MAX_PAGES):
+            req_body: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/list",
+                "params": {} if cursor is None else {"cursor": cursor},
+            }
+            response = await _forward_upstream(
+                state, upstream_name, req_body, req_body["id"],
+                session_scope=session_scope,
             )
-            state.unified_mode_disabled = True
+            if (
+                not isinstance(response, dict)
+                or response.get("jsonrpc") != "2.0"
+                or "error" in response
+                or not isinstance(response.get("result"), dict)
+            ):
+                raise ValueError("invalid tools/list response")
+            result = response["result"]
+            tools = result.get("tools")
+            if not isinstance(tools, list):
+                raise ValueError("invalid tools/list catalog")
+
+            # Scan the whole page before other tool validation can hide a D4 collision.
+            if any(
+                isinstance(tool, dict)
+                and isinstance(tool.get("name"), str)
+                and TOOL_NAMESPACE_SEPARATOR in tool["name"]
+                for tool in tools
+            ):
+                state.unified_mode_disabled = True
+                logger.warning("event=unified_mode_disabled upstream=%s reason=native_namespace_collision", upstream_name)
+                return []
+
+            if len(page_tools) + len(tools) > _PAGINATION_MAX_TOOLS:
+                raise ValueError("tools/list tool limit exceeded")
+            for tool in tools:
+                if not isinstance(tool, dict):
+                    raise ValueError("invalid tools/list tool")
+                name = tool.get("name")
+                if not isinstance(name, str) or not name or name in native_names_seen:
+                    raise ValueError("invalid or duplicate tools/list name")
+                native_names_seen.add(name)
+                page_tools.append({**tool, "name": namespace_tool(upstream_name, name)})
+
+            next_cursor = result.get("nextCursor")
+            if next_cursor is None or next_cursor == "":
+                return page_tools
+            if (
+                not isinstance(next_cursor, str)
+                or len(next_cursor) > _PAGINATION_MAX_CURSOR_LEN
+                or next_cursor in seen_cursors
+                or page_index == _PAGINATION_MAX_PAGES - 1
+            ):
+                raise ValueError("invalid or excessive tools/list continuation")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        return []
+
+    async def _fetch_with_timeout(upstream_name: str) -> list[dict[str, Any]]:
+        try:
+            # One deadline covers initialization and all sequential page requests.
+            async with asyncio.timeout(_PAGINATION_TIMEOUT_SECONDS):
+                return await _fetch_one(upstream_name)
+        except Exception:  # CancelledError remains visible to the caller.
+            logger.warning("event=aggregate_tools_list_upstream_failed upstream=%s", upstream_name)
             return []
 
-        namespaced: list[dict[str, Any]] = []
-        for tool in tools:
-            tool_name: str = tool.get("name", "")
-            renamed = {**tool, "name": namespace_tool(upstream_name, tool_name)}
-            namespaced.append(renamed)
-        return namespaced
-
-    results = await asyncio.gather(
-        *[_fetch_one(u.name) for u in cfg.upstreams],
-        return_exceptions=True,
-    )
-    for res in results:
-        if isinstance(res, list):
-            all_tools.extend(res)
-        else:
-            logger.warning("event=aggregate_tools_list_gather_error err=%s", res)
+    results = await asyncio.gather(*[_fetch_with_timeout(u.name) for u in cfg.upstreams])
+    for tools in results:
+        all_tools.extend(tools)
 
     # Re-check after gather: if any upstream set unified_mode_disabled, propagate the error.
     if getattr(state, "unified_mode_disabled", False):
