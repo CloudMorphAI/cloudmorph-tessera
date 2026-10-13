@@ -1,367 +1,413 @@
-"""FastMCP streamable-HTTP upstream client.
+"""Bounded, session-isolated MCP Streamable HTTP upstream transport.
 
-Routes JSON-RPC traffic to MCP servers that implement the MCP 2025-06-18
-streamable-HTTP transport (a single ``/mcp`` endpoint that accepts POST).
-
-Handles two response shapes from the upstream:
-* ``application/json``: direct JSON-RPC envelope (used for ``initialize``).
-* ``text/event-stream``: SSE stream; each ``data:`` line carries a JSON-RPC
-  envelope.  Tessera returns the first envelope whose ``id`` matches the
-  request (subsequent events are MCP notifications; logged, not forwarded).
-
-Session-id lifecycle
---------------------
-1. On the first tool call to a given upstream URL, Tessera issues an
-   ``initialize`` JSON-RPC request.  The upstream returns ``Mcp-Session-Id``
-   in the response headers.
-2. The session-id is cached in an in-memory dict keyed by upstream name.
-3. Every subsequent POST carries the ``Mcp-Session-Id`` header.
-4. On 401 / 403 or a JSON-RPC ``session_expired`` error, Tessera drops the
-   cached session-id, re-initialises, and retries once.  On a second
-   failure the error is returned to the caller.
-
-The cache is process-local.  Sessions do not survive a Tessera restart.
+Downstream initialization is terminated by the proxy. This client negotiates
+its own upstream lifecycle; session IDs never reach downstream clients.
+See docs/STREAMABLE_HTTP_UPSTREAM.md for the supported subset.
 """
-
 from __future__ import annotations
 
+import asyncio
+import codecs
+import json
 import logging
+import math
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+_SUPPORTED_VERSIONS = frozenset({"2025-11-25", "2025-06-18", "2025-03-26"})
+_MAX_BYTES = 1_048_576
+_MAX_LINE_CHARS = 65_536
+_MAX_EVENT_CHARS = 262_144
+_MAX_EVENTS = 256
+_MAX_SCOPES = 128
+_MAX_SCOPE_CHARS = 1024
+_MAX_SESSION_CHARS = 1024
 
-# One session cache keyed by upstream name.  Concurrent tenants share the
-# session (the MCP server is stateless WRT session; session-id is just a
-# routing hint).  Thread-safe in CPython due to GIL; asyncio-safe because
-# only one coroutine writes at a time behind the await boundary.
-_SESSION_CACHE: dict[str, str] = {}  # upstream_name → session_id
 
-# MCP capabilities Tessera announces when it initialises a session.
-_INITIALIZE_PARAMS: dict[str, Any] = {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": {"name": "tessera-proxy", "version": "0.5.1"},
-}
+class _TransportError(Exception):
+    """A fixed, non-sensitive reason safe to return to a caller."""
+
+
+@dataclass
+class _Session:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    initialized: bool = False
+    session_id: str | None = None
+    version: str | None = None
+    last_used: float = field(default_factory=time.monotonic)
+    active: int = 0
+
+
+def _valid_id(value: Any) -> bool:
+    return type(value) in (str, int)
+
+
+def _same_id(left: Any, right: Any) -> bool:
+    return type(left) is type(right) and left == right
+
+
+def _object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON member")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+def _decode_json(data: str | bytes) -> dict[str, Any]:
+    try:
+        if isinstance(data, bytes):
+            data = data.decode("utf-8-sig")
+        value = json.loads(data, object_pairs_hook=_object_pairs,
+                           parse_constant=_reject_constant, parse_float=_finite_float)
+    except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
+        raise _TransportError("Upstream returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise _TransportError("Upstream JSON-RPC message must be an object")
+    return value
+
+
+def _message_kind(body: dict[str, Any]) -> str:
+    if body.get("jsonrpc") != "2.0":
+        raise _TransportError("JSON-RPC version must be 2.0")
+    if "method" in body:
+        if not isinstance(body["method"], str) or not body["method"]:
+            raise _TransportError("JSON-RPC method must be a nonempty string")
+        if "result" in body or "error" in body:
+            raise _TransportError("JSON-RPC request contains response fields")
+        if "params" in body and not isinstance(body["params"], dict):
+            raise _TransportError("MCP params must be an object")
+        if "id" not in body:
+            return "notification"
+        if not _valid_id(body["id"]):
+            raise _TransportError("MCP request ID must be a string or integer")
+        return "request"
+    if "id" not in body or not _valid_id(body["id"]):
+        raise _TransportError("MCP response ID must be a string or integer")
+    if "params" in body or ("result" in body) == ("error" in body):
+        raise _TransportError("JSON-RPC response must contain exactly one result or error")
+    if "result" in body and not isinstance(body["result"], dict):
+        raise _TransportError("MCP result must be an object")
+    if "error" in body:
+        error = body["error"]
+        if (not isinstance(error, dict) or type(error.get("code")) is not int
+                or not isinstance(error.get("message"), str)):
+            raise _TransportError("JSON-RPC error must contain integer code and string message")
+    return "response"
+
+
+def _matching_response(body: dict[str, Any], request_id: Any) -> dict[str, Any]:
+    kind = _message_kind(body)
+    if kind == "request":
+        raise _TransportError("Upstream server-initiated requests are unsupported")
+    if kind != "response":
+        raise _TransportError("Upstream did not return a JSON-RPC response")
+    if not _same_id(body["id"], request_id):
+        raise _TransportError("Upstream response ID does not match the request")
+    return body
+
+
+class _SSEParser:
+    """Incremental UTF-8 SSE framing with bounded lines, events and count."""
+
+    def __init__(self, request_id: Any) -> None:
+        self.request_id = request_id
+        self.decoder = codecs.getincrementaldecoder("utf-8-sig")("strict")
+        self.line: list[str] = []
+        self.data: list[str] = []
+        self.event_chars = 0
+        self.events = 0
+        self.after_cr = False
+
+    def _line(self) -> dict[str, Any] | None:
+        line = "".join(self.line)
+        self.line.clear()
+        if not line:
+            self.events += 1
+            if self.events > _MAX_EVENTS:
+                raise _TransportError("Upstream SSE event limit exceeded")
+            raw = "\n".join(self.data)
+            self.data.clear()
+            self.event_chars = 0
+            if not raw:
+                return None
+            body = _decode_json(raw)
+            kind = _message_kind(body)
+            if kind == "request":
+                raise _TransportError("Upstream server-initiated requests are unsupported")
+            if kind == "notification":
+                return None
+            if _same_id(body["id"], self.request_id):
+                return body
+            return None
+        if line.startswith(":"):
+            return None
+        field_name, sep, value = line.partition(":")
+        if sep and value.startswith(" "):
+            value = value[1:]
+        if field_name == "data":
+            self.event_chars += len(value) + 1
+            if self.event_chars > _MAX_EVENT_CHARS:
+                raise _TransportError("Upstream SSE event size limit exceeded")
+            self.data.append(value)
+        return None
+
+    def feed(self, chunk: bytes, *, final: bool = False) -> dict[str, Any] | None:
+        try:
+            text = self.decoder.decode(chunk, final=final)
+        except UnicodeError as exc:
+            raise _TransportError("Upstream SSE must be UTF-8") from exc
+        for char in text:
+            if self.after_cr:
+                self.after_cr = False
+                if char == "\n":
+                    continue
+            if char in ("\r", "\n"):
+                self.after_cr = char == "\r"
+                parsed = self._line()
+                if parsed is not None:
+                    return parsed
+            else:
+                self.line.append(char)
+                if len(self.line) > _MAX_LINE_CHARS:
+                    raise _TransportError("Upstream SSE line size limit exceeded")
+        return None
 
 
 class StreamableHttpUpstream:
-    """Async upstream client for FastMCP streamable-HTTP servers.
+    """Configured upstream/auth context with bounded per-principal sessions.
 
-    Each upstream configured with ``kind: mcp_streamable_http`` gets one
-    instance.  The instance holds a long-lived ``httpx.AsyncClient`` for
-    keep-alive connection reuse.  Create via the async context manager so
-    the client is properly shut down on process exit.
-
-    Args:
-        name: Upstream name from tessera.yaml (for logging and cache key).
-        url: Base URL of the upstream MCP server (e.g. ``http://127.0.0.1:8000``).
-        auth_header: Optional ``Authorization: Bearer <token>`` header value
-            (the whole header *value* string, not the header name).  Pass
-            ``None`` for unauthenticated upstreams (``AUTH_TYPE=no-auth``).
-        session_timeout_s: Idle-session TTL in seconds (not enforced client-side
-            today; reserved for future server-driven expiry handling).
-        request_timeout_s: Per-request HTTP timeout in seconds.  Default 10.
+    Origin-only URLs retain /mcp. A URL path is used as the complete endpoint.
+    Session scopes must be trusted proxy-derived keys. request_timeout_s bounds
+    each HTTP phase and the entire forward, including lock and initialization.
+    Idle records expire locally after session_timeout_s. Calls are never replayed.
     """
 
     def __init__(
-        self,
-        name: str,
-        url: str,
-        auth_header: str | None = None,
-        session_timeout_s: int = 300,
-        request_timeout_s: int = 10,
+        self, name: str, url: str, auth_header: str | None = None,
+        session_timeout_s: int = 300, request_timeout_s: int = 10,
     ) -> None:
+        for value in (session_timeout_s, request_timeout_s):
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value <= 0):
+                raise ValueError("Streamable HTTP timeouts must be positive finite numbers")
+        endpoint = httpx.URL(url)
+        if (endpoint.scheme not in ("http", "https") or not endpoint.host
+                or endpoint.fragment or endpoint.userinfo):
+            raise ValueError("Streamable HTTP requires an HTTP(S) URL without credentials or fragment")
+        if endpoint.path in ("", "/"):
+            endpoint = endpoint.copy_with(path="/mcp")
         self.name = name
-        # Normalise: strip trailing slash so we can always append "/mcp".
-        self.url = url.rstrip("/")
+        self.url = str(endpoint)
         self.auth_header = auth_header
         self.session_timeout_s = session_timeout_s
         self.request_timeout_s = request_timeout_s
         self._client: httpx.AsyncClient | None = None
-
-    # ── Lifecycle ────────────────────────────────────────────────────────────
+        self._sessions: dict[str, _Session] = {}
 
     async def __aenter__(self) -> StreamableHttpUpstream:
-        # MCP 2025-06-18 spec: client MUST declare Accept for both shapes since
-        # initialize returns application/json and tools/call returns text/event-stream.
-        # Upstreams (e.g. awslabs.aws-api-mcp-server) enforce this and return 406
-        # if only one content-type is listed.
-        headers: dict[str, str] = {
+        if self._client is not None:
+            raise RuntimeError("StreamableHttpUpstream already entered")
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
+            "Accept-Encoding": "identity",
         }
         if self.auth_header:
             headers["Authorization"] = self.auth_header
-        self._client = httpx.AsyncClient(
-            headers=headers,
-            timeout=self.request_timeout_s,
-        )
+        self._client = httpx.AsyncClient(headers=headers, timeout=self.request_timeout_s, follow_redirects=False)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        if self._client is not None:
-            try:
-                await self._client.aclose()
-            except Exception:  # noqa: BLE001
-                pass
-        self._client = None
-        # Drop cached session on shutdown so a restart always re-initialises.
-        _SESSION_CACHE.pop(self.name, None)
-
-    # ── Session management ────────────────────────────────────────────────────
-
-    async def _initialize_session(self) -> str | None:
-        """Issue a JSON-RPC ``initialize`` and return the session-id header.
-
-        Returns ``None`` when the upstream does not echo ``Mcp-Session-Id``
-        (i.e. when the server does not require session pinning; calls still
-        work — we just won't send the header).
-        """
-        if self._client is None:
-            return None
-
-        init_body: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": _INITIALIZE_PARAMS,
-        }
-
-        mcp_url = f"{self.url}/mcp"
+        client = self._client
+        if client is None:
+            return
         try:
-            resp = await self._client.post(mcp_url, json=init_body)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "event=streamable_http_init_error upstream=%s error=%s",
-                self.name,
-                exc,
-            )
-            return None
+            async with asyncio.timeout(self.request_timeout_s):
+                for state in self._sessions.values():
+                    if state.session_id and state.version:
+                        try:
+                            async with client.stream("DELETE", self.url, headers=self._headers(state)):
+                                pass
+                        except httpx.HTTPError:
+                            continue
+        except TimeoutError:
+            pass
+        finally:
+            self._sessions.clear()
+            self._client = None
+            await client.aclose()
 
-        session_id: str | None = resp.headers.get("Mcp-Session-Id")
-        logger.info(
-            "event=streamable_http_session_initialized upstream=%s session_id=%s",
-            self.name,
-            session_id,
-        )
-        return session_id
-
-    async def _get_or_init_session(self) -> str | None:
-        """Return cached session-id, initialising on first call."""
-        if self.name not in _SESSION_CACHE:
-            sid = await self._initialize_session()
-            if sid:
-                _SESSION_CACHE[self.name] = sid
-            else:
-                # Upstream has no session pinning — mark with sentinel so we
-                # don't re-init on every call.
-                _SESSION_CACHE[self.name] = ""
-        return _SESSION_CACHE.get(self.name) or None
-
-    def _drop_session(self) -> None:
-        """Evict the cached session-id so the next call triggers re-init."""
-        _SESSION_CACHE.pop(self.name, None)
-
-    # ── Response parsing ──────────────────────────────────────────────────────
+    def _state(self, session_scope: str) -> _Session:
+        if not isinstance(session_scope, str) or not session_scope or len(session_scope) > _MAX_SCOPE_CHARS:
+            raise _TransportError("Invalid upstream session scope")
+        now = time.monotonic()
+        for key, idle_state in list(self._sessions.items()):
+            if idle_state.active == 0 and now - idle_state.last_used >= self.session_timeout_s:
+                del self._sessions[key]
+        state = self._sessions.get(session_scope)
+        if state is None:
+            if len(self._sessions) >= _MAX_SCOPES:
+                raise _TransportError("Upstream session capacity reached; wait for an idle session to expire")
+            state = _Session()
+            self._sessions[session_scope] = state
+        state.active += 1
+        return state
 
     @staticmethod
-    def _parse_sse(body: str, request_id: Any) -> dict[str, Any] | None:
-        """Parse an SSE response body and return the first envelope matching *request_id*.
+    def _headers(state: _Session) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if state.version:
+            headers["MCP-Protocol-Version"] = state.version
+        if state.session_id:
+            headers["Mcp-Session-Id"] = state.session_id
+        return headers
 
-        SSE format:
-            event: message\\n
-            data: {json}\\n
-            \\n
+    @staticmethod
+    def _drop_session(state: _Session) -> None:
+        state.initialized = False
+        state.session_id = None
+        state.version = None
 
-        We split on double-newlines, find lines starting with ``data:``, and
-        JSON-parse each value.  The first envelope whose ``id`` matches is
-        returned.  Subsequent envelopes are MCP notifications (no ``id``);
-        they are logged at DEBUG level and discarded.
+    async def _exchange(
+        self, body: dict[str, Any], state: _Session, *, initialize: bool = False,
+    ) -> tuple[dict[str, Any], str | None]:
+        if self._client is None:
+            raise _TransportError("Upstream client is not running")
+        expects_response = _message_kind(body) == "request"
+        async with self._client.stream("POST", self.url, json=body, headers=self._headers(state)) as response:
+            if response.status_code == 404 and state.session_id:
+                self._drop_session(state)
+                raise _TransportError("Upstream session expired (HTTP 404); request was not replayed. A new caller request can initialize a fresh session")
+            if expects_response:
+                if response.status_code != 200:
+                    raise _TransportError(f"Upstream HTTP {response.status_code}; request was not replayed")
+            elif response.status_code != 202:
+                raise _TransportError(f"Upstream must accept notifications/responses with empty HTTP 202 (received {response.status_code})")
+            session_id = response.headers.get("Mcp-Session-Id") if initialize else None
+            if session_id is not None and (not session_id or len(session_id) > _MAX_SESSION_CHARS
+                    or any(ord(char) < 0x21 or ord(char) > 0x7E for char in session_id)):
+                raise _TransportError("Upstream returned an invalid session header")
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                raise _TransportError("Compressed upstream responses are unsupported by this bounded transport")
+            if expects_response and content_type not in ("application/json", "text/event-stream"):
+                raise _TransportError("Upstream response Content-Type must be application/json or text/event-stream")
+            parser = _SSEParser(body["id"]) if expects_response and content_type == "text/event-stream" else None
+            total = 0
+            data = bytearray()
+            # Content-Encoding was rejected above; aiter_bytes also supports
+            # already-buffered synthetic transports without re-reading streams.
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > _MAX_BYTES:
+                    raise _TransportError("Upstream response byte limit exceeded")
+                if not expects_response:
+                    if chunk:
+                        raise _TransportError("Upstream HTTP 202 must have an empty body")
+                elif parser is not None:
+                    parsed = parser.feed(chunk)
+                    if parsed is not None:
+                        return parsed, session_id
+                else:
+                    data.extend(chunk)
+            if not expects_response:
+                return {}, session_id
+            if parser is not None:
+                parser.feed(b"", final=True)
+                raise _TransportError("Upstream SSE ended without a matching response; reconnection/resumption is unsupported and request was not replayed")
+            return _matching_response(_decode_json(bytes(data)), body["id"]), session_id
 
-        Returns ``None`` when no matching envelope is found.
-        """
-        import json  # noqa: PLC0415 — stdlib, zero overhead
-
-        events = body.split("\n\n")
-        for event in events:
-            for line in event.splitlines():
-                if not line.startswith("data:"):
-                    continue
-                raw = line[len("data:"):].strip()
-                if not raw:
-                    continue
-                try:
-                    envelope: dict[str, Any] = json.loads(raw)
-                except (ValueError, TypeError):
-                    logger.debug(
-                        "event=streamable_http_sse_parse_error upstream=%s raw=%r",
-                        "sse",
-                        raw[:200],
-                    )
-                    continue
-                # Match by id — tools/call responses have an id; notifications don't.
-                if envelope.get("id") == request_id:
-                    return envelope
-                logger.debug(
-                    "event=streamable_http_sse_notification upstream=%s method=%s",
-                    "sse",
-                    envelope.get("method", "<unknown>"),
-                )
-        return None
-
-    def _parse_response(self, resp: httpx.Response, request_id: Any) -> dict[str, Any]:
-        """Decode an httpx response (JSON or SSE) into a JSON-RPC envelope dict."""
-        content_type = resp.headers.get("content-type", "")
-        if "text/event-stream" in content_type:
-            parsed = self._parse_sse(resp.text, request_id)
-            if parsed is None:
-                # Fallback: no matching id found — return whatever the server sent.
-                logger.warning(
-                    "event=streamable_http_no_matching_id upstream=%s request_id=%s",
-                    self.name,
-                    request_id,
-                )
-                # Try to return any envelope we found (first data: line).
-                for event in resp.text.split("\n\n"):
-                    for line in event.splitlines():
-                        if line.startswith("data:"):
-                            raw = line[len("data:"):].strip()
-                            if raw:
-                                import json  # noqa: PLC0415
-                                try:
-                                    return dict(json.loads(raw))
-                                except (ValueError, TypeError):
-                                    pass
-                return _sh_error(request_id, "Upstream SSE contained no parseable envelope")
-            return parsed
-        # application/json or anything else — parse directly.
+    async def _initialize_session(self, state: _Session) -> None:
+        body = {
+            "jsonrpc": "2.0", "id": "tessera-initialize", "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                       "clientInfo": {"name": "tessera-proxy", "version": "1.0.0"}},
+        }
+        parsed, session_id = await self._exchange(body, state, initialize=True)
+        if "error" in parsed:
+            raise _TransportError("Upstream initialization returned a JSON-RPC error")
+        result = parsed["result"]
+        version = result.get("protocolVersion")
+        if not isinstance(version, str) or version not in _SUPPORTED_VERSIONS:
+            raise _TransportError("Upstream negotiated an unsupported MCP protocol version")
+        info = result.get("serverInfo")
+        if (not isinstance(result.get("capabilities"), dict) or not isinstance(info, dict)
+                or not isinstance(info.get("name"), str) or not isinstance(info.get("version"), str)):
+            raise _TransportError("Upstream initialization result lacks valid capabilities/serverInfo")
+        state.session_id = session_id
+        state.version = version
         try:
-            return dict(resp.json())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "event=streamable_http_json_parse_error upstream=%s error=%s",
-                self.name,
-                exc,
-            )
-            return _sh_error(request_id, f"Upstream returned unparseable JSON: {exc}")
+            await self._exchange({"jsonrpc": "2.0", "method": "notifications/initialized"}, state)
+        except BaseException:
+            self._drop_session(state)
+            raise
+        state.initialized = True
 
-    # ── Forward ───────────────────────────────────────────────────────────────
+    async def forward(
+        self, jsonrpc_body: dict[str, Any], *, session_scope: str = "default",
+    ) -> dict[str, Any] | JSONResponse:
+        """Forward once with isolated initialization and an overall deadline.
 
-    async def _post(
-        self,
-        body: dict[str, Any],
-        session_id: str | None,
-    ) -> httpx.Response:
-        """Issue a single POST to the upstream /mcp endpoint."""
-        if self._client is None:
-            raise RuntimeError("StreamableHttpUpstream not entered — call __aenter__ first")
-
-        mcp_url = f"{self.url}/mcp"
-        extra_headers: dict[str, str] = {}
-        if session_id:
-            extra_headers["Mcp-Session-Id"] = session_id
-
-        return await self._client.post(mcp_url, json=body, headers=extra_headers)
-
-    async def forward(self, jsonrpc_body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """Forward *jsonrpc_body* to the upstream streamable-HTTP /mcp endpoint.
-
-        Handles session establishment, SSE response parsing, and a single
-        retry on session-expired errors.  Returns a parsed JSON-RPC envelope
-        dict on success, or a ``JSONResponse`` with a -32603 error on failure.
+        Accepted notifications/responses return {}; inbound emits empty HTTP 202.
+        Local failures return JSONResponse. Scope must be a trusted proxy-derived
+        principal/context key, never a caller-supplied upstream session header.
         """
-        if self._client is None:
-            logger.error("event=streamable_http_not_initialized upstream=%s", self.name)
-            return _sh_error_response(jsonrpc_body.get("id", 1), "Upstream not initialized")
-
-        request_id = jsonrpc_body.get("id", 1)
-
-        # Ensure session is established.
-        session_id = await self._get_or_init_session()
-
-        # Attempt the call (with one retry on session expiry).
-        for attempt in range(2):
-            try:
-                resp = await self._post(jsonrpc_body, session_id)
-            except httpx.TimeoutException:
-                logger.warning("event=streamable_http_timeout upstream=%s", self.name)
-                return _sh_error_response(request_id, "Upstream timeout")
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "event=streamable_http_network_error upstream=%s attempt=%d error=%s",
-                    self.name,
-                    attempt,
-                    exc,
-                )
-                return _sh_error_response(request_id, f"Upstream network error: {exc}")
-
-            # Check for session expiry signals.
-            if resp.status_code in (401, 403) and attempt == 0:
-                logger.info(
-                    "event=streamable_http_session_expired upstream=%s status=%d retry=1",
-                    self.name,
-                    resp.status_code,
-                )
-                self._drop_session()
-                session_id = await self._get_or_init_session()
-                continue
-
-            if resp.status_code >= 500:
-                logger.warning(
-                    "event=streamable_http_5xx upstream=%s status=%d",
-                    self.name,
-                    resp.status_code,
-                )
-                return _sh_error_response(request_id, f"Upstream 5xx: {resp.status_code}")
-
-            # Parse the response.
-            parsed = self._parse_response(resp, request_id)
-
-            # Check for JSON-RPC session-expired error and retry once.
-            if attempt == 0:
-                rpc_error = parsed.get("error")
-                if isinstance(rpc_error, dict):
-                    err_msg = str(rpc_error.get("message", "")).lower()
-                    err_data = rpc_error.get("data") or {}
-                    err_reason = str(err_data.get("reason", "")).lower() if isinstance(err_data, dict) else ""
-                    if "session" in err_msg or "session" in err_reason or "expired" in err_msg:
-                        logger.info(
-                            "event=streamable_http_rpc_session_error upstream=%s retry=1",
-                            self.name,
-                        )
-                        self._drop_session()
-                        session_id = await self._get_or_init_session()
-                        continue
-
-            return parsed
-
-        # Both attempts failed — return last error response.
-        logger.error(
-            "event=streamable_http_all_attempts_failed upstream=%s",
-            self.name,
-        )
-        return _sh_error_response(request_id, "Upstream failed after session refresh retry")
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
+        request_id = jsonrpc_body.get("id") if isinstance(jsonrpc_body, dict) else None
+        if not _valid_id(request_id):
+            request_id = None
+        state: _Session | None = None
+        try:
+            if not isinstance(jsonrpc_body, dict):
+                raise _TransportError("MCP message must be an object")
+            _message_kind(jsonrpc_body)
+            if jsonrpc_body.get("method") in ("initialize", "notifications/initialized"):
+                raise _TransportError("Downstream initialization must be terminated by the proxy")
+            if self._client is None:
+                raise _TransportError("Upstream client is not running")
+            async with asyncio.timeout(self.request_timeout_s):
+                state = self._state(session_scope)
+                async with state.lock:
+                    if not state.initialized:
+                        await self._initialize_session(state)
+                    parsed, _ = await self._exchange(jsonrpc_body, state)
+                    return parsed
+        except TimeoutError:
+            return _sh_error_response(request_id, "Upstream total deadline exceeded; execution outcome may be unknown and request was not replayed")
+        except _TransportError as exc:
+            return _sh_error_response(request_id, str(exc))
+        except httpx.HTTPError:
+            logger.warning("event=streamable_http_transport_error")
+            return _sh_error_response(request_id, "Upstream transport failed; execution outcome may be unknown and request was not replayed")
+        except (ValueError, TypeError, RecursionError):
+            return _sh_error_response(request_id, "Invalid MCP message or upstream transport data")
+        finally:
+            if state is not None:
+                state.active -= 1
+                state.last_used = time.monotonic()
 
 
 def _sh_error(request_id: Any, message: str) -> dict[str, Any]:
-    """Return a JSON-RPC -32603 error envelope as a plain dict."""
-    return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "error": {
-            "code": -32603,
-            "message": "Internal error",
-            "data": {"reason": message},
-        },
-    }
+    return {"jsonrpc": "2.0", "id": request_id,
+            "error": {"code": -32603, "message": "Internal error", "data": {"reason": message}}}
 
 
 def _sh_error_response(request_id: Any, message: str) -> JSONResponse:
-    """Return a JSON-RPC -32603 error as a FastAPI JSONResponse."""
     return JSONResponse(_sh_error(request_id, message))

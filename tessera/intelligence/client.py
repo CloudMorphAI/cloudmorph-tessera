@@ -115,7 +115,7 @@ class IntelligenceClient:
         Behaviour:
           * Both ``signature`` and ``body_bytes_hex`` present and valid → return silently.
           * Signature present but invalid → raise ``ValueError``.
-          * Either field missing → raise ``ValueError`` unless
+          * Both fields absent/empty → raise ``ValueError`` unless
             ``IntelligenceConfig.allow_unsigned_catalog`` is True, in which case
             a warning is logged and verification is skipped.
 
@@ -123,11 +123,33 @@ class IntelligenceClient:
         ``signature`` / ``body_bytes_hex`` fields silently disabled signature
         verification for the entire catalog.
         """
-        sig = catalog_data.get("signature", "") or ""
-        body = catalog_data.get("body_bytes_hex", "") or ""
-        if sig and body:
+        sig = catalog_data.get("signature")
+        body = catalog_data.get("body_bytes_hex")
+        if (sig is not None and not isinstance(sig, str)) or (
+            body is not None and not isinstance(body, str)
+        ):
+            raise ValueError(f"{kind} catalog has malformed signed envelope")
+        if sig or body:
             try:
-                self._verify_signature(bytes.fromhex(body), sig)
+                if not isinstance(sig, str) or not isinstance(body, str) or not sig or not body:
+                    raise ValueError("incomplete or malformed signed envelope")
+                signed_body = bytes.fromhex(body)
+                canonical = dict(catalog_data)
+                canonical["signature"] = None
+                canonical["body_bytes_hex"] = None
+                expected_body = json.dumps(
+                    canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                ).encode("utf-8")
+                legacy = dict(catalog_data)
+                legacy.pop("signature", None)
+                legacy.pop("body_bytes_hex", None)
+                legacy_body = json.dumps(
+                    legacy, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                ).encode("utf-8")
+                if signed_body not in (expected_body, legacy_body):
+                    raise ValueError("signed body does not match catalog fields")
+                base64.b64decode(sig, validate=True)
+                self._verify_signature(signed_body, sig)
             except Exception as exc:  # noqa: BLE001 — re-raised below with context
                 raise ValueError(f"{kind} catalog signature invalid: {exc}") from exc
             return

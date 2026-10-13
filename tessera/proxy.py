@@ -37,6 +37,7 @@ from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
+from tessera.mcp_http import local_lifecycle_response, read_message, validate_http_headers
 from tessera.observability import events as _obs_events
 from tessera.observability import metrics as _obs_metrics
 from tessera.observability import tracing as _obs_tracing
@@ -201,7 +202,14 @@ def parse_namespaced_tool(namespaced: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-async def aggregate_tools_list(state: Any) -> dict[str, Any]:
+def _upstream_session_scope(auth_ctx: Any) -> str:
+    """Separate transport state by authenticated principal and audit scope."""
+    if auth_ctx is None:
+        return "internal-discovery"
+    return json.dumps([auth_ctx.scope, auth_ctx.principal_id], separators=(",", ":"))
+
+
+async def aggregate_tools_list(state: Any, auth_ctx: Any = None) -> dict[str, Any]:
     """Fan out tools/list to every configured upstream and return a merged catalog.
 
     Tool names are namespaced as '<upstream>__<tool>' so the agent sees a single
@@ -234,7 +242,10 @@ async def aggregate_tools_list(state: Any) -> dict[str, Any]:
             "method": "tools/list",
             "params": {},
         }
-        response = await _forward_upstream(state, upstream_name, req_body, None)
+        response = await _forward_upstream(
+            state, upstream_name, req_body, req_body["id"],
+            session_scope=_upstream_session_scope(auth_ctx),
+        )
         if isinstance(response, JSONResponse):
             logger.warning("event=aggregate_tools_list_upstream_error upstream=%s", upstream_name)
             return []
@@ -695,6 +706,28 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
     app = FastAPI(title="Tessera MCP Proxy", version=_tessera_version, lifespan=_lifespan)
 
+    @app.middleware("http")
+    async def mcp_transport_boundary(request: Request, call_next: Any) -> Response:
+        if request.url.path == "/mcp" or request.url.path.startswith("/mcp/"):
+            current = getattr(app.state, "config", config)
+            if current is None:
+                return JSONResponse({"error": "Service is not ready"}, status_code=503)
+            error = validate_http_headers(request, current.listen.allowed_origins)
+            if error is not None:
+                return error
+        return cast("Response", await call_next(request))
+
+    @app.api_route("/mcp", methods=["GET", "DELETE"])
+    @app.api_route("/mcp/{upstream_name}", methods=["GET", "DELETE"])
+    async def unsupported_mcp_stream(request: Request, upstream_name: str | None = None) -> Response:
+        # Stateless JSON-response mode does not offer a server-initiated stream
+        # or downstream sessions to terminate. Authenticate these methods too.
+        try:
+            app.state.authenticator.authenticate(request)
+        except UnauthorizedError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        return Response(status_code=405, headers={"Allow": "POST"})
+
     # ── OAuth 2.1 Resource Server routes ─────────────────────────────────────
     from tessera.auth.oauth_rs import make_metadata_route
     make_metadata_route(app)
@@ -800,14 +833,20 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=401)
 
         # Step 2 — Parse JSON-RPC body
-        try:
-            body = await request.json()
-        except Exception:
-            _METRICS["requests_total{outcome=parse_error}"] += 1
-            return _jsonrpc_error(None, -32700, "Parse error")
+        body = await read_message(request)
+        if isinstance(body, JSONResponse):
+            return body
 
-        jsonrpc_id = body.get("id", 1)
+        jsonrpc_id = body.get("id")
         method: str = body.get("method", "")
+
+        lifecycle = local_lifecycle_response(body)
+        if lifecycle is not None:
+            _emit(app.state, auth_ctx.scope, "passthrough", {
+                "upstream": "tessera", "method": method,
+                "principal_id": auth_ctx.principal_id, "request_id": request_id,
+            })
+            return lifecycle
 
         # Step 3 — Branch on method
         # v0.9.0 D5: resources/read and sampling/createMessage are engine-evaluated
@@ -1011,7 +1050,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.observation:
             # Skip engine — always forward
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -1073,7 +1112,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.log_only:
             # Always forward upstream (even on upstream error — return with headers)
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
 
             # Map decision to would_* header value
             if decision.policy_id is None:
@@ -1125,7 +1164,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # enforcement mode
         if decision.action in (Action.allow, Action.log_only):
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id)
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -1269,18 +1308,26 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=401)
 
         # Step 2 — Parse JSON-RPC body
-        try:
-            body = await request.json()
-        except Exception:
-            _METRICS["requests_total{outcome=parse_error}"] += 1
-            return _jsonrpc_error(None, -32700, "Parse error")
+        body = await read_message(request)
+        if isinstance(body, JSONResponse):
+            return body
 
-        jsonrpc_id = body.get("id", 1)
+        jsonrpc_id = body.get("id")
         method: str = body.get("method", "")
+
+        lifecycle = local_lifecycle_response(body)
+        if lifecycle is not None:
+            _emit(app.state, auth_ctx.scope, "passthrough", {
+                "upstream": "tessera", "method": method,
+                "principal_id": auth_ctx.principal_id, "request_id": str(uuid.uuid4()),
+            })
+            return lifecycle
 
         # tools/list — aggregate from all upstreams with namespaced tool names
         if method == "tools/list":
-            return JSONResponse(await aggregate_tools_list(app.state))
+            result = await aggregate_tools_list(app.state, auth_ctx)
+            result["id"] = jsonrpc_id
+            return JSONResponse(result)
 
         # tools/call — parse namespace, rewrite params.name to canonical, dispatch
         if method == "tools/call":
@@ -1564,7 +1611,7 @@ async def _run_proxy_pipeline(
     engine: PolicyEngine = state.engine
 
     if mode == PoliciesMode.observation:
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
         if isinstance(upstream_response, JSONResponse):
             return upstream_response
 
@@ -1617,7 +1664,7 @@ async def _run_proxy_pipeline(
     asyncio.create_task(_obs_events.fire_on_decision(decision, context))
 
     if mode == PoliciesMode.log_only:
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
 
         if decision.policy_id is None:
             tessera_decision_header = "no_match"
@@ -1667,7 +1714,7 @@ async def _run_proxy_pipeline(
 
     # enforcement mode
     if decision.action in (Action.allow, Action.log_only):
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
         if isinstance(upstream_response, JSONResponse):
             return upstream_response
 
@@ -1965,6 +2012,8 @@ async def _forward_upstream(
     upstream_name: str,
     body: dict[str, Any],
     jsonrpc_id: Any,
+    *,
+    session_scope: str = "default",
 ) -> dict[str, Any] | JSONResponse:
     """Forward a request to the named upstream. Returns parsed response dict or JSONResponse on error.
 
@@ -1997,7 +2046,7 @@ async def _forward_upstream(
                 return _jsonrpc_error(
                     jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
                 )
-            return await sh_client.forward(body)
+            return await sh_client.forward(body, session_scope=session_scope)
 
         case _:
             # Default bearer / httpx path
@@ -2063,8 +2112,10 @@ async def _handle_pass_through(
     request_id: str,
 ) -> Response:
     """Handle pass-through methods (tools/list, initialize, etc.)."""
-    upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id)
+    upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
     if isinstance(upstream_response, JSONResponse):
+        if "id" not in body:
+            upstream_response.status_code = 502
         return upstream_response
 
     method: str = body.get("method", "")
@@ -2099,6 +2150,10 @@ async def _handle_pass_through(
     )
     _inject_audit_id(upstream_response, audit_event["eventId"])
     _METRICS["requests_total{outcome=passthrough}"] += 1
+    if "id" not in body:
+        if "error" in upstream_response:
+            return JSONResponse(upstream_response, status_code=502)
+        return Response(status_code=202)
     return JSONResponse(upstream_response)
 
 

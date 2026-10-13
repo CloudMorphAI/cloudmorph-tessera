@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from tessera.errors import ConfigError
 
@@ -30,6 +30,15 @@ class ListenConfig(BaseModel):
     # in tessera.yaml or pass `--bind 0.0.0.0:8080` / set TESSERA_BIND_HOST=0.0.0.0.
     host: str = "127.0.0.1"
     port: int = 8080
+    # Browser origins outside loopback must be explicitly trusted. No Host-derived allowlist.
+    allowed_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _validate_origins(cls, values: list[str]) -> list[str]:
+        from tessera.mcp_http import canonical_origin
+
+        return list(dict.fromkeys(canonical_origin(value) for value in values))
 
 
 class ManagementPlaneConfig(BaseModel):
@@ -142,8 +151,8 @@ class UpstreamConfig(BaseModel):
     # session_timeout_s: idle-session TTL hint (seconds); default 300.
     # request_timeout_s: per-request HTTP timeout (seconds); default 10.
     auth_header: str | None = None
-    session_timeout_s: int = 300
-    request_timeout_s: int = 10
+    session_timeout_s: int = Field(default=300, gt=0)
+    request_timeout_s: int = Field(default=10, gt=0)
 
     @model_validator(mode="after")
     def _require_aws_region_for_aws_mcp(self) -> UpstreamConfig:
@@ -217,31 +226,26 @@ class TesseraConfig(BaseModel):
 
 
 def _interpolate_credentials(upstream_data: dict[str, Any]) -> dict[str, Any]:
-    """Resolve ${VAR} in credentials.value for a single upstream dict."""
-    creds = upstream_data.get("credentials")
-    if not creds or not isinstance(creds, dict):
-        return upstream_data
-
-    raw_value: str | None = creds.get("value")
-    if not raw_value or not isinstance(raw_value, str):
-        return upstream_data
-
+    """Resolve environment references without logging credential values."""
     name = upstream_data.get("name", "<unknown>")
+    result = dict(upstream_data)
 
-    def _replace(m: re.Match[str]) -> str:
-        var_name = m.group(1)
-        val = os.environ.get(var_name)
-        if val is None:
-            raise ConfigError(
-                f"env var {var_name!r} referenced in upstreams[{name}].credentials.value is not set"
-            )
-        return val
+    def resolve(raw: str, field: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            variable = match.group(1)
+            value = os.environ.get(variable)
+            if value is None:
+                raise ConfigError(f"env var {variable!r} referenced in upstreams[{name}].{field} is not set")
+            return value
 
-    resolved = _VAR_RE.sub(_replace, raw_value)
-    return {
-        **upstream_data,
-        "credentials": {**creds, "value": resolved},
-    }
+        return _VAR_RE.sub(replace, raw)
+
+    creds = upstream_data.get("credentials")
+    if isinstance(creds, dict) and isinstance(creds.get("value"), str):
+        result["credentials"] = {**creds, "value": resolve(creds["value"], "credentials.value")}
+    if isinstance(upstream_data.get("auth_header"), str):
+        result["auth_header"] = resolve(upstream_data["auth_header"], "auth_header")
+    return result
 
 
 # ---------------------------------------------------------------------------
