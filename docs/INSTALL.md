@@ -1,5 +1,11 @@
 # Installing Tessera v1.0.0
 
+**Staged release:** these versioned examples target the local 1.0.0 source.
+Publication of that wheel and container tag has not been verified by the
+13 October local release review. An unversioned `pip install` selects the
+published package, which may differ from this checkout. See the
+[current release review](../arch/status/packaging-and-release.md#current-local-review--13-october-2026).
+
 Docker is the recommended path for production. pip install is for local development, CI, and programmatic embedding.
 
 ---
@@ -135,9 +141,16 @@ tessera init   # pip install
 # Docker: docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:1.0.0 tessera init --dir /out
 ```
 
-Output files: `tessera.yaml` (mode: `log_only`), `policies/`, `.env.example`.
+Output files: `tessera.yaml` (mode: `log_only`), an **empty** `policies/`
+directory, and `.env.example`. Current `init` does not copy the bundled policies.
+Select, inspect and add policies for your actual tool names and argument shapes
+before enabling enforcement. Bundled schema acceptance alone does not establish
+that a rule matches your upstream's requests.
 
-**Edit upstream in `tessera.yaml`:** set `upstreams[0].url` to your MCP server URL. Add `credentials.header`/`credentials.value` if auth is required; use `${ENV_VAR}` interpolation for secrets.
+**Add an upstream in `tessera.yaml`:** the scaffold starts with `upstreams: []`.
+Add an entry with a `name` and your MCP server `url`, following
+[the configuration guide](CONFIGURATION.md). Add `credentials.header`/
+`credentials.value` if auth is required; use `${ENV_VAR}` interpolation for secrets.
 
 **Set bearer token:**
 
@@ -164,7 +177,11 @@ See [docs/INTEGRATIONS.md](./INTEGRATIONS.md) for Claude Code, Claude Desktop, a
 
 **Verify audit log:** `docker exec tessera tessera audit verify` — shows `status: ok` and event count.
 
-**Switch to enforcement** when ready: set `policies.mode: enforcement` in `tessera.yaml`, then `docker restart tessera`.
+**Switch to enforcement** after checking configured allow/block decisions:
+set `policies.mode: enforcement` in `tessera.yaml`, then `docker restart tessera`.
+The scaffold uses `default_action: block`; an empty policy directory therefore
+blocks every evaluated tool call in enforcement mode. In `log_only`, decisions
+are recorded but calls are forwarded.
 
 ---
 

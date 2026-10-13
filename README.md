@@ -13,6 +13,12 @@
 
 ## Repository role and current maintenance
 
+The local source targets **1.0.0**. This is a staged release, with acceptance
+work still open; the versioned install examples below describe that target.
+A local wheel build does not establish PyPI or container publication. See
+[the release review](arch/status/packaging-and-release.md#current-local-review--13-october-2026)
+for current evidence and outstanding gates.
+
 This is the public customer-installed Python runtime, CLI, policy engine and MCP
 proxy. Premium authored content belongs in the sibling `tessera-intelligence/`
 repository. The application monorepo's `tessera-cloud-wrapper/` is an optional

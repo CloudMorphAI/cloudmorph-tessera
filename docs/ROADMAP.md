@@ -3,8 +3,10 @@
 This document describes the current feature state and planned work for the OSS
 distribution. It is updated on each minor release.
 
-Current stable: **v1.0.0** — API surface frozen, Semantic Versioning in effect.
-Publication status: v1.0.0 is staged (code complete) but **not yet published to PyPI** — the latest published release is v0.9.0 (2026-06-11).
+Current source target: **v1.0.0**, staged for review. Acceptance and publication
+are separate gates; see the [13 October release review](../arch/status/packaging-and-release.md#current-local-review--13-october-2026).
+The changelog records v0.9.0 as the last published release known to these docs.
+Remote registry status was not reverified by the local review.
 Next milestone: **v1.1.0** (planned — post-GA improvements; see plan/1.1.0/ in the workspace).
 
 Where a version is listed the feature is on the roadmap. Where it says

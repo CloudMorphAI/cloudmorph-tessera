@@ -1,5 +1,40 @@
 # Packaging and Release
 
+## Current local review — 13 October 2026
+
+CM-033 reviewed runtime main `4262ff9` plus the existing working changes.
+Local `pyproject.toml` and the development fallback target **1.0.0**. This
+review does not establish a published release or complete release acceptance.
+
+- An offline wheel build from a temporary source copy succeeded. Wheel metadata
+  reports 1.0.0; all 32 bundled YAML policies and both Ed25519 public trust-anchor
+  files are present. The runtime loader accepts all 32 policies.
+- The wheel includes the locally modified `tessera/demo.py` and the two currently
+  untracked GitHub/Postgres policies. This is private review output, not a release
+  artifact. CM-036 must reconcile intended source before release packaging.
+- Actual `tessera init` execution creates an empty policy directory, a log-only
+  config with default block, and no upstreams. It does not copy bundled policies.
+  The install guide now describes this behavior; CM-055 tracks the scaffold
+  contract repair. Do not activate every illustrative policy automatically.
+- In an isolated existing-engine check, the bundled GitHub guard blocks
+  `mcp__github__delete_branch` for branch `main` but does not match native
+  `delete_branch`. That request takes the configured default action: allow with
+  default allow, block with default block. This finding concerns that guard,
+  not every policy or an exercised real GitHub server. CM-049 owns the selected
+  vendor/native-tool repair and argument acceptance.
+- Named-client/version transcripts remain pending in CM-037. Existing synthetic
+  transport evidence does not establish desktop-client compatibility.
+
+Evidence is in the workspace maintenance audit under `private/cm033/`:
+`review.json`, wheel-build log and private wheel. No source files changed during
+verification; no demo/cloud call, publication, signing or push occurred.
+
+## Historical distribution snapshot
+
+The remainder records earlier release arrangements and historical observations.
+Its version/image/live-service statements are not current deployment evidence.
+Use the current review above and the monorepo wrapper status for present scope.
+
 The distribution architecture. How source becomes a PyPI wheel, a GHCR multi-arch container image, and an ECR-mirrored image consumable by the Fargate stack in `cloudmorph-mono-repo`. Plus the schema contracts that bound what the package consumes and emits.
 
 ## Distribution targets
