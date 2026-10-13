@@ -1886,10 +1886,16 @@ def _get_or_create_emitter(state: Any, scope: str) -> AuditEmitter:
 
         sinks.append(StdoutSink())
 
+    def _on_sink_failure(_sink_name: str, _exc: Exception) -> None:
+        _METRICS["audit_emit_failures_total"] += 1
+        # Exception text can contain sensitive sink/request data.
+        logger.error("event=audit_sink_failed")
+
     emitter = AuditEmitter(
         tenant_id=scope,
         sinks=sinks,
         hash_chain=hash_chain,
+        on_sink_failure=_on_sink_failure,
     )
     emitter_map[scope] = emitter
     return emitter
@@ -1908,6 +1914,18 @@ def _emit(state: Any, scope: str, event_type: str, payload: dict[str, Any]) -> d
     TESSERA_AUDIT_SYNC=1 env var restores fully synchronous behaviour for
     tests that need deterministic ordering and immediate persistence.
     """
+    if state.config.audit.payload_mode == "minimal":
+        retained = {
+            "mode", "decision", "would_decision", "policy_id", "upstream",
+            "principal_id", "request_id", "canonical_tool_name",
+            "effective_tool_name", "method", "cost_source", "cost_band",
+        }
+        minimal = {key: value for key, value in payload.items() if key in retained}
+        tool_call = payload.get("tool_call")
+        if isinstance(tool_call, dict):
+            minimal["tool_call"] = {"name": tool_call.get("name")}
+        minimal["audit_payload_mode"] = "minimal"
+        payload = minimal
     emitter = _get_or_create_emitter(state, scope)
     event_id = AuditEmitter._new_event_id()
 
@@ -1923,7 +1941,7 @@ def _emit(state: Any, scope: str, event_type: str, payload: dict[str, Any]) -> d
                 pricing_snapshot_id=_pricing_snapshot_id,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.error("event=audit_emit_failed scope=%s error=%s", scope, exc)
+            logger.error("event=audit_emit_failed error_type=%s", type(exc).__name__)
             _METRICS["audit_emit_failures_total"] += 1
             return {"eventId": f"evt_failed_{uuid.uuid4().hex[:10]}"}
 
@@ -2220,6 +2238,9 @@ def _build_metrics_response() -> Response:
         "# HELP tessera_audit_emit_failures_total Audit emit failures",
         "# TYPE tessera_audit_emit_failures_total counter",
         f"tessera_audit_emit_failures_total {_METRICS.get('audit_emit_failures_total', 0)}",
+        "# HELP tessera_audit_emit_dropped_total Audit events dropped before persistence",
+        "# TYPE tessera_audit_emit_dropped_total counter",
+        f"tessera_audit_emit_dropped_total {_METRICS.get('audit_emit_dropped_total', 0)}",
     ]
     return Response(
         content="\n".join(lines) + "\n",

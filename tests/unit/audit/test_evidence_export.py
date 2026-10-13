@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from typer.testing import CliRunner
 
 from tessera.audit.canonical_json import canonical_json
@@ -26,9 +27,10 @@ from tessera.audit.export import (
     load_compliance_mappings,
     parse_ts,
     render_summary_html,
+    signing_payload,
     summarize_events,
 )
-from tessera.audit.signing import load_or_create_signing_key, public_key_pem
+from tessera.audit.signing import load_or_create_signing_key, public_key_pem, sign
 from tessera.audit.sinks.sqlite import SqliteSink
 from tessera.audit.verifier import verify_bundle_dir, verify_events_file
 from tessera.cli import app
@@ -303,8 +305,70 @@ def test_verify_bundle_dir_ok(tmp_path: Path, signing_key_path: Path) -> None:
     result = verify_bundle_dir(out_dir)
     assert result["ok"] is True
     assert result["signature_ok"] is True
+    assert result["signature_trusted"] is False
     assert result["first_failure"] is None
     assert result["events_checked"] == 8
+
+
+def test_verify_bundle_dir_trusts_only_matching_external_key(
+    tmp_path: Path, signing_key_path: Path
+) -> None:
+    out_dir = _make_bundle(tmp_path)
+    trusted_pem = public_key_pem(load_or_create_signing_key(signing_key_path))
+    trusted = verify_bundle_dir(out_dir, trusted_public_key_pem=trusted_pem)
+    assert trusted["ok"] is True
+    assert trusted["signature_ok"] is True
+    assert trusted["signature_trusted"] is True
+
+    other_key_path = tmp_path / "keys" / "other.pem"
+    other_pem = public_key_pem(load_or_create_signing_key(other_key_path))
+    untrusted = verify_bundle_dir(out_dir, trusted_public_key_pem=other_pem)
+    assert untrusted["signature_ok"] is True
+    assert untrusted["signature_trusted"] is False
+    assert untrusted["ok"] is False
+    assert untrusted["first_failure"]["kind"] == "signer_untrusted"
+
+
+def test_verify_bundle_dir_rejects_malformed_trusted_key(
+    tmp_path: Path, signing_key_path: Path
+) -> None:
+    out_dir = _make_bundle(tmp_path)
+    result = verify_bundle_dir(out_dir, trusted_public_key_pem="not a PEM public key")
+    assert result["ok"] is False
+    assert result["signature_trusted"] is False
+    assert result["first_failure"]["kind"] == "trusted_key_invalid"
+
+
+def test_self_resigned_bundle_is_integrity_valid_but_untrusted(
+    tmp_path: Path, signing_key_path: Path
+) -> None:
+    out_dir = _make_bundle(tmp_path)
+    manifest_path = out_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    attacker_key = Ed25519PrivateKey.generate()
+    manifest["signing"]["public_key_pem"] = public_key_pem(attacker_key)
+    manifest["signing"]["signature"] = sign(
+        attacker_key,
+        signing_payload(
+            scope=manifest["scope"],
+            from_ts=manifest["range"]["from"],
+            to_ts=manifest["range"]["to"],
+            event_counts=manifest["event_counts"],
+            chain=manifest["chain"],
+        ),
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    self_signed = verify_bundle_dir(out_dir)
+    assert self_signed["ok"] is True
+    assert self_signed["signature_ok"] is True
+    assert self_signed["signature_trusted"] is False
+
+    original_pem = public_key_pem(load_or_create_signing_key(signing_key_path))
+    anchored = verify_bundle_dir(out_dir, trusted_public_key_pem=original_pem)
+    assert anchored["ok"] is False
+    assert anchored["signature_trusted"] is False
+    assert anchored["first_failure"]["kind"] == "signer_untrusted"
 
 
 def test_verify_bundle_dir_detects_single_byte_tamper_at_correct_index(
@@ -577,6 +641,36 @@ def test_cli_audit_export_out_and_verify_dir(tmp_path: Path, signing_key_path: P
     assert verify_result.exit_code == 0, verify_result.output
     assert "status=ok" in verify_result.output
     assert "signature: ok" in verify_result.output
+    assert "signature integrity: valid (self-supplied key; untrusted)" in verify_result.output
+    assert "signer trust: untrusted" in verify_result.output
+
+    trusted_key_path = tmp_path / "trusted-public-key.pem"
+    trusted_key_path.write_text(
+        public_key_pem(load_or_create_signing_key(signing_key_path)), encoding="ascii"
+    )
+    anchored_result = runner.invoke(
+        app,
+        ["audit", "verify", "--dir", str(out_dir), "--trusted-key", str(trusted_key_path)],
+    )
+    assert anchored_result.exit_code == 0, anchored_result.output
+    assert "signer trust: trusted" in anchored_result.output
+    json_result = runner.invoke(
+        app,
+        [
+            "audit", "verify", "--dir", str(out_dir), "--trusted-key",
+            str(trusted_key_path), "--json",
+        ],
+    )
+    assert json_result.exit_code == 0, json_result.output
+    assert json.loads(json_result.output)["signature_trusted"] is True
+
+
+def test_cli_trusted_key_requires_bundle_dir(tmp_path: Path) -> None:
+    key_path = tmp_path / "trusted-public-key.pem"
+    key_path.write_text("not used", encoding="ascii")
+    result = runner.invoke(app, ["audit", "verify", "--trusted-key", str(key_path)])
+    assert result.exit_code == 2
+    assert "--trusted-key requires --dir" in result.output
 
 
 def test_cli_audit_verify_dir_tampered_nonzero_exit(tmp_path: Path, signing_key_path: Path) -> None:

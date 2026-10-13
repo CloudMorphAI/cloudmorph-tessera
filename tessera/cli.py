@@ -146,6 +146,7 @@ def _run_audit_verify(
     json_output: bool,
     file: str | None = None,
     dir_: str | None = None,
+    trusted_key: str | None = None,
 ) -> None:
     """Shared implementation for `audit verify` and `audit verify-chain`.
 
@@ -157,10 +158,26 @@ def _run_audit_verify(
         typer.echo("Pass only one of --file or --dir, not both.", err=True)
         raise typer.Exit(2)
 
+    if trusted_key and not dir_:
+        typer.echo("--trusted-key requires --dir.", err=True)
+        raise typer.Exit(2)
+
     if file or dir_:
         from tessera.audit.verifier import verify_bundle_dir, verify_events_file
 
-        result = verify_bundle_dir(dir_) if dir_ else verify_events_file(file)  # type: ignore[arg-type]
+        if dir_:
+            trusted_public_key_pem = None
+            if trusted_key:
+                try:
+                    trusted_public_key_pem = Path(trusted_key).read_text(encoding="ascii")
+                except (OSError, UnicodeError) as exc:
+                    typer.echo(f"Could not read trusted public key: {exc}", err=True)
+                    raise typer.Exit(2) from exc
+            result = verify_bundle_dir(
+                dir_, trusted_public_key_pem=trusted_public_key_pem
+            )
+        else:
+            result = verify_events_file(file)  # type: ignore[arg-type]
 
         if json_output:
             typer.echo(json.dumps(result))
@@ -171,6 +188,15 @@ def _run_audit_verify(
             )
             if result.get("signature_ok") is not None:
                 typer.echo(f"  signature: {'ok' if result['signature_ok'] else 'FAILED'}")
+                if result.get("signature_trusted") is not None:
+                    if trusted_key:
+                        trust_label = "trusted" if result["signature_trusted"] else "untrusted"
+                        typer.echo(f"  signer trust: {trust_label}")
+                    elif result["signature_ok"]:
+                        typer.echo("  signature integrity: valid (self-supplied key; untrusted)")
+                        typer.echo("  signer trust: untrusted")
+                    else:
+                        typer.echo("  signature integrity: invalid")
             if result.get("first_event_at"):
                 typer.echo(f"  first event: {result['first_event_at']}")
             if result.get("last_event_at"):
@@ -264,6 +290,11 @@ def audit_verify(
         help="Verify an evidence bundle directory (events.jsonl + manifest.json): "
         "chain AND Ed25519 signature, fully offline.",
     ),
+    trusted_key: str = typer.Option(
+        None,
+        "--trusted-key",
+        help="Trusted Ed25519 public-key PEM path; requires --dir to anchor signer identity.",
+    ),
 ) -> None:
     """Verify the audit hash chain integrity.
 
@@ -272,7 +303,10 @@ def audit_verify(
     exit code 0 on success, non-zero (CI-friendly) reporting the first broken
     event on hash/chain/signature failure.
     """
-    _run_audit_verify(audit_path, scope, all_scopes, json_output, file=file, dir_=dir_)
+    _run_audit_verify(
+        audit_path, scope, all_scopes, json_output,
+        file=file, dir_=dir_, trusted_key=trusted_key,
+    )
 
 
 # ---------------------------------------------------------------------------

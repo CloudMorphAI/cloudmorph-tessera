@@ -77,6 +77,9 @@ class AuditConfig(BaseModel):
     sink: str = "sqlite"
     path: str = "/var/lib/tessera/audit.db"
     also_stdout: bool = False
+    # Full retains raw arguments/context for backward compatibility. Use minimal
+    # for decision metadata only; this does not rewrite existing stored events.
+    payload_mode: Literal["full", "minimal"] = "full"
     # When True, emit a passthrough_data_leak_candidate audit event for the 5
     # data-exfil-risk pass-through methods (prompts/get, resources/read, etc.)
     # in addition to the normal passthrough event. Default on; set False if noisy.

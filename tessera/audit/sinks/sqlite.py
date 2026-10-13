@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -11,6 +13,28 @@ from typing import Any
 
 from tessera.audit.sinks.base import AuditSink  # noqa: F401 (for isinstance checks)
 from tessera.errors import AuditSinkError
+
+logger = logging.getLogger(__name__)
+
+
+def _private_file(path: str, *, create: bool = False) -> None:
+    """Restrict POSIX audit files before SQLite can write sensitive payloads."""
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileNotFoundError:
+        if not create:
+            return
+        raise
+    try:
+        os.fchmod(fd, 0o600)
+        if os.fstat(fd).st_mode & 0o077:
+            # Some mounted filesystems ignore chmod. Do not imply enforcement.
+            logger.warning("event=audit_file_permissions_unenforced platform=posix")
+    finally:
+        os.close(fd)
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -69,6 +93,10 @@ class SqliteSink:
     name: str = "sqlite"
 
     def __init__(self, path: str | Path = "/var/lib/tessera/audit.db") -> None:
+        if os.name == "posix" and str(path) != ":memory:":
+            _private_file(str(path), create=True)
+            for suffix in ("-wal", "-shm"):
+                _private_file(str(path) + suffix)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")

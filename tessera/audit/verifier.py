@@ -21,6 +21,9 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from tessera.audit.chain import HashChain
 from tessera.audit.export import signing_payload, summarize_events
 from tessera.audit.signing import verify as verify_signature
@@ -136,7 +139,25 @@ def verify_events_file(path: str | Path) -> dict[str, Any]:
     return {"source": str(p), **result}
 
 
-def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
+def _public_key_identity(pem: str) -> bytes | None:
+    """Return canonical DER identity for an Ed25519 public key, if valid."""
+    try:
+        key = serialization.load_pem_public_key(pem.encode("ascii"))
+    except Exception:  # noqa: BLE001 — malformed key material is a verification result
+        return None
+    if not isinstance(key, Ed25519PublicKey):
+        return None
+    return key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def verify_bundle_dir(
+    dir_path: str | Path,
+    *,
+    trusted_public_key_pem: str | None = None,
+) -> dict[str, Any]:
     """Verify a full evidence bundle: events.jsonl chain + manifest.json Ed25519 signature.
 
     The signature is checked against a signing payload *recomputed from
@@ -147,6 +168,10 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
 
     Returns the same shape as `verify_chain`/`verify_events_file` plus:
         "signature_ok": True | False | None   (None if no manifest.json present)
+        "signature_trusted": True only when the signature verifies and the
+            embedded Ed25519 key matches `trusted_public_key_pem`; False when
+            a signature is present but no trusted anchor is supplied or trust
+            fails; None when no manifest is present and no anchor is requested.
     If the signature is invalid but the chain itself is intact, `ok` is
     forced to False and `first_failure` is set to a `signature_invalid` entry
     (chain breaks, if any, still take priority as the "first" failure).
@@ -154,6 +179,29 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
     d = Path(dir_path)
     events_path = d / "events.jsonl"
     manifest_path = d / "manifest.json"
+    trusted_identity = (
+        _public_key_identity(trusted_public_key_pem)
+        if trusted_public_key_pem is not None
+        else None
+    )
+    if trusted_public_key_pem is not None and trusted_identity is None:
+        return {
+            "source": str(d),
+            "events_checked": 0,
+            "first_event_at": None,
+            "last_event_at": None,
+            "ok": False,
+            "first_failure": {
+                "seq": None,
+                "event_id": "",
+                "kind": "trusted_key_invalid",
+                "expected_event_hash": "",
+                "computed_event_hash": "",
+            },
+            "signature_ok": None,
+            "signature_trusted": False,
+            "manifest_consistent": None,
+        }
 
     if not events_path.exists():
         return {
@@ -170,13 +218,16 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
                 "computed_event_hash": "",
             },
             "signature_ok": None,
+            "signature_trusted": None,
         }
 
     result = _walk_chain(_iter_jsonl(events_path))
     result["source"] = str(d)
 
     signature_ok: bool | None = None
+    signature_trusted: bool | None = None
     manifest_consistent: bool | None = None
+    trusted_key_matches = False
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -226,6 +277,12 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
             signature_ok = bool(public_key_pem and signature) and verify_signature(
                 public_key_pem, payload_bytes, signature
             )
+            signature_trusted = False
+            if trusted_public_key_pem is not None:
+                embedded_identity = _public_key_identity(public_key_pem)
+                if embedded_identity is not None:
+                    trusted_key_matches = trusted_identity == embedded_identity
+                    signature_trusted = bool(signature_ok and trusted_key_matches)
 
             # Separate check: does manifest.json's own *displayed*
             # event_counts/chain match what events.jsonl actually contains?
@@ -252,6 +309,18 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
                         "computed_event_hash": "",
                     },
                 }
+            elif trusted_public_key_pem is not None and not trusted_key_matches:
+                result = {
+                    **result,
+                    "ok": False,
+                    "first_failure": {
+                        "seq": None,
+                        "event_id": "",
+                        "kind": "signer_untrusted",
+                        "expected_event_hash": "",
+                        "computed_event_hash": "",
+                    },
+                }
             elif not manifest_consistent:
                 result = {
                     **result,
@@ -265,6 +334,21 @@ def verify_bundle_dir(dir_path: str | Path) -> dict[str, Any]:
                     },
                 }
 
+    elif trusted_public_key_pem is not None:
+        signature_trusted = False
+        result = {
+            **result,
+            "ok": False,
+            "first_failure": {
+                "seq": None,
+                "event_id": "",
+                "kind": "signature_missing",
+                "expected_event_hash": "",
+                "computed_event_hash": "",
+            },
+        }
+
     result["signature_ok"] = signature_ok
+    result["signature_trusted"] = signature_trusted
     result["manifest_consistent"] = manifest_consistent
     return result
