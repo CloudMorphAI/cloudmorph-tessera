@@ -141,11 +141,18 @@ tessera init   # pip install
 # Docker: docker run --rm -v "$PWD:/out" ghcr.io/cloudmorphai/tessera:1.0.0 tessera init --dir /out
 ```
 
-Output files: `tessera.yaml` (mode: `log_only`), an **empty** `policies/`
-directory, and `.env.example`. Current `init` does not copy the bundled policies.
-Select, inspect and add policies for your actual tool names and argument shapes
-before enabling enforcement. Bundled schema acceptance alone does not establish
-that a rule matches your upstream's requests.
+Output files: `tessera.yaml` (mode: `log_only`), `.env.example`, and a `policies/`
+directory with two selected bundled guards: `secret-leak-block.yaml` and
+`prompt-injection-heuristic.yaml`. The latter is a heuristic and can flag
+legitimate text discussing injection patterns. Other illustrative/vendor/cost
+policies are not automatically activated. Inspect and add policies for your actual
+tool names and argument shapes before enabling enforcement. Bundled schema
+acceptance alone does not establish that a rule matches your upstream's requests.
+
+An existing policy directory is left unchanged unless `--force` is supplied.
+With `--force`, the two selected starter files are overwritten; unrelated policy
+files are retained. Existing configuration and `.env.example` are also overwritten
+only with `--force`.
 
 **Add an upstream in `tessera.yaml`:** the scaffold starts with `upstreams: []`.
 Add an entry with a `name` and your MCP server `url`, following
@@ -179,9 +186,10 @@ See [docs/INTEGRATIONS.md](./INTEGRATIONS.md) for Claude Code, Claude Desktop, a
 
 **Switch to enforcement** after checking configured allow/block decisions:
 set `policies.mode: enforcement` in `tessera.yaml`, then `docker restart tessera`.
-The scaffold uses `default_action: block`; an empty policy directory therefore
-blocks every evaluated tool call in enforcement mode. In `log_only`, decisions
-are recorded but calls are forwarded.
+The scaffold uses `default_action: block`; the two starter guards add no allow
+rules, so unapproved calls also block in enforcement mode. Add narrow allow rules
+for the operations you intend to permit and verify both outcomes. In `log_only`,
+decisions are recorded but calls are forwarded.
 
 ---
 

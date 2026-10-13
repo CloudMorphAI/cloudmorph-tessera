@@ -769,12 +769,25 @@ _ENV_EXAMPLE = """\
 """
 
 
+_STARTER_POLICY_FILES = (
+    "secret-leak-block.yaml",
+    "prompt-injection-heuristic.yaml",
+)
+
+
 @app.command()
 def init(
     target_dir: str = typer.Option(".", "--dir"),
     force: bool = typer.Option(False, "--force"),
 ) -> None:
-    """Scaffold starter tessera.yaml, policies/, and .env.example."""
+    """Scaffold a log-only config and two general-purpose reference guards."""
+    from importlib.resources import files
+
+    bundled = files("tessera.policies_default")
+    starter_policies = {
+        name: bundled.joinpath(name).read_text(encoding="utf-8")
+        for name in _STARTER_POLICY_FILES
+    }
     base = Path(target_dir)
     base.mkdir(parents=True, exist_ok=True)
 
@@ -795,14 +808,23 @@ def init(
     _write_if_allowed(tessera_yaml, _TESSERA_YAML_TEMPLATE)
     _write_if_allowed(env_example, _ENV_EXAMPLE)
 
+    copy_starters = force or not policies_dir.exists()
     if not policies_dir.exists():
         policies_dir.mkdir(parents=True, exist_ok=True)
         typer.echo(f"Created: {policies_dir}/")
     elif not force:
         typer.echo(f"Skipping existing directory: {policies_dir}/")
 
+    if copy_starters:
+        for name, content in starter_policies.items():
+            _write_if_allowed(policies_dir / name, content)
+
     if skipped:
         typer.echo(f"\n{len(skipped)} file(s) skipped. Re-run with --force to overwrite.")
+    typer.echo(
+        "Starter configuration uses log_only: decisions are logged and calls are forwarded. "
+        "Review policies and configure upstreams before enabling enforcement."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1520,7 +1542,7 @@ def audit_emit(
     event = {
         "seq":         next_seq,
         "event_id":    _uuid.uuid4().hex,
-        "occurred_at": _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "occurred_at": _dt.datetime.now(tz=_dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "head_hash":   "",
         "payload": {
             "tool":      tool,
@@ -1659,7 +1681,6 @@ def login(
     import http.server
     import secrets
     import socket
-    import threading
     import time
     import urllib.parse
     import webbrowser

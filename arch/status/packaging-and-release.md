@@ -29,6 +29,16 @@ Evidence is in the workspace maintenance audit under `private/cm033/`:
 `review.json`, wheel-build log and private wheel. No source files changed during
 verification; no demo/cloud call, publication, signing or push occurred.
 
+### CM-055 starter repair
+
+The subsequent local source repair selects exactly `secret-leak-block.yaml` and
+`prompt-injection-heuristic.yaml` for new `init` scaffolds. Existing policy
+directories are preserved unless `--force` is explicit; force replaces only the
+selected starter policies and retains unrelated files. Mode remains log-only,
+default action remains block and upstream configuration remains empty. Users
+must configure and verify their intended allow rules before enforcing. The
+CM-033 empty-directory observation above records the pre-repair behavior.
+
 ## Historical distribution snapshot
 
 The remainder records earlier release arrangements and historical observations.
