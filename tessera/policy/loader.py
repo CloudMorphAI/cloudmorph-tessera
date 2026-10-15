@@ -17,6 +17,7 @@ from tessera.policy.schema import (
     AnyOf,
     ArgContainsPattern,
     ArgMatchesRegex,
+    ArgPathMatchesRegex,
     IntentPurposeMatches,
     NoneOf,
     Policy,
@@ -89,7 +90,7 @@ def _compile_regex_fields(policy: Policy) -> None:
 def _compile_conditions(conditions: list[Any]) -> None:
     """Recursively validate and store compiled regex on pattern-bearing conditions."""
     for cond in conditions:
-        if isinstance(cond, (ArgMatchesRegex, ArgContainsPattern, IntentPurposeMatches)):
+        if isinstance(cond, (ArgMatchesRegex, ArgContainsPattern, ArgPathMatchesRegex, IntentPurposeMatches)):
             compiled = validate_pattern(cond.pattern)
             cond.compiled_regex = compiled
         elif isinstance(cond, (AnyOf, NoneOf)):
