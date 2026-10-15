@@ -139,6 +139,80 @@ def test_valid_entra_jwt(test_jwk):
 
 
 @respx.mock
+def test_valid_rs256_jwk_without_optional_alg_metadata(test_jwk):
+    """A valid RSA JWK may omit its optional alg member."""
+    private_pem, public_jwk = test_jwk
+    public_jwk = {key: value for key, value in public_jwk.items() if key != "alg"}
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _sign(private_pem, claims)
+
+    ctx = _make_authenticator().authenticate(_req(token))
+
+    assert ctx.principal_id == "synthetic-user"
+    assert jwks_route.call_count == 1
+
+
+@respx.mock
+def test_tampered_rs256_signature_is_rejected(test_jwk):
+    """An allowed algorithm does not make a modified signature acceptable."""
+    private_pem, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    parts = _sign(private_pem, claims).split(".")
+    parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+    token = ".".join(parts)
+
+    with pytest.raises(UnauthorizedError, match="JWT validation failed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"typ": "JWT", "kid": _KID},
+        {"alg": [], "typ": "JWT", "kid": _KID},
+    ],
+    ids=["missing-alg", "malformed-alg"],
+)
+@respx.mock
+def test_missing_or_malformed_alg_is_rejected_before_jwks_fetch(test_jwk, header):
+    """A missing or non-string alg is rejected before any JWKS request."""
+    _, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _compact_token(header, claims)
+
+    with pytest.raises(UnauthorizedError, match="JWT algorithm is not allowed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 0
+
+
+@respx.mock
 def test_jwk_algorithm_mismatch_is_rejected(test_jwk):
     """A key's trusted alg metadata must agree with the signed JWT header."""
     private_pem, public_jwk = test_jwk

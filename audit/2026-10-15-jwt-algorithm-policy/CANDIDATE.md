@@ -1,9 +1,11 @@
 # JWT algorithm allow-list candidate
 
-Status: local review candidate only. This branch is based on `origin/main` at
-`abc838992cac4139e5ee6d539efe920b1be62254`. It is not pushed, merged, released,
-signed, deployed, or evaluated against production configuration. Final security
-and founder review is required before rollout.
+Status: local review candidate only. The isolated branch was created from
+`origin/main` at `abc838992cac4139e5ee6d539efe920b1be62254`. The requester later
+confirmed remote main at `aeb82fea191781f5fa9e1de33311137d036e4d99`; this candidate
+remains based on `abc8389` and was not rebased. Integration is left to Arjun. It
+is not pushed, merged, released, signed, deployed, or evaluated against production
+configuration. Final security and founder review is required before rollout.
 
 ## Threat hypothesis
 
@@ -69,9 +71,10 @@ certification.
 
 The approved WSL environment reports `python-jose` 3.5.0 and PyJWT 2.13.0.
 `/home/sainath/tessera-test-venv/bin/python -m pytest -q
-tests/unit/auth/test_jwt_mcp.py tests/unit/auth/test_oidc.py` passed: **22 passed
-in 1.79s**. This includes valid RS256/RS512/ES256 tokens, existing issuer,
-audience, expiry and OIDC auth cases, plus rejection of `none`, HMAC, JWK
-algorithm mismatch, and JWK key-family mismatch. Ruff and `git diff --check`
-passed. No cloud call, external endpoint, image scan, release operation, or
-deployment was attempted.
+tests/unit/auth/test_jwt_mcp.py tests/unit/auth/test_oidc.py` passed: **26 passed
+in 1.97s**. This includes valid RS256/RS512/ES256 tokens, a valid JWK without
+optional `alg`, existing issuer/audience/expiry and OIDC auth cases, plus
+rejection of `none`, HMAC, tampered signatures, JWK algorithm/key-family
+mismatches, and missing/malformed header `alg` before JWKS fetch. Ruff and
+`git diff --check` passed. No cloud call, external endpoint, image scan, release
+operation, or deployment was attempted.
