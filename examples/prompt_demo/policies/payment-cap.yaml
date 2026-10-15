@@ -1,0 +1,12 @@
+id: demo-vendor-payment-cap
+name: Synthetic vendor payment cap
+match:
+  upstream: demo
+  tool: pay_vendor
+when:
+  - condition: arg_greater_than
+    arg: amount_rupees
+    value: 150000
+action: block
+reason: "Synthetic vendor payment exceeds the INR 150,000 per-action limit"
+priority: 100

@@ -1,0 +1,16 @@
+id: demo-known-tools-allow
+name: Allow validated synthetic demo tools
+match:
+  upstream: demo
+  tool: "*"
+when:
+  - condition: tool_name_in
+    values:
+      - list_dir
+      - read_file
+      - mcp__github__force_push
+      - query
+      - pay_vendor
+action: allow
+reason: "Validated synthetic tool permitted by the demo allowlist"
+priority: 0
