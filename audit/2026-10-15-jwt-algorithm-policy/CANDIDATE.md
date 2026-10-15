@@ -1,5 +1,25 @@
 # JWT algorithm allow-list candidate
 
+## Current-base integration - 15 October 2026
+
+Arjun/Bheem integrated the two original commits onto current main
+`aeb82fea191781f5fa9e1de33311137d036e4d99`, preserving the base-image refresh.
+Local cherry-picks: `0df191e` and `7cfad00`. The original candidate worktree and
+receipts remain unchanged. Current-source import was explicitly verified before
+rerunning the same focused suite in the existing isolated WSL environment:
+Python 3.12.3, python-jose 3.5.0; **26 passed in 2.72 seconds**. Ruff and Git
+whitespace checks pass. The first native environment attempt lacked python-jose
+and stopped at collection; it is not counted as a product failure or test pass.
+
+Drona independently found no concrete introduced blocker and cleared focused
+DRAFT publication. No auth merge, deployment, production configuration or live
+issuer compatibility is accepted. The separate conditional introspection/PyJWT
+finding is unchanged; the inspected AWS gateway did not expose that route.
+No cloud/provider request, real credential, signing key, or token was used.
+Individual RS384/ES384/ES512 cases and live providers remain untested here.
+
+## Preserved original candidate receipt
+
 Status: local review candidate only. The isolated branch was created from
 `origin/main` at `abc838992cac4139e5ee6d539efe920b1be62254`. The requester later
 confirmed remote main at `aeb82fea191781f5fa9e1de33311137d036e4d99`; this candidate
