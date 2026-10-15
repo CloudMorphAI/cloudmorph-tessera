@@ -1,0 +1,25 @@
+# Synthetic Hermes CRM demonstration policy.
+# This file carries the deny rule; the current loader accepts one policy per
+# YAML file. The paired note/read allow policies are modeled in the feasibility
+# proof and temporary proxy fixture, with default_action=block.
+#
+# arg_path_matches_regex reads the parsed leaf at the named dot path. Keep these
+# conditions on scalar strings: the current condition stringifies leaf values,
+# so this is a bounded string-value rule rather than general typed field ACLs.
+# The current loader also skips this condition type during regex precompile and
+# safety validation; these patterns are deliberately simple and anchored.
+# Higher priority ensures a mixed call_notes + paid billing_status update is
+# denied before the call_notes allow rule can match.
+id: hermes-crm-block-paid-billing
+name: Block paid billing status updates
+description: Deny update_contact when the parsed billing_status leaf is paid.
+match:
+  upstream: crm
+  tool: crm.update_contact
+when:
+  - condition: arg_path_matches_regex
+    arg_path: fields.billing_status
+    pattern: '^paid$'
+action: block
+reason: paid_billing_status_is_not_allowed
+priority: 100
