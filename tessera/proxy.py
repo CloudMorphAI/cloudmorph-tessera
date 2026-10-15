@@ -39,9 +39,10 @@ from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
 from tessera.mcp_http import (
+    AUDIT_ID_HEADER,
     MODERN_PROTOCOL_VERSION,
+    adapt_modern_http_response,
     local_lifecycle_response,
-    modernize_http_response,
     read_message,
     validate_http_headers,
     validate_modern_request,
@@ -372,26 +373,49 @@ def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
     """
     result = body.get("result")
     error = body.get("error")
-    if isinstance(result, dict):
-        meta = result.get("_meta")
-        if meta is None:
-            meta = {}
-            result["_meta"] = meta
-        if isinstance(meta, dict):
-            meta["tessera_audit_event_id"] = event_id
+    if "result" in body and "error" in body:
+        target = {"_meta": False}  # ambiguous upstream envelope
+    elif isinstance(result, dict):
+        target = result
     elif isinstance(error, dict):
         data = error.setdefault("data", {})
-        if isinstance(data, dict):
-            meta = data.get("_meta")
-            if meta is None:
-                meta = {}
-                data["_meta"] = meta
-            if isinstance(meta, dict):
-                meta["tessera_audit_event_id"] = event_id
-        # If error.data is set to a non-dict, skip rather than overwrite it.
-    # If body has neither result nor error (shouldn't happen for valid JSON-RPC),
-    # we drop the audit_id rather than break the response shape.
+        if not isinstance(data, dict):
+            # JSON-RPC permits arbitrary error data. Keep its legacy shape;
+            # _audited_upstream_response carries the trusted ID in a header.
+            return body
+        target = data
+    else:
+        target = {"_meta": False}  # invalid upstream result/error envelope
+    if "_meta" in target and not isinstance(target["_meta"], dict):
+        rpc_id = body.get("id")
+        body.clear()
+        body.update({
+            "jsonrpc": "2.0", "id": rpc_id,
+            "error": {
+                "code": -32603, "message": "Invalid upstream response metadata",
+                "data": {"reason": "invalid_upstream_metadata"},
+            },
+        })
+        target = body["error"]["data"]
+    target.setdefault("_meta", {})["tessera_audit_event_id"] = event_id
     return body
+
+
+def _audited_upstream_response(
+    body: dict[str, Any], *, event_id: str, headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """Carry trusted audit identity outside the body for bounded adaptation."""
+    error = body.get("error", {})
+    response_headers = dict(headers or {})
+    response_headers[AUDIT_ID_HEADER] = event_id
+    status = 200
+    if (
+        isinstance(error, dict) and isinstance(error.get("data"), dict)
+        and error.get("code") == -32603
+        and error["data"].get("reason") == "invalid_upstream_metadata"
+    ):
+        status = 502
+    return JSONResponse(body, status_code=status, headers=response_headers)
 
 
 # ── App factory ──────────────────────────────────────────────────────────────
@@ -836,19 +860,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         ):
             method_headers = request.headers.getlist("mcp-method")
             if len(method_headers) == 1:
-                response_body = getattr(response, "body", None)
-                if not isinstance(response_body, bytes):
-                    body_iterator = getattr(response, "body_iterator", None)
-                    if body_iterator is not None:
-                        chunks = [chunk async for chunk in body_iterator]
-                        response_body = b"".join(
-                            chunk if isinstance(chunk, bytes) else str(chunk).encode()
-                            for chunk in chunks
-                        )
-                if isinstance(response_body, bytes) and response_body:
-                    response = modernize_http_response(
-                        response, method_headers[0], response_body
-                    )
+                response = await adapt_modern_http_response(
+                    response, method_headers[0], getattr(request.state, "mcp_rpc_id", None)
+                )
         return response
 
     @app.api_route("/mcp", methods=["GET", "DELETE"])
@@ -971,6 +985,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         if isinstance(body, JSONResponse):
             return body
         modern_error = validate_modern_request(request, body)
+        modern_request = getattr(request.state, "mcp_modern_validated", False)
         if modern_error is not None:
             return modern_error
 
@@ -1002,7 +1017,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             or (not _engine_eval_data and method in _data_eval_methods)
         ):
             return await _handle_pass_through(
-                app.state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id
+                app.state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id,
+                modern_request=modern_request,
             )
 
         if method not in ("tools/call", "resources/read", "sampling/createMessage"):
@@ -1199,7 +1215,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.observation:
             # Skip engine — always forward
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -1232,7 +1248,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             audit_event = _emit(app.state, auth_ctx.scope, "decision", _obs_payload)
             _inject_audit_id(upstream_response, audit_event["eventId"])
             _METRICS["requests_total{outcome=observation}"] += 1
-            return JSONResponse(upstream_response)
+            return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
         # Evaluate engine (enforcement + log_only) — with v0.7.0 §7.4 memo cache
         _t0_eval = perf_counter()
@@ -1261,7 +1277,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         if mode == PoliciesMode.log_only:
             # Always forward upstream (even on upstream error — return with headers)
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
 
             # Map decision to would_* header value
             if decision.policy_id is None:
@@ -1309,11 +1325,13 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                 return upstream_response
 
             _inject_audit_id(upstream_response, audit_event["eventId"])
-            return JSONResponse(upstream_response, headers=log_only_headers)
+            return _audited_upstream_response(
+                upstream_response, event_id=audit_event["eventId"], headers=log_only_headers
+            )
 
         # enforcement mode
         if decision.action in (Action.allow, Action.log_only):
-            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+            upstream_response = await _forward_upstream(app.state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
             if isinstance(upstream_response, JSONResponse):
                 return upstream_response
 
@@ -1350,7 +1368,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             audit_event = _emit(app.state, auth_ctx.scope, "decision", _enf_allow_payload)
             _inject_audit_id(upstream_response, audit_event["eventId"])
             _METRICS["requests_total{outcome=allow}"] += 1
-            return JSONResponse(upstream_response)
+            return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
         if decision.action == Action.block:
             _enf_block_cost = cost_cache.get(tool_name)
@@ -1461,6 +1479,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         if isinstance(body, JSONResponse):
             return body
         modern_error = validate_modern_request(request, body)
+        modern_request = getattr(request.state, "mcp_modern_validated", False)
         if modern_error is not None:
             return modern_error
 
@@ -1496,7 +1515,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             # The policy engine evaluates against canonical names (D2 of spec).
             rewritten_body = dict(body)
             rewritten_body["params"] = {**body.get("params", {}), "name": canonical_tool}
-            return await _run_proxy_pipeline(app.state, upstream_name, rewritten_body, auth_ctx)
+            return await _run_proxy_pipeline(
+                app.state, upstream_name, rewritten_body, auth_ctx, modern_request=modern_request
+            )
 
         # All other methods (initialize, ping, notifications/*, resources/list, etc.) —
         # forward to the first configured upstream as a representative. The per-upstream
@@ -1505,7 +1526,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             return _jsonrpc_error(jsonrpc_id, -32603, "Internal error", reason="no upstreams configured")
 
         first_upstream = cfg.upstreams[0].name
-        return await _run_proxy_pipeline(app.state, first_upstream, body, auth_ctx)
+        return await _run_proxy_pipeline(
+            app.state, first_upstream, body, auth_ctx, modern_request=modern_request
+        )
 
     # ── Metrics endpoint ─────────────────────────────────────────────────────
 
@@ -1674,6 +1697,8 @@ async def _run_proxy_pipeline(
     upstream_name: str,
     body: dict[str, Any],
     auth_ctx: Any,
+    *,
+    modern_request: bool = False,
 ) -> Response:
     """Run the full policy+audit+forward pipeline for a pre-authenticated, pre-parsed request.
 
@@ -1703,7 +1728,8 @@ async def _run_proxy_pipeline(
         or (not _engine_eval_data and method in _data_eval_methods)
     ):
         return await _handle_pass_through(
-            state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id
+            state, cfg, auth_ctx, upstream_name, body, jsonrpc_id, request_id,
+            modern_request=modern_request,
         )
 
     if method not in ("tools/call", "resources/read", "sampling/createMessage"):
@@ -1891,7 +1917,7 @@ async def _run_proxy_pipeline(
     engine: PolicyEngine = state.engine
 
     if mode == PoliciesMode.observation:
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
         if isinstance(upstream_response, JSONResponse):
             return upstream_response
 
@@ -1917,7 +1943,7 @@ async def _run_proxy_pipeline(
         audit_event = _emit(state, auth_ctx.scope, "decision", _obs_payload)
         _inject_audit_id(upstream_response, audit_event["eventId"])
         _METRICS["requests_total{outcome=observation}"] += 1
-        return JSONResponse(upstream_response)
+        return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
     # Evaluate engine with decision cache
     _t0_eval = perf_counter()
@@ -1944,7 +1970,7 @@ async def _run_proxy_pipeline(
     asyncio.create_task(_obs_events.fire_on_decision(decision, context))
 
     if mode == PoliciesMode.log_only:
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
 
         if decision.policy_id is None:
             tessera_decision_header = "no_match"
@@ -1990,11 +2016,13 @@ async def _run_proxy_pipeline(
             return upstream_response
 
         _inject_audit_id(upstream_response, audit_event["eventId"])
-        return JSONResponse(upstream_response, headers=log_only_headers)
+        return _audited_upstream_response(
+                upstream_response, event_id=audit_event["eventId"], headers=log_only_headers
+            )
 
     # enforcement mode
     if decision.action in (Action.allow, Action.log_only):
-        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+        upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
         if isinstance(upstream_response, JSONResponse):
             return upstream_response
 
@@ -2021,7 +2049,7 @@ async def _run_proxy_pipeline(
         audit_event = _emit(state, auth_ctx.scope, "decision", _enf_allow_payload)
         _inject_audit_id(upstream_response, audit_event["eventId"])
         _METRICS["requests_total{outcome=allow}"] += 1
-        return JSONResponse(upstream_response)
+        return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
     if decision.action == Action.block:
         _enf_block_cost = cost_cache.get(tool_name)
@@ -2312,6 +2340,7 @@ async def _forward_upstream(
     jsonrpc_id: Any,
     *,
     session_scope: str = "default",
+    modern_request: bool = False,
 ) -> dict[str, Any] | JSONResponse:
     """Forward a request to the named upstream. Returns parsed response dict or JSONResponse on error.
 
@@ -2329,7 +2358,7 @@ async def _forward_upstream(
     # upstream connection; preserve Tessera's custom intent metadata.
     forwarded_body = dict(body)
     params = body.get("params")
-    if isinstance(params, dict):
+    if modern_request and isinstance(params, dict):
         forwarded_params = dict(params)
         metadata = params.get("_meta")
         if isinstance(metadata, dict):
@@ -2432,9 +2461,11 @@ async def _handle_pass_through(
     body: dict[str, Any],
     jsonrpc_id: Any,
     request_id: str,
+    *,
+    modern_request: bool = False,
 ) -> Response:
     """Handle pass-through methods (tools/list, initialize, etc.)."""
-    upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx))
+    upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
     if isinstance(upstream_response, JSONResponse):
         if "id" not in body:
             upstream_response.status_code = 502
@@ -2476,7 +2507,7 @@ async def _handle_pass_through(
         if "error" in upstream_response:
             return JSONResponse(upstream_response, status_code=502)
         return Response(status_code=202)
-    return JSONResponse(upstream_response)
+    return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
 
 def _build_metrics_response() -> Response:

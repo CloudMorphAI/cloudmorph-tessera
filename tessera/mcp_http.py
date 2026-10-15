@@ -29,6 +29,8 @@ HEADER_MISMATCH_CODE = -32020
 MISSING_REQUIRED_CLIENT_CAPABILITY_CODE = -32021
 UNSUPPORTED_PROTOCOL_VERSION_CODE = -32022
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_MODERN_RESPONSE_BYTES = 1024 * 1024
+AUDIT_ID_HEADER = "X-Tessera-Audit-Event-Id"
 
 
 def canonical_origin(value: str) -> str:
@@ -149,42 +151,88 @@ def validate_http_headers(request: Request, allowed_origins: list[str]) -> JSONR
     return None
 
 
+def _adaptation_error(response: Response, message: str, rpc_id: Any = None) -> JSONResponse:
+    """Return a small failure without losing the proxy's audit correlation."""
+    headers = {
+        key: value for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "content-type"}
+    }
+    error: dict[str, Any] = {"code": -32603, "message": message}
+    audit_id = response.headers.get(AUDIT_ID_HEADER)
+    if audit_id:
+        error["data"] = {"_meta": {"tessera_audit_event_id": audit_id}}
+    failure = JSONResponse(
+        {"jsonrpc": "2.0", "id": rpc_id, "error": error}, status_code=502,
+        headers=headers, background=response.background,
+    )
+    if len(failure.body) > MAX_MODERN_RESPONSE_BYTES:
+        # An oversized client-supplied request ID must not defeat the output cap.
+        return _adaptation_error(response, message)
+    return failure
+
+
+async def adapt_modern_http_response(response: Response, method: str, rpc_id: Any) -> Response:
+    """Buffer at most 1 MiB for adaptation, stopping oversized iterators early.
+
+    This bounds the adapter's allocation, not the legacy upstream transport's
+    existing response materialization. Auth/routing failures never enter here.
+    """
+    response_body = getattr(response, "body", None)
+    if not isinstance(response_body, bytes):
+        body_iterator = getattr(response, "body_iterator", None)
+        if body_iterator is None:
+            return response
+        buffered = bytearray()
+        try:
+            async for chunk in body_iterator:
+                if isinstance(chunk, str) and len(chunk) > MAX_MODERN_RESPONSE_BYTES - len(buffered):
+                    return _adaptation_error(response, "Upstream response exceeds adaptation limit", rpc_id)
+                chunk = chunk if isinstance(chunk, bytes) else str(chunk).encode()
+                if len(chunk) > MAX_MODERN_RESPONSE_BYTES - len(buffered):
+                    return _adaptation_error(response, "Upstream response exceeds adaptation limit", rpc_id)
+                buffered.extend(chunk)
+        finally:
+            close = getattr(body_iterator, "aclose", None)
+            if close is not None:
+                await close()
+        response_body = bytes(buffered)
+    if not response_body:
+        return response
+    return modernize_http_response(response, method, response_body, rpc_id=rpc_id)
+
+
 def modernize_http_response(
-    response: Response, method: str, response_body: bytes | None = None
+    response: Response, method: str, response_body: bytes | None = None, *, rpc_id: Any = None
 ) -> Response:
     """Add modern result metadata without changing the legacy upstream contract."""
     if response_body is None:
         response_body = getattr(response, "body", None)
     if not isinstance(response_body, bytes):
         return response
+    if len(response_body) > MAX_MODERN_RESPONSE_BYTES:
+        return _adaptation_error(response, "Upstream response exceeds adaptation limit", rpc_id)
     headers = {
         key: value for key, value in response.headers.items()
         if key.lower() not in {"content-length", "content-type"}
     }
     try:
         payload = json.loads(response_body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return Response(
-            response_body, status_code=response.status_code, headers=headers,
-            media_type="application/json", background=response.background,
-        )
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return _adaptation_error(response, "Invalid upstream JSON-RPC response", rpc_id)
     if not isinstance(payload, dict):
-        return Response(
-            response_body, status_code=response.status_code, headers=headers,
-            media_type="application/json", background=response.background,
-        )
+        return _adaptation_error(response, "Invalid upstream JSON-RPC response", rpc_id)
     error = payload.get("error")
     if isinstance(error, dict) and error.get("code") == -32601 and response.status_code < 400:
         return JSONResponse(payload, status_code=404, headers=headers, background=response.background)
     if "error" in payload:
         if not isinstance(error, dict):
-            return rpc_http_error("Invalid upstream JSON-RPC error", 502, -32603, payload.get("id"))
+            return _adaptation_error(response, "Invalid upstream JSON-RPC error", rpc_id)
         return Response(
             response_body, status_code=response.status_code, headers=headers,
             media_type="application/json", background=response.background,
         )
     if not isinstance(payload.get("result"), dict):
-        return rpc_http_error("Invalid upstream JSON-RPC result", 502, -32603, payload.get("id"))
+        return _adaptation_error(response, "Invalid upstream JSON-RPC result", rpc_id)
 
     result = payload["result"]
     meta = result.get("_meta")
@@ -192,9 +240,7 @@ def modernize_http_response(
         meta = {}
         result["_meta"] = meta
     elif not isinstance(meta, dict):
-        return rpc_http_error(
-            "Invalid upstream result metadata", 502, -32603, payload.get("id")
-        )
+        return _adaptation_error(response, "Invalid upstream result metadata", rpc_id)
     # The legacy upstream translation has no MRTR/InputRequiredResult support.
     result["resultType"] = "complete"
     meta[SERVER_INFO_META_KEY] = {"name": "tessera", "version": __version__}
@@ -206,9 +252,15 @@ def modernize_http_response(
         result["ttlMs"] = 0
         result["cacheScope"] = "private"
 
-    return JSONResponse(
-        payload, status_code=response.status_code, headers=headers, background=response.background
-    )
+    try:
+        adapted = JSONResponse(
+            payload, status_code=response.status_code, headers=headers, background=response.background
+        )
+    except (ValueError, RecursionError):
+        return _adaptation_error(response, "Invalid upstream JSON-RPC response", rpc_id)
+    if len(adapted.body) > MAX_MODERN_RESPONSE_BYTES:
+        return _adaptation_error(response, "Upstream response exceeds adaptation limit", rpc_id)
+    return adapted
 
 
 def _modern_error(message: str, rpc_id: Any, code: int = HEADER_MISMATCH_CODE,
@@ -306,6 +358,7 @@ def validate_modern_request(request: Request, body: dict[str, Any]) -> JSONRespo
         if decoded_name is None or decoded_name != expected_name:
             return _modern_error("Mcp-Name header does not match request parameters", rpc_id)
     request.state.mcp_modern_validated = True
+    request.state.mcp_rpc_id = rpc_id
     return None
 
 
