@@ -4,7 +4,7 @@
 # Global ARG — re-declared inside each stage that uses it.
 ARG SOURCE_DATE_EPOCH
 
-FROM python:3.12-slim@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461 AS builder
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS builder
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 WORKDIR /build
@@ -18,7 +18,7 @@ RUN python -m venv /venv && \
     /venv/bin/pip install --no-cache-dir ".[aws,gemini,oidc,intelligence,infracost]" && \
     /venv/bin/pip install --no-cache-dir "tzdata>=2024.0"
 
-FROM python:3.12-slim@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 ARG SOURCE_DATE_EPOCH
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
 # Upgrade runtime pip too — Tessera never invokes it but pip-audit / scanners
