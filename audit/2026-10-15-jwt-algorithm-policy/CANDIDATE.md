@@ -16,7 +16,18 @@ DRAFT publication. No auth merge, deployment, production configuration or live
 issuer compatibility is accepted. The separate conditional introspection/PyJWT
 finding is unchanged; the inspected AWS gateway did not expose that route.
 No cloud/provider request, real credential, signing key, or token was used.
-Individual RS384/ES384/ES512 cases and live providers remain untested here.
+At that checkpoint, individual RS384/ES384/ES512 cases were untested. The follow-up
+below now covers all six families offline; live providers remain unverified.
+
+## Six-family offline follow-up - 15 October 2026
+
+The valid-token tests now parameterize RS256/RS384/RS512 and ES256/ES384/ES512,
+using generated synthetic RSA keys or the matching P-256/P-384/P-521 curve and
+JWK metadata. Main independently reran both JWT/OIDC files on the verified
+current source: **30 passed in 2.08 seconds**, WSL Python3.12.3/python-jose3.5.0.
+Ruff and whitespace checks pass. This closes the missing algorithm-family test
+cases, not live issuer or production compatibility acceptance. Implementation,
+issuer/audience/expiry behavior and the separate introspection helper are unchanged.
 
 ## Preserved original candidate receipt
 

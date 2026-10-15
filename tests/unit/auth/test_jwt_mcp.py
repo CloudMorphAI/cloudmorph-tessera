@@ -233,11 +233,12 @@ def test_jwk_algorithm_mismatch_is_rejected(test_jwk):
     assert jwks_route.call_count == 1
 
 
+@pytest.mark.parametrize("algorithm", ["RS256", "RS384", "RS512"])
 @respx.mock
-def test_rs512_authenticates_when_jwk_allows_it(test_jwk):
-    """The RSA family remains compatible when trusted JWK metadata agrees."""
+def test_rsa_algorithm_authenticates_when_jwk_allows_it(test_jwk, algorithm):
+    """All allowed RSA algorithms work when trusted JWK metadata agrees."""
     private_pem, public_jwk = test_jwk
-    public_jwk = {**public_jwk, "alg": "RS512"}
+    public_jwk = {**public_jwk, "alg": algorithm}
     respx.get(_JWKS_URL).mock(return_value=Response(200, json={"keys": [public_jwk]}))
     claims = {
         "sub": "synthetic-rsa-user",
@@ -245,21 +246,27 @@ def test_rs512_authenticates_when_jwk_allows_it(test_jwk):
         "aud": _AUDIENCE,
         "exp": int(time.time()) + 3600,
     }
-    token = jwt.encode(claims, private_pem, algorithm="RS512", headers={"kid": _KID})
+    token = jwt.encode(claims, private_pem, algorithm=algorithm, headers={"kid": _KID})
 
     ctx = _make_authenticator().authenticate(_req(token))
 
     assert ctx.principal_id == "synthetic-rsa-user"
 
 
+@pytest.mark.parametrize("algorithm", ["ES256", "ES384", "ES512"])
 @respx.mock
-def test_allowed_es256_jwt_authenticates():
-    """ECDSA remains available through the fixed asymmetric allow-list."""
+def test_allowed_ecdsa_jwt_authenticates(algorithm):
+    """All allowed ECDSA algorithms work with their matching curve and JWK."""
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from jose import jwk as jose_jwk
 
-    private_key = ec.generate_private_key(ec.SECP256R1())
+    curve_for_algorithm = {
+        "ES256": ec.SECP256R1,
+        "ES384": ec.SECP384R1,
+        "ES512": ec.SECP521R1,
+    }
+    private_key = ec.generate_private_key(curve_for_algorithm[algorithm]())
     private_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -269,8 +276,8 @@ def test_allowed_es256_jwt_authenticates():
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    public_jwk = jose_jwk.construct(public_pem, algorithm="ES256").to_dict()
-    public_jwk.update({"kid": _KID, "alg": "ES256", "use": "sig"})
+    public_jwk = jose_jwk.construct(public_pem, algorithm=algorithm).to_dict()
+    public_jwk.update({"kid": _KID, "alg": algorithm, "use": "sig"})
     respx.get(_JWKS_URL).mock(return_value=Response(200, json={"keys": [public_jwk]}))
     claims = {
         "sub": "synthetic-ec-user",
@@ -278,7 +285,7 @@ def test_allowed_es256_jwt_authenticates():
         "aud": _AUDIENCE,
         "exp": int(time.time()) + 3600,
     }
-    token = jwt.encode(claims, private_pem, algorithm="ES256", headers={"kid": _KID})
+    token = jwt.encode(claims, private_pem, algorithm=algorithm, headers={"kid": _KID})
 
     ctx = _make_authenticator().authenticate(_req(token))
 
