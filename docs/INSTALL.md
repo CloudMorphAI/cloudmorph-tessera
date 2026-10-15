@@ -1,31 +1,45 @@
-# Installing Tessera v1.0.0
+# Installing the staged Tessera source
 
-**Staged release:** these versioned examples target the local 1.0.0 source.
-Publication of that wheel and container tag has not been verified by the
-13 October local release review. An unversioned `pip install` selects the
-published package, which may differ from this checkout. See the
-[current release gates and local review](../../workspace-support/architecture/tessera-runtime/current.md#packaging-and-release-gates).
+**Staged source, not a confirmed distribution:** this checkout declares version
+1.0.0. Publication of its PyPI wheel and `ghcr.io` container tag has not been
+verified. An unversioned `pip install` resolves whatever the package index
+currently serves, which may differ from this checkout. Treat the image pull,
+signature-verification, and reproducible-build commands below as release
+procedures that require a separately confirmed artifact; they are not evidence
+that an image or signature is currently available. See the repository's
+[current maintenance note](../README.md#repository-role-and-current-maintenance).
 
-Docker is the recommended path for production. pip install is for local development, CI, and programmatic embedding.
+The project metadata requires Python `>=3.12` and classifies Python 3.12. Retained
+local evidence covers a CPython 3.13.7 Windows editable Tessera install and
+existing CPython 3.12.3 WSL tests. A separate Hermes client environment needed
+a dependency-marker workaround; that was not a Tessera installation step.
+This is limited environment evidence, not a complete platform support matrix. No
+production installation path is established by these local checks. The offline
+quickstart pilot passed 15 checks on Linux/WSL; its IP-socket guard currently
+prevents Windows asyncio startup. See [the quickstart](../QUICKSTART.md).
 
 ---
 
 ## Table of contents
 
-1. [Docker install (recommended)](#1-docker-install-recommended)
-2. [pip install (secondary)](#2-pip-install-secondary)
+1. [Docker image install (publication unverified)](#1-docker-image-install-publication-unverified)
+2. [Python source install](#2-python-source-install)
 3. [docker-compose walkthrough](#3-docker-compose-walkthrough)
 4. [Volume mount cheatsheet](#4-volume-mount-cheatsheet)
 5. [`tessera init` 60-second walkthrough](#5-tessera-init-60-second-walkthrough)
-6. [Production hardening checklist](#6-production-hardening-checklist)
-7. [Verifying signed images](#7-verifying-signed-images)
-8. [Reproducible builds](#8-reproducible-builds)
+6. [Deployment hardening notes](#6-deployment-hardening-notes-not-release-acceptance)
+7. [Verifying an image signature](#7-verifying-an-image-signature-when-published)
+8. [Checking build reproducibility](#8-checking-build-reproducibility-not-yet-verified)
 
 ---
 
-## 1. Docker install (recommended)
+## 1. Docker image install (publication unverified)
+
+Use these example commands only after confirming that the exact image tag and
+its signature were published. Publication of `1.0.0` is currently unverified.
 
 ```bash
+# Example only; availability of this tag has not been confirmed.
 docker pull ghcr.io/cloudmorphai/tessera:1.0.0
 ```
 
@@ -57,20 +71,27 @@ docker logs -f tessera       # follow
 
 ---
 
-## 2. pip install (secondary)
+## 2. Python source install
 
-Requires Python 3.12+. Package name on PyPI: `cloudmorph-tessera`. Import name: `tessera`.
+The distribution name is `cloudmorph-tessera`; the import name is `tessera`.
+PyPI publication of the source version in this checkout has not been verified.
+The editable-install command below is for a source checkout, not a PyPI release.
+The retained local environment evidence is limited to CPython 3.13.7 on Windows
+for an editable Tessera install and existing
+CPython 3.12.3 tests in WSL.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate    # Linux/macOS  |  .venv\Scripts\Activate.ps1 on Windows
-pip install cloudmorph-tessera && tessera --help
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e .
 ```
 
 **Dev / source install:**
 
 ```bash
-git clone https://github.com/cloudmorphai/cloudmorph-tessera.git && cd tessera
+git clone https://github.com/cloudmorphai/cloudmorph-tessera.git
+cd cloudmorph-tessera
 pip install -e ".[dev]" && pre-commit install
 ```
 
@@ -81,7 +102,8 @@ pip install -e ".[dev]" && pre-commit install
 `docker-compose.example.yaml` (in the repo root) starts Tessera alongside a mock MCP server — fastest end-to-end evaluation without a real upstream.
 
 ```bash
-git clone https://github.com/cloudmorphai/cloudmorph-tessera.git && cd tessera
+git clone https://github.com/cloudmorphai/cloudmorph-tessera.git
+cd cloudmorph-tessera
 docker compose -f docker-compose.example.yaml up
 ```
 
@@ -193,7 +215,7 @@ decisions are recorded but calls are forwarded.
 
 ---
 
-## 6. Production hardening checklist
+## 6. Deployment hardening notes (not release acceptance)
 
 ### Token management
 
@@ -213,7 +235,7 @@ decisions are recorded but calls are forwarded.
 
 ### Reverse proxy and rate limiting
 
-Tessera v0.1 has no built-in rate limiting. Place behind a reverse proxy before exposing to the network.
+This runtime has no native rate limiter. Place it behind a reverse proxy before exposing it to a network.
 
 **nginx** (site config snippet):
 
@@ -263,9 +285,11 @@ Caddy: `reverse_proxy /mcp/* localhost:8080` with a `rate_limit` block (60 req/m
 
 ---
 
-## 7. Verifying signed images
+## 7. Verifying an image signature (when published)
 
-Images are signed with Sigstore (keyless OIDC) via cosign.
+The commands below describe a Sigstore/cosign verification procedure. They do
+not establish that the `1.0.0` image or its signature is published; confirm the
+release artifact and its attestation independently before relying on them.
 
 ```bash
 cosign verify \
@@ -284,9 +308,11 @@ cosign download attestation \
 
 ---
 
-## 8. Reproducible builds
+## 8. Checking build reproducibility (not yet verified)
 
-Two independent builds from the same source commit and base image digest produce identical image SHAs. The Dockerfile pins the base image to a specific digest; `SOURCE_DATE_EPOCH` is set to the Git commit timestamp (`git log -1 --format=%ct`) so embedded timestamps are deterministic.
+The commands below are a procedure for checking whether two builds from the same
+source commit and base image digest produce identical image SHAs. The procedure
+does not itself establish a reproducible-build result.
 
 ```bash
 make docker-build-repro
