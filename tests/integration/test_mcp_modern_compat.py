@@ -225,6 +225,9 @@ def test_modern_request_uses_streamable_http_upstream_and_preserves_tessera_meta
     calls: list[dict[str, Any]] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            # Streamable HTTP cleanup sends an empty-body session DELETE.
+            return httpx.Response(202)
         message = json.loads(request.content)
         calls.append(message)
         if message.get("method") == "initialize":
