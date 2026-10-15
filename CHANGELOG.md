@@ -151,7 +151,7 @@ None. All v0.9.0 configs and CLI invocations continue to work.
 ## [0.7.0] - 2026-05-24
 
 ### Added — control-plane wiring (Item D of v0.7.0 plan)
-- **OAuth 2.1 resource server validator** (`tessera/auth/oauth_rs.py:372` — `OAuthResourceServer`). Verifies Ed25519 access tokens against the bundled `tessera/auth/oauth_pubkey.pem` trust anchor with JWKS fetch fallback at `https://tessera.cloudmorph.ai/oauth/.well-known/jwks.json`. Surfaces RFC 9728 protected-resource metadata, RFC 7591 DCR proxy, RFC 7662 introspection, RFC 7009 revocation. `require_scope(scope)` decorator helper for route protection. Gap analysis vs the §7.1 spec at `plan/v0.7.0-item-D-oauth_rs-gaps.md`.
+- **OAuth 2.1 resource server validator** (`tessera/auth/oauth_rs.py:372` — `OAuthResourceServer`). Verifies Ed25519 access tokens against the bundled `tessera/auth/oauth_pubkey.pem` trust anchor with JWKS fetch fallback at `https://tessera.cloudmorph.ai/oauth/.well-known/jwks.json`. Surfaces RFC 9728 protected-resource metadata, RFC 7591 DCR proxy, RFC 7662 introspection, RFC 7009 revocation. `require_scope(scope)` decorator helper for route protection. Historical §7.1 gap analysis is superseded by a workspace-only runtime architecture handoff, available in the full CloudMorph workspace but not included in standalone clones.
 - **Cloud policy sync** (`tessera/cloud_sync.py` — `CloudPolicySync`). Pull from `/api/cli/policies` into the local SQLite policy cache (`tessera config sync`). Failure-isolated: cloud unreachable does not break local enforcement. _(Correction: at 0.7.0 this only **wrote** the cache — nothing read it back into the engine, so a synced policy did not actually enforce. The serve-side consumer `CloudBackedPolicyLoader` + background refresh + `DecisionCache` invalidation landed in 1.0.0 under `tessera serve --cloud`; see the [1.0.0] entry.)_
 - **Audit cloud uploader** (`tessera/audit/cloud_uploader.py` — `AuditCloudUploader`). Background batched POST to `/api/tessera/audit/ingest` with exponential-backoff retry. Carries the local hash-chain head per batch; server stores raw and chain-verifies on read.
 - **DecisionCache** (`tessera/proxy.py:82` — `DecisionCache`). LRU + 60s TTL memoization on the per-call hot path. Bounded at 1024 entries. Caches `allow` and `observed` decisions only — `block` and `require_approval` are always re-evaluated against current policy. Cache key is `sha256(canonical_json({scope, tool, args}))` so arg-ordering doesn't fragment the cache. Cleared on every `CloudPolicySync` reload.
@@ -369,10 +369,8 @@ New entries in `tessera/policies_default/`:
 
 ### Architecture docs
 
-- `arch/status/proxy-enforcement-and-audit.md`: observability section
-  documenting metrics + tracing + events + the OTel-off-by-default contract.
-- `arch/status/policy-engine.md`: regex pre-compile + condition cost-tier
-  ordering notes; documents the call_aws reverse-resolution dispatch.
+- Workspace-only runtime architecture notes (available in the full CloudMorph workspace, not standalone clones) record the proxy/audit observability contract, including metrics, tracing, events and OTel-off-by-default.
+- The same workspace-only handoff records policy regex pre-compilation, condition cost-tier ordering and the call_aws reverse-resolution dispatch.
 
 ## [0.3.0] - UNRELEASED
 

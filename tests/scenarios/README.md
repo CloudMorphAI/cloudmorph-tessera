@@ -29,4 +29,4 @@ A clean release run-through is all 6 scenarios green. Skip-with-reason is accept
 
 ## Adding a new scenario
 
-Copy the template at the top of any existing scenario file. Keep under 80 lines. Reuse real subsystem names from `arch/status/` so the failure-mode-to-owner mapping stays tight.
+Copy the template at the top of any existing scenario file. Keep under 80 lines. Reuse real subsystem names from the [runtime architecture](../../../workspace-support/architecture/tessera-runtime/current.md) and [unresolved findings](../../../workspace-support/architecture/tessera-runtime/unresolved.md) so the failure-mode-to-owner mapping stays tight.

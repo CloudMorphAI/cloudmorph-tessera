@@ -122,7 +122,7 @@ def test_p0_bundled_policy_present(
 # The 6 P0-1..6 policies above cover: iam:PassRole, IAM admin-policy grant,
 # iam:CreateAccessKey, KMS ScheduleKeyDeletion, RDS PubliclyAccessible, EC2
 # IMDSv1. No repo doc enumerates a canonical "12-vector" list verbatim; the
-# closest source is arch/status/policy-engine.md's "Future additions" note,
+# closest source is the [runtime policy contract](../../workspace-support/architecture/tessera-runtime/current.md#runtime-contracts),
 # which is combined here with well-known AWS privilege-escalation/exposure
 # vectors to reach 12 total AWS-MCP defaults:
 #   7.  S3 bucket public exposure (policy/ACL/PublicAccessBlock)

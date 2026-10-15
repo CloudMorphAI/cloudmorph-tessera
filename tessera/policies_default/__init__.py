@@ -1,10 +1,11 @@
 """Bundled reference policies — accessible at runtime via importlib.resources.
 
-This package ships 12 example policies in the wheel:
-- 7 generic: cost-cap, data-residency-eu, pii-block, prod-protection,
-  read-only-mode, secret-leak-block, write-action-approval
-- 5 AWS-illustrative: aws-{ec2-cost-cap,iam-blast-radius,region-allowlist,
-  cost-runaway-stop,bedrock-cost-ceiling}-EXAMPLE
+This package ships the reference policies in the wheel, including the
+firewall defaults used by `tessera demo`:
+- secret-leak-block, github-mcp-protection, postgres-mcp-protection
+- other generic guards (pii-block, prompt-injection-heuristic, read-only-mode,
+  write-action-approval, cost-cap, and the rest of this directory)
+- AWS illustrative denies and EXAMPLE cost files
 
 The top-level `policies/` directory in the repo is the same content for
 dev / test workflow convenience. Wheel consumers access via:

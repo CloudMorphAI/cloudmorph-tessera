@@ -15,7 +15,7 @@ description: |
 
   # NOTE: Block-on-missing-intent needs a future schema enhancement
   # (a dedicated "meta_field_absent" or "require_intent_present" condition type).
-  # Track in tessera-intelligence/arch/improvements/.
+  # Track in [Tessera Intelligence architecture](../../workspace-support/architecture/tessera-intelligence/current.md) and [unresolved work](../../workspace-support/architecture/tessera-intelligence/unresolved.md).
 match:
   upstream: "*"
   tool_pattern: ".*"

@@ -14,7 +14,7 @@
 4. `curl -isS https://intelligence.tessera.cloudmorph.ai/v1.0.0/catalogs/pack-index.json` — no header on a free-tier path
 
 ## Expected observable result
-- Step 1: catalogs ARE free-tier accessible — returns **HTTP 200** with the JSON body. Catalogs are the discovery layer; they list what packs exist but contain no protected content (per `tessera-intelligence/arch/status/signing-and-trust.md`)
+- Step 1: catalogs ARE free-tier accessible — returns **HTTP 200** with the JSON body. Catalogs are the discovery layer; they list what packs exist but contain no protected content (see the [Tessera Intelligence architecture](../../../workspace-support/architecture/tessera-intelligence/current.md))
 - Step 2: invalid JWT on a paid-tier path returns **HTTP 401** with body `{"error": "invalid license"}` or equivalent. The CloudFront Function `intelligence-auth.js` rejects the request at the edge before it reaches S3
 - Step 3: no header on a paid-tier path returns **HTTP 401**
 - Step 4: same as step 1 — catalogs are free-tier, **HTTP 200**
@@ -47,6 +47,6 @@ CDN edge tier gate — `cloudmorph-mono-repo/amplify/cdk/cloudfront-functions/in
 
 ## Related code
 - `cloudmorph-mono-repo/amplify/cdk/cloudfront-functions/intelligence-auth.js`
-- `cloudmorph-mono-repo/arch/shared/status/cloudfront-functions.md`
-- `tessera-intelligence/arch/status/distribution-cdn.md`
-- `tessera-intelligence/arch/status/signing-and-trust.md`
+- [Mono-repo deployment and service boundaries](../../../workspace-support/architecture/mono-repo/deployment-and-boundaries.md)
+- [Tessera Intelligence architecture](../../../workspace-support/architecture/tessera-intelligence/current.md)
+- [Unresolved content and CDN limits](../../../workspace-support/architecture/tessera-intelligence/unresolved.md)

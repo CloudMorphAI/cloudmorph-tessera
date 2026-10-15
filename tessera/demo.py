@@ -1,10 +1,14 @@
 """`tessera demo` — a zero-config, fully offline demo of the policy firewall.
 
 Spins up an in-process Tessera proxy (no real TCP listener, no cloud, no
-network, no login) against one small bundled demo policy, fires one
-dangerous call that gets blocked and one safe call that's allowed, then
+network, no login) against three bundled firewall policies, fires three
+dangerous calls that get blocked and one safe call that's allowed, then
 exports a signed, offline-verifiable evidence bundle from the resulting
 audit trail.
+
+The three blocks are a leaked token, a GitHub force-push onto main, and a
+Postgres DROP of the users table. They are the same YAML shipped in
+``tessera/policies_default``.
 
 Designed to run start-to-finish in well under 60 seconds on a machine with
 nothing configured: ``pip install cloudmorph-tessera && tessera demo``.
@@ -25,31 +29,41 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-__all__ = ["run_demo", "DEMO_POLICY_ID", "DEMO_BLOCK_REASON"]
+__all__ = ["run_demo", "DEMO_POLICY_ID", "DEMO_BLOCK_REASON", "DEMO_BLOCKS"]
 
-DEMO_POLICY_ID = "demo-block-rds-delete"
-DEMO_BLOCK_REASON = "Deleting an RDS instance without a final snapshot is blocked by policy"
+# Primary block, kept as the single-id contract tests print first.
+DEMO_POLICY_ID = "secret-leak-block"
+DEMO_BLOCK_REASON = "Potential secret key detected in arguments"
 
-_DEMO_POLICY_YAML = f"""\
-id: {DEMO_POLICY_ID}
-name: Block RDS delete without a final snapshot
-description: |
-  Demo policy bundled with `tessera demo`. Blocks aws_rds_DeleteDBInstance
-  calls where SkipFinalSnapshot is "true" — deleting a database without
-  keeping a final snapshot is an unrecoverable, one-way action, exactly the
-  kind of call a deterministic policy firewall at the MCP boundary exists
-  to catch before it reaches AWS.
-match:
-  upstream: "*"
-  tool: aws_rds_DeleteDBInstance
-when:
-  - condition: arg_equals
-    arg: SkipFinalSnapshot
-    value: "true"
-action: block
-reason: "{DEMO_BLOCK_REASON}"
-priority: 50
-"""
+DEMO_BLOCKS: tuple[dict[str, Any], ...] = (
+    {
+        "policy_id": "secret-leak-block",
+        "reason": "Potential secret key detected in arguments",
+        "label": "Leaked token in tool arguments",
+        "tool": "read_file",
+        "arguments": {"content": "sk-abcdefghijklmnopqrstuvwxyz"},
+    },
+    {
+        "policy_id": "github-mcp-protection",
+        "reason": "GitHub destructive operation blocked on protected branch or production repo",
+        "label": "Force-push onto main",
+        "tool": "mcp__github__force_push",
+        "arguments": {"branch": "main", "repo": "acme/api"},
+    },
+    {
+        "policy_id": "postgres-mcp-protection",
+        "reason": "Postgres DDL operation blocked on critical table",
+        "label": "DROP TABLE users",
+        "tool": "query",
+        "arguments": {"query": "DROP TABLE users"},
+    },
+)
+
+_DEMO_POLICY_FILES = (
+    "secret-leak-block.yaml",
+    "github-mcp-protection.yaml",
+    "postgres-mcp-protection.yaml",
+)
 
 # Env vars that, if already set in the operator's real shell (e.g. because
 # they normally run `tessera serve --cloud` or have live pricing/blast-radius
@@ -183,7 +197,11 @@ def run_demo(echo: Callable[..., None] = print) -> dict[str, Any]:
         scratch_dir = Path(scratch)
         policy_dir = scratch_dir / "policies"
         policy_dir.mkdir()
-        (policy_dir / "demo-block-rds-delete.yaml").write_text(_DEMO_POLICY_YAML, encoding="utf-8")
+        from tessera.policies_default import bundled_policy_dir
+
+        bundled = Path(bundled_policy_dir())
+        for name in _DEMO_POLICY_FILES:
+            (policy_dir / name).write_text((bundled / name).read_text(encoding="utf-8"), encoding="utf-8")
 
         audit_db = scratch_dir / "audit.db"
         signing_key_path = scratch_dir / "signing-key.pem"
@@ -204,9 +222,8 @@ def run_demo(echo: Callable[..., None] = print) -> dict[str, Any]:
             deployment_id="demo",
         )
 
-        _p("[1/4] Starting an in-process Tessera proxy with one bundled demo policy")
-        _p(f"      policy: {DEMO_POLICY_ID}")
-        _p('      block aws_rds_DeleteDBInstance when SkipFinalSnapshot == "true"')
+        _p("[1/4] Starting an in-process Tessera proxy with three bundled firewall policies")
+        _p("      secret-leak-block, github-mcp-protection, postgres-mcp-protection")
         _p()
 
         with _neutralized_environment(state_dir), _quiet_tessera_logging():
@@ -220,36 +237,39 @@ def run_demo(echo: Callable[..., None] = print) -> dict[str, Any]:
                     timeout=5.0,
                 )
 
-                _p('[2/4] Dangerous call: aws_rds_DeleteDBInstance(SkipFinalSnapshot="true")')
-                block_resp = client.post(
-                    "/mcp/mock",
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/call",
-                        "params": {
-                            "name": "aws_rds_DeleteDBInstance",
-                            "arguments": {
-                                "DBInstanceIdentifier": "prod-orders-db",
-                                "SkipFinalSnapshot": "true",
+                blocks: list[dict[str, Any]] = []
+                for index, spec in enumerate(DEMO_BLOCKS, start=1):
+                    _p(f"[2/4] Block {index}/3: {spec['label']}")
+                    block_resp = client.post(
+                        "/mcp/mock",
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": index,
+                            "method": "tools/call",
+                            "params": {
+                                "name": spec["tool"],
+                                "arguments": spec["arguments"],
                             },
                         },
-                    },
-                )
-                block_body = block_resp.json()
-                block_text = block_body["result"]["content"][0]["text"]
-                _p()
-                _p(block_text)
-                _p()
+                    )
+                    body = block_resp.json()
+                    text = body["result"]["content"][0]["text"]
+                    blocks.append({"policy_id": spec["policy_id"], "text": text, "body": body})
+                    _p()
+                    _p(text)
+                    _p()
 
-                _p("[3/4] Safe call: aws_rds_DescribeDBInstances()")
+                block_body = blocks[0]["body"]
+                block_text = blocks[0]["text"]
+
+                _p("[3/4] Safe call: list_dir()")
                 allow_resp = client.post(
                     "/mcp/mock",
                     json={
                         "jsonrpc": "2.0",
-                        "id": 2,
+                        "id": 4,
                         "method": "tools/call",
-                        "params": {"name": "aws_rds_DescribeDBInstances", "arguments": {}},
+                        "params": {"name": "list_dir", "arguments": {}},
                     },
                 )
                 allow_body = allow_resp.json()
@@ -302,6 +322,7 @@ def run_demo(echo: Callable[..., None] = print) -> dict[str, Any]:
         _p(f"Done in {elapsed:.2f}s — fully offline, no cloud account, no login.")
 
         return {
+            "blocks": blocks,
             "block_response": block_body,
             "block_text": block_text,
             "allow_response": allow_body,

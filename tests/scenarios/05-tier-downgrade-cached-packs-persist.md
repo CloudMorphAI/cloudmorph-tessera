@@ -58,4 +58,4 @@ Tier-transition primitive — `tessera/intelligence/_tier.py`, `tessera/intellig
 - `tessera/intelligence/_tier.py`
 - `tessera/intelligence/client.py` `IntelligenceClient.refresh()` and `.load_cached_packs()`
 - `cloudmorph-mono-repo/amplify/cdk/cloudfront-functions/intelligence-auth.js` (CDN edge tier gate)
-- `tessera-intelligence/arch/status/distribution-cdn.md`
+- [Tessera Intelligence architecture](../../../workspace-support/architecture/tessera-intelligence/current.md) and [unresolved distribution/runtime limits](../../../workspace-support/architecture/tessera-intelligence/unresolved.md)

@@ -188,7 +188,7 @@ class IntelligenceConfig(BaseModel):
     enabled: bool = False
     catalog_url: str = "https://intelligence.tessera.cloudmorph.ai/catalogs/pack-index.json"
     mapping_url: str = "https://intelligence.tessera.cloudmorph.ai/catalogs/mapping-index.json"
-    license_check_url: str = "https://license.tessera.cloudmorph.ai/v1/check"
+    license_check_url: str = "https://license.tessera.cloudmorph.ai/tessera/license/v1/check"
     license_key_env: str = "TESSERA_LICENSE_KEY"
     cache_dir: str = "~/.tessera/intelligence"
     public_key_path: str = "bundled"  # "bundled" or filesystem path
@@ -203,6 +203,26 @@ class IntelligenceConfig(BaseModel):
     # is rejected — fail-closed. Set True only for explicit opt-in fail-open
     # against unsigned catalogs (CI fixtures, air-gapped self-hosted CDNs).
     allow_unsigned_catalog: bool = False
+    # Premium policies are opt-in and version-pinned. Empty preserves the
+    # historical filesystem-only policy engine.
+    selected_packs: list[str] = Field(default_factory=list)
+
+    @field_validator("selected_packs")
+    @classmethod
+    def validate_selected_packs(cls, value: list[str]) -> list[str]:
+        if any(not isinstance(item, str) or not re.fullmatch(r"[a-z][a-z0-9-]*@[vV]?\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", item) for item in value):
+            raise ValueError("selected_packs entries must be pinned as pack-name@semver")
+        if len(set(item.lower() for item in value)) != len(value):
+            raise ValueError("selected_packs must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_pack_activation(self) -> IntelligenceConfig:
+        if self.selected_packs and not self.enabled:
+            raise ValueError("selected_packs requires intelligence.enabled: true")
+        if self.selected_packs and self.allow_unsigned_catalog:
+            raise ValueError("selected_packs cannot be activated with allow_unsigned_catalog: true")
+        return self
 
 
 # No 'version' field: config schema versioning is 2.0 scope. Freeze as-is for 1.0.

@@ -4,10 +4,10 @@ This document describes the current feature state and planned work for the OSS
 distribution. It is updated on each minor release.
 
 Current source target: **v1.0.0**, staged for review. Acceptance and publication
-are separate gates; see the [13 October release review](../arch/status/packaging-and-release.md#current-local-review--13-october-2026).
+are separate gates; see the [13 October release review](../../workspace-support/architecture/tessera-runtime/current.md#packaging-and-release-gates).
 The changelog records v0.9.0 as the last published release known to these docs.
 Remote registry status was not reverified by the local review.
-Next milestone: **v1.1.0** (planned — post-GA improvements; see plan/1.1.0/ in the workspace).
+Next milestone: **v1.1.0** (planned — post-GA improvements; see the workspace [roadmap](../../workspace-support/ROADMAP.md)).
 
 Where a version is listed the feature is on the roadmap. Where it says
 "not planned" the feature is intentionally out of scope for the OSS

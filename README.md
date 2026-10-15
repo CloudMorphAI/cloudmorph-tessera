@@ -15,9 +15,12 @@
 
 The local source targets **1.0.0**. This is a staged release, with acceptance
 work still open; the versioned install examples below describe that target.
-A local wheel build does not establish PyPI or container publication. See
-[the release review](arch/status/packaging-and-release.md#current-local-review--13-october-2026)
-for current evidence and outstanding gates.
+A local wheel build does not establish PyPI or container publication. Before
+publication, review the exact source set, bundled policies, selected intelligence
+schema and price inputs, and named-client compatibility evidence. The full
+CloudMorph workspace records local evidence and open gates under
+workspace-support/architecture/tessera-runtime/; those documents are workspace-only
+and are not included in standalone clones.
 
 This is the public customer-installed Python runtime, CLI, policy engine and MCP
 proxy. Premium authored content belongs in the sibling `tessera-intelligence/`
@@ -121,7 +124,9 @@ Concrete categories the 25 bundled policies cover out of the box:
 - **Region / data-residency violations** — `data-residency-eu`, `aws-region-allowlist-EXAMPLE`. Block ops outside permitted regions.
 - **Public exposure / audit tampering** — `aws-mcp-rds-public-deny`, `aws-mcp-ec2-imdsv1-deny`, `aws-mcp-kms-deletion-approval`, `aws-mcp-s3-public-access-deny`, `aws-mcp-sg-open-ingress-deny`, `aws-mcp-lambda-public-invoke-deny`, `aws-mcp-cloudtrail-logging-disable-deny`. RDS public-access block, EC2 IMDSv1 deny, KMS deletion approval gate, S3/security-group/Lambda public-exposure hard-denies, CloudTrail disable hard-deny.
 
-Vendor-specific packs (GitHub, Jira, Salesforce, Slack, Postgres, OWASP prompt injection, OWASP tool poisoning) are available via the Tessera Cloud premium pack `vendor-mcp-protection` — `tessera intelligence pull vendor-mcp-protection`.
+Vendor-specific policy packs are distributed separately through Tessera Cloud. The optional intelligence client verifies and caches signed artifacts. To activate a compatible published pack, set `intelligence.enabled: true` and list its exact `pack-name@version` in `intelligence.selected_packs` in `tessera.yaml`; the default list is empty. Each selection requires a signed production manifest, a verified archive, runtime-compatible policies and an eligible current license. Archived incompatible packs and unsigned drafts cannot be activated.
+
+Selections are required protection: an unavailable selection prevents startup; failed refresh or expired entitlement blocks governed calls, including in `log_only` and observation modes. Local policy IDs take precedence over selected-pack collisions. The CLI has no `tessera intelligence pull` command. Local policy files remain supported and are validated with `tessera policy lint`.
 
 ## How it works
 

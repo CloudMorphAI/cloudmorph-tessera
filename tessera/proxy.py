@@ -13,6 +13,7 @@ import uuid
 from collections import OrderedDict, defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
@@ -381,6 +382,37 @@ def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
 # ── App factory ──────────────────────────────────────────────────────────────
 
 
+async def _cleanup_failed_startup(state: Any, pricing_task: asyncio.Task[None] | None) -> None:
+    """Release resources opened before a required selected-pack check failed."""
+    if pricing_task is not None:
+        pricing_task.cancel()
+        try:
+            await pricing_task
+        except asyncio.CancelledError:
+            pass
+    for client in getattr(state, "http_clients", {}).values():
+        await client.aclose()
+    for client in getattr(state, "aws_clients", {}).values():
+        await client.__aexit__(None, None, None)
+    for client in getattr(state, "streamable_http_clients", {}).values():
+        await client.__aexit__(None, None, None)
+    cost_backend = getattr(state, "cost_backend", None)
+    if cost_backend is not None:
+        await cost_backend.aclose()
+    state_backend = getattr(state, "state_backend", None)
+    if state_backend is not None:
+        state_backend.close()
+    audit_queue = getattr(state, "audit_queue", None)
+    if audit_queue is not None:
+        await audit_queue.drain()
+    sink = getattr(state, "sink", None)
+    if sink is not None:
+        sink.close()
+    loader = getattr(state, "loader", None)
+    if loader is not None:
+        loader.stop()
+
+
 def create_app(config: TesseraConfig | None = None) -> FastAPI:
     """Create and configure the Tessera FastAPI app."""
 
@@ -523,6 +555,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         default_action = Action(cfg.policies.default_action)
         engine = PolicyEngine(policies, default_action=default_action)
         app.state.loader = loader
+        app.state.base_policies = list(policies)
         app.state.engine = engine
         # v0.7.0 Item D §7.4 — decision memoization. Empty on cold start; warms
         # as identical calls land. Cleared on every policy reload so a fresh
@@ -531,15 +564,12 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Watch for policy changes if configured
         if cfg.policies.reload == "watch":
+            loop = asyncio.get_running_loop()
 
             def _on_reload(updated_policies: list[Any]) -> None:
-                new_engine = PolicyEngine(updated_policies, default_action=default_action)
-                app.state.engine = new_engine
-                # Invalidate memoized decisions — the new engine may differ.
-                cache: DecisionCache | None = getattr(app.state, "decision_cache", None)
-                if cache is not None:
-                    cache.clear()
-                logger.info("event=policy_reloaded count=%d", len(updated_policies))
+                # FilesystemPolicyLoader calls observers from its watchdog
+                # thread. Commit engines and protection state on the app loop.
+                loop.call_soon_threadsafe(_commit_policy_reload, app.state, list(updated_policies))
 
             loader.watch("default", _on_reload)
 
@@ -592,15 +622,21 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         infracost_url = os.environ.get("TESSERA_INFRACOST_URL")
         if infracost_url:
             try:
-                from tessera.cost import aws_mapping as _aws_mapping_module
                 from tessera.cost.infracost import InfracostClient
                 cost_client = InfracostClient(
                     backend_url=infracost_url,
                     api_key=os.environ.get("INFRACOST_API_KEY"),
                 )
                 app.state.cost_backend = cost_client
-                app.state.aws_mapping = _aws_mapping_module
-                logger.info("event=infracost_backend_initialized url=%s", infracost_url)
+                # The former aws_mapping module was removed in v0.4.0. The
+                # current runtime has no operation-to-SKU adapter, so keep the
+                # optional client initialized but disable per-call fallback
+                # until a supported mapper is supplied.
+                app.state.aws_mapping = None
+                logger.warning(
+                    "event=infracost_live_fallback_unavailable "
+                    "reason=operation_mapper_not_bundled"
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("event=infracost_backend_init_failed error=%s", exc)
                 app.state.cost_backend = None
@@ -650,6 +686,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # ── Optional: Intelligence client (pack downloads + license check) ────
         app.state.intelligence_client = None
         app.state.price_table = None
+        app.state.premium_protection_unavailable = bool(cfg.intelligence.selected_packs)
+        app.state.premium_protection_expires_at = None
+        app.state.premium_protection_tier = None
         if cfg.intelligence.enabled:
             try:
                 # Load bundled public key for license verification
@@ -667,9 +706,12 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                     config=cfg.intelligence,
                     license_validator=_license_validator,
                 )
-                await intel_client.refresh()
-                await intel_client.start_refresh_task()
                 app.state.intelligence_client = intel_client
+                if cfg.intelligence.selected_packs:
+                    intel_client.set_refresh_callback(
+                        lambda result, error: _handle_intelligence_refresh(app.state, result, error)
+                    )
+                refresh_result = await intel_client.refresh(force=bool(cfg.intelligence.selected_packs))
                 app.state.price_table = intel_client.get_price_table("aws")
                 if app.state.price_table is not None:
                     logger.info(
@@ -677,8 +719,20 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
                         app.state.price_table.operation_count,
                     )
                 logger.info("event=intelligence_client_initialized")
+                if cfg.intelligence.selected_packs and app.state.premium_protection_unavailable:
+                    raise RuntimeError(
+                        "selected premium protection could not be verified and composed; refusing startup"
+                    )
+                if cfg.intelligence.selected_packs and refresh_result.get("errors"):
+                    raise RuntimeError("selected premium protection refresh returned errors; refusing startup")
+                await intel_client.start_refresh_task(
+                    prewarm=False if cfg.intelligence.selected_packs else None,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("event=intelligence_client_init_failed error=%s", exc)
+                if cfg.intelligence.selected_packs:
+                    await _cleanup_failed_startup(app.state, _pricing_refresh_task)
+                    raise
 
         # Emit startup audit event (use deployment scope)
         _get_or_create_emitter(app.state, cfg.deployment_id)
@@ -881,6 +935,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         jsonrpc_id = body.get("id")
         method: str = body.get("method", "")
 
+        premium_gate = _selected_protection_gate(app.state, method, jsonrpc_id)
+        if premium_gate is not None:
+            return premium_gate
+
         lifecycle = local_lifecycle_response(body)
         if lifecycle is not None:
             _emit(app.state, auth_ctx.scope, "passthrough", {
@@ -921,6 +979,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             tool_name = method
             arguments = dict(params) if isinstance(params, dict) else {}
             meta = arguments.pop("_meta", None) if isinstance(arguments, dict) else None
+
+        premium_gate = _selected_protection_gate(app.state, method, jsonrpc_id)
+        if premium_gate is not None:
+            return premium_gate
 
         # Step 4b — Extract conversation_id from _meta for audit threading
         # Checks _meta.tessera_intent.conversation_id first, falls back to _meta.conversation_id.
@@ -1050,6 +1112,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             "state_backend": getattr(app.state, "state_backend", None),
             "_data_vol_cache": data_vol_cache,
         }
+
+        premium_gate = _selected_protection_gate(app.state, method, jsonrpc_id)
+        if premium_gate is not None:
+            return premium_gate
 
         # Step 7 — Lockdown check (before mode branch)
         if cfg.runtime.lockdown:
@@ -1442,6 +1508,122 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
+def _clear_policy_decisions(state: Any) -> None:
+    cache: DecisionCache | None = getattr(state, "decision_cache", None)
+    if cache is not None:
+        cache.clear()
+
+
+def _disable_selected_protection(state: Any, reason: str) -> None:
+    """Drop premium policies before exposing the local-only engine."""
+    state.premium_protection_unavailable = True
+    state.premium_protection_expires_at = None
+    state.engine = PolicyEngine(
+        list(getattr(state, "base_policies", [])),
+        default_action=Action(state.config.policies.default_action),
+    )
+    _clear_policy_decisions(state)
+    logger.error("event=selected_premium_protection_unavailable reason=%s", reason)
+
+
+def _activate_selected_protection(state: Any) -> None:
+    client = getattr(state, "intelligence_client", None)
+    if client is None:
+        raise ValueError("intelligence client is unavailable")
+    if client.refresh_in_progress:
+        raise ValueError("intelligence refresh is in progress")
+    local_policies = list(getattr(state, "base_policies", []))
+    selected_policies = client.load_selected_policies()
+    local_ids = {policy.id for policy in local_policies}
+    composed = local_policies + [p for p in selected_policies if p.id not in local_ids]
+    composed.sort(key=lambda policy: (-policy.priority, policy.id))
+    new_engine = PolicyEngine(
+        composed,
+        default_action=Action(state.config.policies.default_action),
+    )
+    status = client.current_license_status
+    if status is None:
+        raise ValueError("license status is unavailable")
+    # Publish the engine and deadline before clearing the gate. The gate remains
+    # closed throughout all archive, schema, and identity validation above.
+    state.engine = new_engine
+    state.premium_protection_tier = status.tier
+    state.premium_protection_expires_at = status.expires_at
+    _clear_policy_decisions(state)
+    state.premium_protection_unavailable = False
+    logger.info(
+        "event=selected_premium_protection_activated packs=%d policies=%d tier=%s",
+        len(state.config.intelligence.selected_packs),
+        len(selected_policies),
+        status.tier,
+    )
+
+
+def _handle_intelligence_refresh(
+    state: Any,
+    result: dict[str, object] | None,
+    error: Exception | None,
+) -> None:
+    if not state.config.intelligence.selected_packs:
+        return
+    if result is not None and result.get("refresh_started"):
+        _disable_selected_protection(state, "refresh_in_progress")
+        return
+    client = getattr(state, "intelligence_client", None)
+    if client is not None and client.refresh_in_progress:
+        _disable_selected_protection(state, "refresh_superseded")
+        return
+    if error is not None:
+        _disable_selected_protection(state, "refresh_failed")
+        return
+    if result is None or result.get("errors"):
+        _disable_selected_protection(state, "refresh_incomplete")
+        return
+    try:
+        _activate_selected_protection(state)
+    except Exception as exc:  # noqa: BLE001 — never retain last known premium engine
+        _disable_selected_protection(state, "selection_validation_failed")
+        logger.error("event=selected_premium_pack_compose_failed error=%s", exc)
+
+
+def _commit_policy_reload(state: Any, updated_policies: list[Any]) -> None:
+    state.base_policies = list(updated_policies)
+    if state.config.intelligence.selected_packs:
+        try:
+            _activate_selected_protection(state)
+        except Exception as exc:  # noqa: BLE001 — local reload cannot preserve stale premium state
+            _disable_selected_protection(state, "policy_reload_recompose_failed")
+            logger.error("event=selected_premium_policy_reload_failed error=%s", exc)
+        return
+    state.engine = PolicyEngine(
+        updated_policies,
+        default_action=Action(state.config.policies.default_action),
+    )
+    _clear_policy_decisions(state)
+    logger.info("event=policy_reloaded count=%d", len(updated_policies))
+
+
+def _selected_protection_gate(state: Any, method: str, jsonrpc_id: Any) -> Response | None:
+    if not state.config.intelligence.selected_packs:
+        return None
+    if not state.premium_protection_unavailable and state.premium_protection_tier != "free":
+        expires_at = state.premium_protection_expires_at
+        if expires_at is None or expires_at.tzinfo is None or datetime.now(UTC) >= expires_at.astimezone(UTC):
+            _disable_selected_protection(state, "license_expired")
+    governed_data_methods = {"resources/read", "sampling/createMessage"}
+    governed = method == "tools/call" or (
+        state.config.policies.engine_eval_data_methods and method in governed_data_methods
+    )
+    if governed and state.premium_protection_unavailable:
+        return _jsonrpc_error(
+            jsonrpc_id,
+            -32603,
+            "Premium policy protection is unavailable",
+            reason="premium_protection_unavailable",
+        )
+    return None
+
+
 async def _run_proxy_pipeline(
     state: Any,
     upstream_name: str,
@@ -1459,6 +1641,10 @@ async def _run_proxy_pipeline(
 
     jsonrpc_id = body.get("id", 1)
     method: str = body.get("method", "")
+
+    premium_gate = _selected_protection_gate(state, method, jsonrpc_id)
+    if premium_gate is not None:
+        return premium_gate
 
     # Branch on method — pass-throughs forwarded without policy evaluation.
     # v0.9.0 D5: resources/read and sampling/createMessage are engine-evaluated
@@ -1489,6 +1675,10 @@ async def _run_proxy_pipeline(
         tool_name = method
         arguments = dict(params) if isinstance(params, dict) else {}
         meta = arguments.pop("_meta", None) if isinstance(arguments, dict) else None
+
+    premium_gate = _selected_protection_gate(state, method, jsonrpc_id)
+    if premium_gate is not None:
+        return premium_gate
 
     # Extract conversation_id from _meta for audit threading
     _conversation_id: str | None = None
@@ -1612,6 +1802,10 @@ async def _run_proxy_pipeline(
         "state_backend": getattr(state, "state_backend", None),
         "_data_vol_cache": data_vol_cache,
     }
+
+    premium_gate = _selected_protection_gate(state, method, jsonrpc_id)
+    if premium_gate is not None:
+        return premium_gate
 
     # Lockdown check
     if cfg.runtime.lockdown:

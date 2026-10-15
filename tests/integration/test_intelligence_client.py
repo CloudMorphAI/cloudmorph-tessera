@@ -286,39 +286,60 @@ async def test_license_check_401_falls_back_to_free(tmp_path, respx_mock):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_license_server_unreachable_uses_cached(tmp_path, respx_mock):
-    """License server unreachable → returns cached license if within 7d."""
+    """An unreachable server may use a still-valid, signature-verified cache."""
     from tessera.intelligence.license import LicenseValidator
 
     config = _make_config(tmp_path)
-
-    import importlib.resources as _ilr
-    pub_key_pem = (_ilr.files("tessera.intelligence") / "public_key.pem").read_bytes()
-
-    validator = LicenseValidator(config=config, public_key_pem=pub_key_pem)
-
-    # Seed the disk cache with a developer tier license 2 hours old
-    cache_dir = Path(config.cache_dir).expanduser()  # noqa: ASYNC240 — test setup, not hot path
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "license.json"
-    cache_data = {
-        "tier": "developer",
-        "expires_at": None,
-        "seats": 5,
-        "customer_id": "cust-123",
-        "cached_at": time.time() - 7200,  # 2 hours ago
-    }
-    cache_path.write_text(json.dumps(cache_data), encoding="utf-8")
-
-    # License server unreachable
-    respx_mock.post("https://license.test/v1/check").mock(side_effect=Exception("Connection refused"))
-
     import os
+
     old_val = os.environ.get("TESSERA_LICENSE_KEY")
-    os.environ["TESSERA_LICENSE_KEY"] = "some-key"
+    license_key = "some-key"
+    os.environ["TESSERA_LICENSE_KEY"] = license_key
     try:
+        priv, pub_path = _ed25519_keypair_to_disk(tmp_path)
+        now = int(time.time())
+        token_exp = now + 600
+        entitlement_exp = now + 300
+        expires_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(entitlement_exp))
+        claims = {
+            "tier": "developer",
+            "seats": 5,
+            "customer_id": "cust-123",
+            "iss": "license.tessera.cloudmorph.ai",
+            "aud": "cloudmorph-tessera",
+            "iat": now,
+            "exp": token_exp,
+            "expires_at": expires_at,
+        }
+        token = _make_license_jwt(priv, claims)
+        validator = LicenseValidator(config=config, public_key_pem=pub_path.read_bytes())
+
+        # Seed a recent paid cache, but make its authority the signed token.
+        cache_dir = Path(config.cache_dir).expanduser()  # noqa: ASYNC240 — test setup, not hot path
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / "license.json"
+        cache_data = {
+            "tier": "developer",
+            "expires_at": expires_at,
+            "seats": 5,
+            "customer_id": "cust-123",
+            "cached_at": time.time() - 7200,  # within the configured seven-day outage window
+            "jwt": token,
+            "license_key_hash": hashlib.sha256(license_key.encode("utf-8")).hexdigest(),
+        }
+        cache_path.write_text(json.dumps(cache_data), encoding="utf-8")
+
+        # License server unreachable. Offline cache loading re-verifies the JWT.
+        respx_mock.post("https://license.test/v1/check").mock(side_effect=Exception("Connection refused"))
         status = await validator.check(force=True)
         assert status.tier == "developer"
+        assert status.seats == 5
+        assert status.customer_id == "cust-123"
         assert status.from_cache is True
+        assert status.jwt == token
+        assert status.expires_at is not None
+        assert int(status.expires_at.timestamp()) == entitlement_exp
+        assert entitlement_exp < token_exp  # entitlement expiry is the earlier authorization bound
     finally:
         if old_val is None:
             os.environ.pop("TESSERA_LICENSE_KEY", None)

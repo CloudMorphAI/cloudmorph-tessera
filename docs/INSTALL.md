@@ -4,7 +4,7 @@
 Publication of that wheel and container tag has not been verified by the
 13 October local release review. An unversioned `pip install` selects the
 published package, which may differ from this checkout. See the
-[current release review](../arch/status/packaging-and-release.md#current-local-review--13-october-2026).
+[current release gates and local review](../../workspace-support/architecture/tessera-runtime/current.md#packaging-and-release-gates).
 
 Docker is the recommended path for production. pip install is for local development, CI, and programmatic embedding.
 

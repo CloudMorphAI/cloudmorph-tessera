@@ -21,9 +21,17 @@ def test_demo_blocks_dangerous_call_and_allows_safe_call() -> None:
     lines: list[str] = []
     result = run_demo(echo=lines.append)
 
-    # Block payload — verbatim contract with the proxy's POLICY_BLOCK text.
+    # Three blocks — secret, GitHub force-push, Postgres DROP.
+    from tessera.demo import DEMO_BLOCKS
+
+    blocks = result["blocks"]
+    assert len(blocks) == 3
+    for spec, block in zip(DEMO_BLOCKS, blocks, strict=True):
+        assert "POLICY_BLOCK" in block["text"]
+        assert f"policy_id: {spec['policy_id']}" in block["text"]
+        assert spec["reason"] in block["text"]
+
     block_text = result["block_text"]
-    assert "POLICY_BLOCK" in block_text
     assert f"policy_id: {DEMO_POLICY_ID}" in block_text
     assert DEMO_BLOCK_REASON in block_text
 
@@ -36,8 +44,8 @@ def test_demo_blocks_dangerous_call_and_allows_safe_call() -> None:
     # Evidence bundle: counts + files.
     manifest = result["manifest"]
     counts = manifest["event_counts"]
-    assert counts["total"] >= 2
-    assert counts["block"] >= 1
+    assert counts["total"] >= 4
+    assert counts["block"] >= 3
     assert counts["allow"] >= 1
 
     bundle_dir = Path(result["bundle_dir"])
