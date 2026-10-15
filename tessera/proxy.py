@@ -38,7 +38,14 @@ from tessera.auth.bearer import BearerTokenAuthenticator
 from tessera.config import PoliciesMode, TesseraConfig, load_config
 from tessera.errors import PolicyError, UnauthorizedError
 from tessera.intent import extract_intent
-from tessera.mcp_http import local_lifecycle_response, read_message, validate_http_headers
+from tessera.mcp_http import (
+    MODERN_PROTOCOL_VERSION,
+    local_lifecycle_response,
+    modernize_http_response,
+    read_message,
+    validate_http_headers,
+    validate_modern_request,
+)
 from tessera.observability import events as _obs_events
 from tessera.observability import metrics as _obs_metrics
 from tessera.observability import tracing as _obs_tracing
@@ -366,13 +373,21 @@ def _inject_audit_id(body: dict[str, Any], event_id: str) -> dict[str, Any]:
     result = body.get("result")
     error = body.get("error")
     if isinstance(result, dict):
-        meta = result.setdefault("_meta", {})
-        meta["tessera_audit_event_id"] = event_id
+        meta = result.get("_meta")
+        if meta is None:
+            meta = {}
+            result["_meta"] = meta
+        if isinstance(meta, dict):
+            meta["tessera_audit_event_id"] = event_id
     elif isinstance(error, dict):
         data = error.setdefault("data", {})
         if isinstance(data, dict):
-            meta = data.setdefault("_meta", {})
-            meta["tessera_audit_event_id"] = event_id
+            meta = data.get("_meta")
+            if meta is None:
+                meta = {}
+                data["_meta"] = meta
+            if isinstance(meta, dict):
+                meta["tessera_audit_event_id"] = event_id
         # If error.data is set to a non-dict, skip rather than overwrite it.
     # If body has neither result nor error (shouldn't happen for valid JSON-RPC),
     # we drop the audit_id rather than break the response shape.
@@ -810,7 +825,31 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             error = validate_http_headers(request, current.listen.allowed_origins)
             if error is not None:
                 return error
-        return cast("Response", await call_next(request))
+        response = cast("Response", await call_next(request))
+        if (
+            (request.url.path == "/mcp" or request.url.path.startswith("/mcp/"))
+            and request.method == "POST"
+            and request.headers.get("mcp-protocol-version") == MODERN_PROTOCOL_VERSION
+            and getattr(request.state, "mcp_modern_validated", False)
+            and 200 <= response.status_code < 300
+            and response.headers.get("content-type", "").lower().startswith("application/json")
+        ):
+            method_headers = request.headers.getlist("mcp-method")
+            if len(method_headers) == 1:
+                response_body = getattr(response, "body", None)
+                if not isinstance(response_body, bytes):
+                    body_iterator = getattr(response, "body_iterator", None)
+                    if body_iterator is not None:
+                        chunks = [chunk async for chunk in body_iterator]
+                        response_body = b"".join(
+                            chunk if isinstance(chunk, bytes) else str(chunk).encode()
+                            for chunk in chunks
+                        )
+                if isinstance(response_body, bytes) and response_body:
+                    response = modernize_http_response(
+                        response, method_headers[0], response_body
+                    )
+        return response
 
     @app.api_route("/mcp", methods=["GET", "DELETE"])
     @app.api_route("/mcp/{upstream_name}", methods=["GET", "DELETE"])
@@ -931,6 +970,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         body = await read_message(request)
         if isinstance(body, JSONResponse):
             return body
+        modern_error = validate_modern_request(request, body)
+        if modern_error is not None:
+            return modern_error
 
         jsonrpc_id = body.get("id")
         method: str = body.get("method", "")
@@ -1418,6 +1460,9 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         body = await read_message(request)
         if isinstance(body, JSONResponse):
             return body
+        modern_error = validate_modern_request(request, body)
+        if modern_error is not None:
+            return modern_error
 
         jsonrpc_id = body.get("id")
         method: str = body.get("method", "")
@@ -2278,6 +2323,30 @@ async def _forward_upstream(
     cfg: TesseraConfig = state.config
     upstream_cfg = next((u for u in cfg.upstreams if u.name == upstream_name), None)
 
+    # Downstream 2026 request metadata is validated at ingress, but upstream
+    # transports may still be legacy. Never leak a caller's modern version or
+    # capability declarations as authority to the independently negotiated
+    # upstream connection; preserve Tessera's custom intent metadata.
+    forwarded_body = dict(body)
+    params = body.get("params")
+    if isinstance(params, dict):
+        forwarded_params = dict(params)
+        metadata = params.get("_meta")
+        if isinstance(metadata, dict):
+            forwarded_meta = dict(metadata)
+            for key in (
+                "io.modelcontextprotocol/protocolVersion",
+                "io.modelcontextprotocol/clientCapabilities",
+                "io.modelcontextprotocol/clientInfo",
+                "io.modelcontextprotocol/logLevel",
+            ):
+                forwarded_meta.pop(key, None)
+            if forwarded_meta:
+                forwarded_params["_meta"] = forwarded_meta
+            else:
+                forwarded_params.pop("_meta", None)
+        forwarded_body["params"] = forwarded_params
+
     upstream_kind = upstream_cfg.kind if upstream_cfg is not None else "bearer"
 
     match upstream_kind:
@@ -2289,7 +2358,7 @@ async def _forward_upstream(
                 return _jsonrpc_error(
                     jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
                 )
-            return await aws_client.forward(body)
+            return await aws_client.forward(forwarded_body)
 
         case "mcp_streamable_http":
             sh_clients: dict[str, StreamableHttpUpstream] = getattr(state, "streamable_http_clients", {})
@@ -2299,7 +2368,7 @@ async def _forward_upstream(
                 return _jsonrpc_error(
                     jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
                 )
-            return await sh_client.forward(body, session_scope=session_scope)
+            return await sh_client.forward(forwarded_body, session_scope=session_scope)
 
         case _:
             # Default bearer / httpx path
@@ -2312,7 +2381,7 @@ async def _forward_upstream(
                 )
 
             try:
-                response = await client.post("/", json=body)
+                response = await client.post("/", json=forwarded_body)
                 if response.status_code >= 500:
                     _METRICS["requests_total{outcome=upstream_5xx}"] += 1
                     return _jsonrpc_error(jsonrpc_id, -32001, "Upstream error")
