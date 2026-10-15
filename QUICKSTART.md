@@ -1,89 +1,52 @@
-# Quickstart — Tessera Cloud in 10 minutes
+# Local source quickstart
 
-This path wires the local Tessera proxy to your Tessera Cloud dashboard so you can author a policy in the browser, watch it block a live tool call in your IDE, then export and independently verify the audit-grade evidence. Every step is a real command — copy, paste, go.
+This guide covers the staged Tessera source checkout and its offline synthetic
+pilot. It does not depend on Tessera Cloud or establish a published package,
+desktop-client compatibility, production deployment, or customer acceptance.
 
-## 1. Install
+## 1. Prepare the source checkout
 
-```bash
-pip install cloudmorph-tessera
-```
+The project metadata declares Python `>=3.12`. Retained local evidence includes
+an editable Tessera source install on CPython 3.13.7 on Windows and existing
+tests on CPython 3.12.3 in WSL. The separate pinned Hermes client environment
+needed a dependency-marker workaround; Tessera did not. These runs do not
+establish a general OS/Python support matrix. The source declares version
+`1.0.0`; PyPI and container publication of that version are unverified. See [installation notes](docs/INSTALL.md).
 
-Confirm it's on your PATH:
-
-```bash
-tessera version
-```
-
-## 2. Authenticate
-
-```bash
-tessera login
-```
-
-Opens a browser to `tessera.cloudmorph.ai`, completes an OAuth 2.1 PKCE handshake, and writes a token to `~/.tessera/oauth.json` (mode `0600`). Nothing else touches this file.
-
-## 3. Pull your dashboard policies
+From a checkout with its runtime dependencies available:
 
 ```bash
-tessera config sync
+python -m pip install -e .
+tessera init --dir ./tessera-local
 ```
 
-Fetches the policy set from your Tessera Cloud dashboard and caches it locally at `~/.tessera/policy-cache.db`. Prints the number of policies cached. Local enforcement never depends on a live network call after this point — `tessera serve --cloud` reads the cache.
+`tessera init` creates a `log_only` configuration and two reference policies.
+Configure the upstream and review the policies before starting a live proxy.
 
-## 4. Start the proxy in cloud mode
+## 2. Run the offline synthetic pilot
+
+This command passed all 15 checks on WSL Ubuntu with CPython 3.12.3. Run it in
+Linux/WSL, following the [synthetic pilot instructions](examples/synthetic_pilot/README.md),
+and use a new evidence directory:
 
 ```bash
-TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve --cloud
+python examples/synthetic_pilot/run.py --output-dir ./tessera-local-evidence
 ```
 
-`--cloud` layers your dashboard-authored policies on top of the 25 bundled defaults and re-syncs on the periodic timer (force a refresh anytime with `tessera config sync`). Tessera is now listening on `http://127.0.0.1:8080/mcp`.
+On Windows, this pilot currently fails before requests because its deliberate
+IP-socket guard blocks asyncio's internal socket pair. The guard remains enabled;
+use the verified Linux/WSL path for this script. This limitation is separate from
+the successful Windows Tessera install and Hermes connector test.
 
-## 5. Author a policy in the dashboard
+The pilot exercises the local policy engine and HTTP adapter with synthetic
+tools. It starts no listener, calls no cloud or model API, and does not validate
+a live IDE/client connection. Its unsigned records are local test evidence, not
+an independent assessment or production acceptance.
 
-In the Tessera Cloud dashboard, add a policy — for example, block any `delete`-class call against a resource tagged `production`. Save it, then run `tessera config sync` again (or wait for the next auto-refresh) to pull it into the local cache.
+## 3. Configure a client separately
 
-## 6. Wire Tessera into Cursor or Claude Code
-
-Add to `~/.cursor/mcp.json` (or the equivalent Claude Code / Claude Desktop MCP config):
-
-```json
-{
-  "mcpServers": {
-    "tessera": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}
-```
-
-Restart the IDE. Every tool call your agent makes now routes through Tessera.
-
-## 7. Watch the block happen
-
-Ask your agent to perform the action your new policy targets — e.g. delete a production resource. The agent's tool call is evaluated locally, in-process, against your policy. If it matches, the agent gets back a final `POLICY_BLOCK` result (not a retryable error) naming the `policy_id` and the reason. The call never reaches the upstream MCP server.
-
-## 8. Export the evidence bundle
-
-```bash
-tessera audit export --from 2026-07-01 --to 2026-07-10 --out ./evidence
-```
-
-Produces `./evidence/` containing `events.jsonl`, `manifest.json`, `summary.html`, and `VERIFY.md` — every decision in range, Ed25519-signed as one self-contained bundle.
-
-## 9. Verify it offline
-
-```bash
-tessera audit verify --dir ./evidence
-```
-
-Recomputes the hash chain and the signature independently from `events.jsonl` — no network call, no trust in `manifest.json`'s stated values. Exit code `0` means the bundle is intact.
-
-Open `./evidence/summary.html` to see the same events rendered against the EU AI Act / India DPDP / SOC 2 compliance mappings.
-
-## Next
-
-- Full policy authoring reference: [docs/POLICIES.md](docs/POLICIES.md)
-- Configuration schema: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- IDE-specific wiring (Claude Desktop, VS Code Copilot, Continue, Cline): [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)
-- Environment diagnostics if something isn't wired correctly: `tessera doctor`
+For a real MCP client, configure a reviewed upstream, local auth, policies, and
+the URL for the selected route. See [the staged Streamable HTTP contract](docs/STREAMABLE_HTTP.md)
+and [integration recipes](docs/INTEGRATIONS.md). Compatibility is specific to
+the named client and protocol version tested; the local synthetic pilot does
+not establish compatibility for every desktop client.

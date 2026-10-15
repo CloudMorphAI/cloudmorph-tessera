@@ -38,7 +38,7 @@ Amplify deployment does not release this Python package or signed intelligence.
 
 AI agents now take real, irreversible actions through MCP tool calls — delete a production database, attach an admin IAM policy, exfiltrate a secret into a log line. An agent doesn't need to be malicious for this to happen; a bad prompt, a hallucinated argument, or a compromised upstream MCP server is enough. Once the call reaches AWS, GCP, or Azure, there is no undo.
 
-Regulators are catching up to this. The EU AI Act's Title III record-keeping and traceability obligations (Articles 12, 19, 26) apply from **2026-08-02** — high-risk AI systems must automatically log their operation and retain those logs for at least six months. "We have application logs" is not the same as a tamper-evident, independently verifiable record of what an AI system did and why it was allowed or blocked.
+Teams reviewing agent controls need to trace which routed calls were allowed or blocked and why. Tessera records policy decisions and supports integrity checks on exported records. That evidence is one input to a security or compliance review; it does not establish legal compliance.
 
 Tessera is a policy firewall at the MCP boundary: it sits between the agent and every MCP server, evaluates each tool call deterministically against a YAML policy bench, and writes every decision — allow, block, or require-approval — to a signed, hash-chained audit log you can export and verify offline.
 
@@ -62,9 +62,9 @@ Every `tools/call` is evaluated in-process against the policy bench before it re
 
 No LLM call, no heuristic scoring, no adaptive model in the decision path. The same policy set given the same tool call always produces the same verdict — that determinism is what makes the resulting audit trail defensible evidence rather than a best-effort log.
 
-## Audit-grade compliance evidence
+## Auditable decision exports
 
-Every decision Tessera makes — not just blocks — is written to a SHA-256 hash-chained audit log. On demand, `tessera audit export` turns a time range of that log into a self-contained, Ed25519-signed **evidence bundle**:
+Tessera emits allow and block decisions to its configured audit sink, with SHA-256 hash chaining for persisted events. Delivery and persistence depend on sink configuration and health; a returned decision is not itself proof of durable storage. On demand, `tessera audit export` turns a selected time range of persisted records into a self-contained, Ed25519-signed **evidence bundle**:
 
 ```bash
 tessera audit export --from 2026-06-01 --to 2026-06-30 --out ./evidence-june
@@ -84,7 +84,7 @@ tessera audit verify --dir ./evidence-june
 
 `audit verify --dir` recomputes the hash chain and the Ed25519 signature independently from `events.jsonl` — it does not trust `manifest.json`'s stated values — and runs fully offline. A tampered event, a gap in the chain, or a forged manifest is caught, not glossed over.
 
-`summary.html` renders the events against built-in compliance mappings — **EU AI Act**, **India DPDP**, and **SOC 2** — showing which of the framework's obligations are evidenced by the bundle and exactly what is (and is not) covered. This is the artifact that answers "prove your AI agent's actions were governed" to an auditor or a customer's security review, without granting them access to your live systems.
+`summary.html` renders the events against built-in mappings for **EU AI Act**, **India DPDP**, and **SOC 2**. These mappings are informational evidence links; an export does not certify compliance, establish legal compliance, or prove that calls outside Tessera were governed. Local or synthetic output is not production or customer acceptance evidence.
 
 ## Performance
 
@@ -100,21 +100,20 @@ Measured on v0.7.2 over the 18-policy default set, GitHub Actions `ubuntu-latest
 
 End-to-end HTTP throughput (sustained RPS, full-cycle latency) has **not** yet been formally benchmarked on production-spec hardware; earlier loopback figures were withdrawn pending a clean production run.
 
-## Install + first block in 60 seconds
+## Local source quickstart
 
 ```bash
-pip install cloudmorph-tessera
+python -m pip install -e .
 tessera init                                        # writes tessera.yaml + policies/ in cwd
-TESSERA_BEARER_TOKEN="tk_$(openssl rand -hex 16)" tessera serve
 ```
 
-Tessera now listens on `http://127.0.0.1:8080/mcp`. Wire it into Cursor / Claude Code / your agent's MCP config with a single "tessera" entry (recipes in [recipes/](recipes/)), and every `tools/call` flows through 25 bundled defensive policies — `prod-protection`, `cost-cap`, `secret-leak-block`, `prompt-injection-heuristic`, `aws-mcp-passrole-guard`, plus 20 others. Tessera fans out tool discovery across all configured upstreams and namespaces tools as `<upstream>__<tool>` in the unified catalog.
+The checkout's package metadata declares version `1.0.0` and Python `>=3.12`; neither value confirms a published PyPI package or container image. The local `init` scaffold creates a `log_only` configuration and two reference guards. Configure and review an upstream and its policies before serving. For a Linux/WSL offline synthetic run, follow [the local quickstart](QUICKSTART.md); that run starts no listener and does not verify a live desktop client or deployment.
 
 ---
 
 ## What this protects against
 
-Concrete categories the 25 bundled policies cover out of the box:
+The repository includes policy templates for the categories below. They are not all active by default: `tessera init` writes only `secret-leak-block` and `prompt-injection-heuristic`; review and explicitly configure any other policy before relying on it.
 
 - **Cost spikes** — `cost-cap`, `aws-bedrock-cost-ceiling-EXAMPLE`, `aws-cost-runaway-stop-EXAMPLE`, `aws-ec2-cost-cap-EXAMPLE`. Per-call ceiling, daily cumulative ceiling, model-specific Bedrock ceiling.
 - **IAM blast-radius expansion** — `aws-mcp-passrole-guard`, `aws-mcp-admin-policy-deny`, `aws-mcp-create-access-key-deny`, `aws-iam-blast-radius-EXAMPLE`. PassRole approval gate, AWS-managed-admin attach hard-deny, access-key creation deny, principal-count guard.
@@ -124,7 +123,7 @@ Concrete categories the 25 bundled policies cover out of the box:
 - **Region / data-residency violations** — `data-residency-eu`, `aws-region-allowlist-EXAMPLE`. Block ops outside permitted regions.
 - **Public exposure / audit tampering** — `aws-mcp-rds-public-deny`, `aws-mcp-ec2-imdsv1-deny`, `aws-mcp-kms-deletion-approval`, `aws-mcp-s3-public-access-deny`, `aws-mcp-sg-open-ingress-deny`, `aws-mcp-lambda-public-invoke-deny`, `aws-mcp-cloudtrail-logging-disable-deny`. RDS public-access block, EC2 IMDSv1 deny, KMS deletion approval gate, S3/security-group/Lambda public-exposure hard-denies, CloudTrail disable hard-deny.
 
-Vendor-specific policy packs are distributed separately through Tessera Cloud. The optional intelligence client verifies and caches signed artifacts. To activate a compatible published pack, set `intelligence.enabled: true` and list its exact `pack-name@version` in `intelligence.selected_packs` in `tessera.yaml`; the default list is empty. Each selection requires a signed production manifest, a verified archive, runtime-compatible policies and an eligible current license. Archived incompatible packs and unsigned drafts cannot be activated.
+The source includes an optional client for verifying and caching signed policy artifacts; this checkout does not establish current CDN or pack availability. To configure a compatible published pack, set `intelligence.enabled: true` and list its exact `pack-name@version` in `intelligence.selected_packs` in `tessera.yaml`; the default list is empty. Each selection requires a signed production manifest, a verified archive, runtime-compatible policies and an eligible current license. Archived incompatible packs and unsigned drafts cannot be activated.
 
 Selections are required protection: an unavailable selection prevents startup; failed refresh or expired entitlement blocks governed calls, including in `log_only` and observation modes. Local policy IDs take precedence over selected-pack collisions. The CLI has no `tessera intelligence pull` command. Local policy files remain supported and are validated with `tessera policy lint`.
 
@@ -162,31 +161,25 @@ Tessera is a policy boundary at the MCP layer, not an OS- or network-level sandb
 
 Tessera raises the cost of a mistake and leaves a tamper-evident record of every decision it *does* see. It is one enforcement layer, not a complete containment boundary.
 
-## Tier levels
+## Local policies and optional content
 
-| Tier | Engine + 25 bundled policies | Premium packs |
-|---|---|---|
-| **Free** | Yes (local enforcement, hash-chain audit, multi-token scoping) | None |
-| **Developer** | Yes | `aws-cost-aware-defaults`, `vendor-mcp-protection` |
-| **Team** | Yes | + `hipaa-guardrails`, `pci-dss-controls` |
-| **Enterprise** | Yes | All 15 production packs (tri-cloud AWS+Azure+GCP), custom-pack authoring |
-
-Premium packs are fetched from the Tessera Cloud CDN, Ed25519-signature-verified, and cached locally. Free-tier installs continue to enforce 25 bundled policies with no network calls.
+Policies are loaded from the configured local policy directory. `tessera init`
+writes two starter policies; other source-tree policy files are not activated
+automatically. The optional signed-content client requires a compatible verified
+catalog, archive and eligible license. This repository does not establish which
+commercial packs or tier entitlements are currently published and available.
 
 ## Installation
 
 ```bash
-# Local development / CLI use
-pip install cloudmorph-tessera
+# Editable install from this checkout (source version 1.0.0)
+python -m pip install -e .
 
 # With optional extras
-pip install "cloudmorph-tessera[aws,gemini,intelligence,infracost,observability]"
-
-# Production deploy (recommended)
-docker pull ghcr.io/cloudmorphai/tessera:1.0.0
+python -m pip install -e ".[aws,gemini,intelligence,infracost,observability]"
 ```
 
-After install: `tessera version` prints `tessera 1.0.0`. Full install matrix + supported Python versions: [docs/INSTALL.md](docs/INSTALL.md).
+The distribution and OCI image names are shown for reference; publication of the `1.0.0` PyPI package and container tag has not been verified. `tessera version` reports installed package metadata, which is not proof of a public release. See [the staged install notes](docs/INSTALL.md) for the limited local environment evidence.
 
 ## Wire it into Cursor
 
@@ -289,9 +282,9 @@ tessera policy test --policy-dir policies/ --fixture-dir tests/fixtures/
 
 ## What ships
 
-- **25 bundled default policies** (enabled out of the box) — 13 generic (7 original + 6 Batch 8: intent / business-hours / oversized-payload / tool-allowlist / prompt-injection / non-prod-only) + 12 AWS-MCP security defaults. Plus **5 AWS-illustrative example policies** (opt-in templates, not enabled by default) demonstrating cost/blast-radius conditions.
+- **Policy templates** - `tessera init` writes two starter policies. Other templates in `tessera/policies_default/`, including AWS-illustrative examples, are not enabled by that scaffold; review and configure them explicitly.
 - **Hash-chained audit log** — SQLite-backed; per-token scope isolation; `tessera audit verify` detects gap or tamper.
-- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, `AuditSink` resolved via importlib at startup. Same Protocols in Tessera Cloud (which swaps in Cognito + DynamoDB implementations).
+- **Three pluggable Protocols** — `Authenticator`, `PolicyLoader`, and `AuditSink` resolved via importlib at startup.
 - **Three enforcement modes** — `enforcement`, `log_only`, `observation`.
 - **Multi-token bearer auth** + JWT mode (Entra / Okta / Cognito).
 - **OAuth 2.1 PKCE + DCR + introspection** for management-plane SSO.
@@ -301,7 +294,7 @@ tessera policy test --policy-dir policies/ --fixture-dir tests/fixtures/
 
 ## Tessera Cloud
 
-Hosted, multi-tenant, SSO, compliance evidence export, signed premium intelligence packs. Same engine, same Protocols — the implementations are swapped (e.g., `DynamoDBPolicyLoader` instead of `FilesystemPolicyLoader`). Your existing `tessera.yaml` and policy files work without changes when you migrate. https://cloudmorph.ai
+Tessera Cloud is a separate hosted product surface. The optional hosted runtime wrapper in the application monorepo is dormant; local runtime and synthetic evidence in this repository do not establish hosted feature parity, service availability, or deployment behavior. See the hosted product documentation for its current status.
 
 ## Manual smoke scenarios
 
