@@ -5,8 +5,16 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
+from tessera.errors import PolicyError
 from tessera.policy.loader import FilesystemPolicyLoader
-from tessera.policy.schema import ArgContainsPattern, ArgMatchesRegex, IntentPurposeMatches
+from tessera.policy.schema import (
+    ArgContainsPattern,
+    ArgMatchesRegex,
+    ArgPathMatchesRegex,
+    IntentPurposeMatches,
+)
 
 
 def _write_policy(tmp_path: Path, content: str) -> Path:
@@ -85,6 +93,66 @@ def test_intent_purpose_matches_compiled_stored(tmp_path: Path) -> None:
     cond = policies[0].when[0]
     assert isinstance(cond, IntentPurposeMatches)
     assert cond.compiled_regex is not None
+
+
+def test_arg_path_matches_regex_compiled_and_matches_nested_leaf(tmp_path: Path) -> None:
+    """Nested-path regexes use the same validated, precompiled pattern path."""
+    from tessera.policy.conditions import evaluate_condition
+
+    _write_policy(
+        tmp_path,
+        """\
+        id: test-path-regex
+        name: Test nested path regex
+        match:
+          upstream: "*"
+        when:
+          - condition: arg_path_matches_regex
+            arg_path: MetadataOptions.HttpTokens
+            pattern: "^optional$"
+        action: block
+        reason: blocked
+        """,
+    )
+    policies = FilesystemPolicyLoader(tmp_path).load_all()
+    cond = policies[0].when[0]
+
+    assert isinstance(cond, ArgPathMatchesRegex)
+    assert cond.compiled_regex is not None
+    context = {
+        "tool_call": {
+            "name": "update_config",
+            "arguments": {"MetadataOptions": {"HttpTokens": "optional"}},
+            "_meta": None,
+        },
+        "policy_id": "test-path-regex",
+    }
+    assert evaluate_condition(cond, context) is True
+
+
+@pytest.mark.parametrize("pattern", ["[unclosed", r"([a-z0-9]+\s*)+$"])
+def test_arg_path_matches_regex_rejects_invalid_or_unsafe_patterns(
+    tmp_path: Path, pattern: str
+) -> None:
+    """Malformed and known ReDoS patterns fail policy loading, like other regex conditions."""
+    _write_policy(
+        tmp_path,
+        f"""\
+        id: test-path-regex-invalid
+        name: Test invalid nested path regex
+        match:
+          upstream: "*"
+        when:
+          - condition: arg_path_matches_regex
+            arg_path: MetadataOptions.HttpTokens
+            pattern: '{pattern}'
+        action: block
+        reason: blocked
+        """,
+    )
+
+    with pytest.raises(PolicyError):
+        FilesystemPolicyLoader(tmp_path).load_all()
 
 
 def test_compiled_regex_identity_stable_across_load(tmp_path: Path) -> None:
