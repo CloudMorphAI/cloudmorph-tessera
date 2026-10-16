@@ -980,6 +980,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             _METRICS["requests_total{outcome=unauthorized}"] += 1
             return JSONResponse({"error": str(exc)}, status_code=401)
 
+        try:
+            policy_engine = _policy_engine_for_scope(app.state, auth_ctx.scope)
+        except Exception as exc:  # noqa: BLE001
+            return _policy_engine_unavailable(auth_ctx.scope, exc)
+
         # Step 2 — Parse JSON-RPC body
         body = await read_message(request)
         if isinstance(body, JSONResponse):
@@ -1109,7 +1114,7 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         # blocking the event loop during the round-trip. Result populates the
         # per-request cache that the condition evaluator consults first.
         blast_radius_cache: dict[str, int] = {}
-        engine_for_prefetch: PolicyEngine | None = getattr(app.state, "engine", None)
+        engine_for_prefetch: PolicyEngine | None = policy_engine
         blast_radius_backend = getattr(app.state, "blast_radius_backend", None)
         if (
             blast_radius_backend is not None
@@ -1211,7 +1216,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Step 8 — Mode branch
         mode = cfg.policies.mode
-        engine: PolicyEngine = app.state.engine
+        try:
+            engine: PolicyEngine = _policy_engine_for_scope(app.state, auth_ctx.scope)
+        except Exception as exc:  # noqa: BLE001
+            return _policy_engine_unavailable(auth_ctx.scope, exc)
 
         if mode == PoliciesMode.observation:
             # Skip engine — always forward
@@ -1252,7 +1260,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Evaluate engine (enforcement + log_only) — with v0.7.0 §7.4 memo cache
         _t0_eval = perf_counter()
-        _decision_cache: DecisionCache | None = getattr(app.state, "decision_cache", None)
+        _decision_cache: DecisionCache | None = (
+            None if _has_scoped_policy_engines(app.state)
+            else getattr(app.state, "decision_cache", None)
+        )
         _cache_key_args = context.get("tool_call") or {}
         decision = None
         if _decision_cache is not None:
@@ -1474,6 +1485,11 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             _METRICS["requests_total{outcome=unauthorized}"] += 1
             return JSONResponse({"error": str(exc)}, status_code=401)
 
+        try:
+            policy_engine = _policy_engine_for_scope(app.state, auth_ctx.scope)
+        except Exception as exc:  # noqa: BLE001
+            return _policy_engine_unavailable(auth_ctx.scope, exc)
+
         # Step 2 — Parse JSON-RPC body
         body = await read_message(request)
         if isinstance(body, JSONResponse):
@@ -1516,7 +1532,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             rewritten_body = dict(body)
             rewritten_body["params"] = {**body.get("params", {}), "name": canonical_tool}
             return await _run_proxy_pipeline(
-                app.state, upstream_name, rewritten_body, auth_ctx, modern_request=modern_request
+                app.state, upstream_name, rewritten_body, auth_ctx,
+                policy_engine=policy_engine, modern_request=modern_request
             )
 
         # All other methods (initialize, ping, notifications/*, resources/list, etc.) —
@@ -1527,7 +1544,8 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         first_upstream = cfg.upstreams[0].name
         return await _run_proxy_pipeline(
-            app.state, first_upstream, body, auth_ctx, modern_request=modern_request
+            app.state, first_upstream, body, auth_ctx,
+            policy_engine=policy_engine, modern_request=modern_request
         )
 
     # ── Metrics endpoint ─────────────────────────────────────────────────────
@@ -1574,6 +1592,50 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
+
+
+def _policy_engine_for_scope(state: Any, scope: str) -> PolicyEngine:
+    """Resolve a request engine when the configured loader supports tenant scopes.
+
+    Legacy loaders keep using the startup engine unchanged. Loaders may opt in by
+    exposing an engine_for_scope(scope, default_action) method; returned engines
+    are request-local and never published through app.state.engine.
+    """
+    loader = getattr(state, "loader", None)
+    resolver = getattr(loader, "engine_for_scope", None)
+    if not callable(resolver):
+        return state.engine
+
+    if not isinstance(scope, str) or not scope.strip():
+        raise ValueError("authenticated policy scope is missing")
+    if state.config.intelligence.selected_packs:
+        raise ValueError("scoped engines cannot omit selected protection policies")
+
+    engine = resolver(scope, Action(state.config.policies.default_action))
+    if not isinstance(engine, PolicyEngine):
+        raise TypeError("engine_for_scope must return a PolicyEngine")
+    return engine
+
+
+def _has_scoped_policy_engines(state: Any) -> bool:
+    loader = getattr(state, "loader", None)
+    return callable(getattr(loader, "engine_for_scope", None))
+
+
+def _policy_engine_unavailable(
+    scope: str | None, exc: Exception, *, jsonrpc_id: Any = None
+) -> Response:
+    """Fail closed when a scoped policy engine cannot be loaded.
+
+    Do not expose policy storage details to callers or forward their requests.
+    """
+    logger.error("event=policy_engine_unavailable scope=%s error=%s", scope, exc)
+    _METRICS["requests_total{outcome=policy_unavailable}"] += 1
+    if jsonrpc_id is not None:
+        return _jsonrpc_error(
+            jsonrpc_id, -32603, "Policy unavailable", reason="policy_unavailable"
+        )
+    return JSONResponse({"error": "Tenant policy unavailable"}, status_code=503)
 
 
 def _clear_policy_decisions(state: Any) -> None:
@@ -1698,6 +1760,7 @@ async def _run_proxy_pipeline(
     body: dict[str, Any],
     auth_ctx: Any,
     *,
+    policy_engine: PolicyEngine | None = None,
     modern_request: bool = False,
 ) -> Response:
     """Run the full policy+audit+forward pipeline for a pre-authenticated, pre-parsed request.
@@ -1711,6 +1774,12 @@ async def _run_proxy_pipeline(
 
     jsonrpc_id = body.get("id", 1)
     method: str = body.get("method", "")
+
+    if policy_engine is None:
+        try:
+            policy_engine = _policy_engine_for_scope(state, auth_ctx.scope)
+        except Exception as exc:  # noqa: BLE001
+            return _policy_engine_unavailable(auth_ctx.scope, exc, jsonrpc_id=jsonrpc_id)
 
     premium_gate = _selected_protection_gate(state, method, jsonrpc_id)
     if premium_gate is not None:
@@ -1813,7 +1882,7 @@ async def _run_proxy_pipeline(
 
     # Pre-fetch blast-radius
     blast_radius_cache: dict[str, int] = {}
-    engine_for_prefetch: PolicyEngine | None = getattr(state, "engine", None)
+    engine_for_prefetch: PolicyEngine | None = policy_engine
     blast_radius_backend = getattr(state, "blast_radius_backend", None)
     if (
         blast_radius_backend is not None
@@ -1914,7 +1983,10 @@ async def _run_proxy_pipeline(
 
     # Mode branch
     mode = cfg.policies.mode
-    engine: PolicyEngine = state.engine
+    try:
+        engine: PolicyEngine = _policy_engine_for_scope(state, auth_ctx.scope)
+    except Exception as exc:  # noqa: BLE001
+        return _policy_engine_unavailable(auth_ctx.scope, exc, jsonrpc_id=jsonrpc_id)
 
     if mode == PoliciesMode.observation:
         upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
@@ -1947,7 +2019,10 @@ async def _run_proxy_pipeline(
 
     # Evaluate engine with decision cache
     _t0_eval = perf_counter()
-    _decision_cache: DecisionCache | None = getattr(state, "decision_cache", None)
+    _decision_cache: DecisionCache | None = (
+        None if _has_scoped_policy_engines(state)
+        else getattr(state, "decision_cache", None)
+    )
     _cache_key_args = context.get("tool_call") or {}
     decision = None
     if _decision_cache is not None:
