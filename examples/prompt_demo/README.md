@@ -40,11 +40,13 @@ Using the existing prepared WSL environment from the repository root:
 /home/sainath/tessera-demo-venv/bin/python examples/prompt_demo/runtime.py --smoke
 ```
 
-This injects fixed, bounded transcripts and exercises the real checker and audit chain. It verifies the existing payment-cap/protected-branch/SQL/secret blocks, the cap-boundary allow, and the AP flow below. Run only the focused boundary/fixture tests with:
+This injects fixed, bounded transcripts and exercises the real checker and audit chain. It verifies the existing payment-cap/protected-branch/SQL/secret blocks, the cap-boundary allow, and the AP flow below. In a Python 3.12 test environment with the repository runtime dependencies, `cryptography`, and pinned `pytest==9.0.3`, run the focused boundary/fixture tests with:
 
 ```sh
-/home/sainath/tessera-demo-venv/bin/python -m pytest examples/prompt_demo/tests/test_ap_scenario.py
+python -m pytest examples/prompt_demo/tests/test_ap_scenario.py
 ```
+
+The prepared prompt-demo smoke venv may not include pytest; keep it unchanged and use a separate test environment when needed.
 
 For a compact machine-readable scenario receipt, use `runtime.py --ap-scenario`. Both commands use scripted tool proposals through Tessera and local `httpx.MockTransport` fixtures. They make no Bedrock/model-provider request and no financial-service request. Each result has `mode: scripted_connector_tool_flow_offline`, `model: null`, per-request tool-use IDs and audit receipt IDs, measured adapter-contact counts, and a verified local audit hash chain. The expected AP totals across the two requests are five synthetic adapter contacts, one blocked INR 500,000 payment with zero contacts, one separate INR 25,000 fake-ledger row, and one INR 500,000 draft awaiting human approval. This is not an LLM run or customer acceptance. The live handler reports the model mode only when it selects its default Bedrock Converse client; injected providers are labeled separately.
 
