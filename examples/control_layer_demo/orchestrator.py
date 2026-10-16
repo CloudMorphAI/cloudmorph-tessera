@@ -297,9 +297,15 @@ def run(args: argparse.Namespace) -> None:
         uploader = AuditCloudUploader(endpoint=args.endpoint, oauth_token=oauth_token, batch_size=50)
         ack = asyncio.run(uploader.upload_sqlite_once(audit_db, tenant_id=tenant, stream_id=run_id, run_evidence=evidence))
         write_private(root / "cloud-ack.json", ack)
+        acknowledged = (ack.get("verification") == "canonical_verified"
+                        and ack.get("tenant_id") == tenant and ack.get("stream_id") == run_id
+                        and ack.get("run_evidence_stored") is True
+                        and ack.get("run_evidence_digest") == hashlib.sha256(canonical_json(evidence)).hexdigest())
         write_private(root / "finalization.json", {"local_evidence_stored": True,
                                                    "model_complete": result.get("complete") is True,
-                                                   "cloud_upload_acknowledged": True})
+                                                   "cloud_upload_acknowledged": acknowledged})
+        if not acknowledged:
+            raise RuntimeError("local evidence retained; cloud did not acknowledge this run projection")
         print("Session evidence uploaded; acceptance " + ("met" if correlations["accepted"] else "not met") + "; directory: " + str(root), flush=True)
         if not correlations["accepted"]:
             raise RuntimeError("observed business outcomes are incomplete; no further model calls authorized")
