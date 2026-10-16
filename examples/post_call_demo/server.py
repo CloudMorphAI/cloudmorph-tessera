@@ -72,12 +72,13 @@ class DemoService:
                         metadata = {"model": None, "provider": None,
                                     "usage": {"input_tokens": 0, "output_tokens": 0, "model_calls": 0}}
                     else:
-                        from model_runner import run_model
+                        from model_runner import ModelRunError, run_model
                         try:
                             raw_metadata = run_model(gateway)
                         except Exception as exc:
                             evidence = gateway.finish()
-                            raise FailedRunError(evidence, getattr(exc, "partial", {})) from exc
+                            reason = str(exc) if isinstance(exc, ModelRunError) else "Invalid model/gateway result"
+                            raise FailedRunError(evidence, getattr(exc, "partial", {}), reason) from exc
                         raw_usage = raw_metadata.get("usage", {})
                         metadata = {**raw_metadata, "model": raw_metadata.get("model_id"),
                                     "usage": {**raw_usage, "model_calls": raw_usage.get("attempted_calls")}}
@@ -89,6 +90,7 @@ class DemoService:
             except FailedRunError as exc:
                 status, receipt = 502, {"run_id": run_id, "mode": mode, "replayed": False,
                     "error": "The model run failed. No completed run is asserted; no automatic retry occurred.",
+                    "failure_reason": exc.reason,
                     "partial_evidence": exc.evidence, "model_trace": exc.model_trace}
             except Exception:
                 # Never return provider exception text or a fabricated successful transcript.
@@ -104,10 +106,11 @@ class DemoService:
 
 
 class FailedRunError(RuntimeError):
-    def __init__(self, evidence, model_trace):
+    def __init__(self, evidence, model_trace, reason):
         super().__init__("Incomplete model run")
         self.evidence = evidence
         self.model_trace = model_trace
+        self.reason = reason
 
 
 def policy_version():

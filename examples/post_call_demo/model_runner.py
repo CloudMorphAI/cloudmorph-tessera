@@ -230,6 +230,88 @@ def _tool_config(tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _step_tool(tool: dict[str, Any], step_index: int) -> dict[str, Any]:
+    """Offer only the fields and values that this turn's semantic check accepts."""
+    schema = json.loads(json.dumps(tool["schema"]))
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise ModelRunError(f"The {tool['name']} catalog schema has no properties object.")
+
+    if tool["name"] in {"meetings.get_call", "crm.get_deal"}:
+        key, value = ("call_id", "CALL-ACME-001") if tool["name"] == "meetings.get_call" else ("deal_id", "DEAL-ACME-001")
+        field = properties.get(key)
+        if not isinstance(field, dict):
+            raise ModelRunError(f"The {tool['name']} catalog schema is missing {key}.")
+        schema["required"] = [key]
+        schema["additionalProperties"] = False
+        schema["properties"] = {key: {**field, "enum": [value]}}
+    elif tool["name"] == "crm.update_deal":
+        deal_id = properties.get("deal_id")
+        fields = properties.get("fields")
+        if not isinstance(deal_id, dict) or not isinstance(fields, dict) or not isinstance(fields.get("properties"), dict):
+            raise ModelRunError("The crm.update_deal catalog schema is incomplete.")
+        field_properties = fields["properties"]
+        if step_index == 2:
+            allowed = ("notes", "next_step")
+            field_schema = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(allowed),
+                "properties": {key: field_properties[key] for key in allowed if isinstance(field_properties.get(key), dict)},
+            }
+        elif step_index == 5:
+            field_schema = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["discount_pct"],
+                "properties": {"discount_pct": {"type": "integer", "enum": [30]}},
+            }
+        else:
+            raise ModelRunError("crm.update_deal was selected for an unexpected workflow turn.")
+        if len(field_schema["properties"]) != len(field_schema["required"]):
+            raise ModelRunError("The crm.update_deal catalog schema is missing a required turn field.")
+        schema["required"] = ["deal_id", "fields"]
+        schema["additionalProperties"] = False
+        schema["properties"] = {"deal_id": {**deal_id, "enum": ["DEAL-ACME-001"]}, "fields": field_schema}
+    elif tool["name"] == "tasks.create":
+        required_properties = ("task_kind", "deal_id", "title", "details", "idempotency_key")
+        if any(not isinstance(properties.get(key), dict) for key in required_properties):
+            raise ModelRunError("The tasks.create catalog schema is incomplete.")
+        if step_index == 3:
+            kind = "engineering_follow_up"
+            extras: dict[str, Any] = {}
+        elif step_index == 6:
+            kind = "internal_discount_review"
+            extras = {"requested_discount_pct": {"type": "integer", "enum": [30]}}
+        else:
+            raise ModelRunError("tasks.create was selected for an unexpected workflow turn.")
+        schema["required"] = [*required_properties, *extras]
+        schema["additionalProperties"] = False
+        schema.pop("allOf", None)
+        schema["properties"] = {
+            **{key: properties[key] for key in required_properties if key not in {"task_kind", "deal_id"}},
+            "task_kind": {**properties["task_kind"], "enum": [kind]},
+            "deal_id": {**properties["deal_id"], "enum": ["DEAL-ACME-001"]},
+            **extras,
+        }
+    elif tool["name"] == "drafts.create" and step_index == 4:
+        required_properties = ("draft_kind", "deal_id", "title", "body", "idempotency_key")
+        if any(not isinstance(properties.get(key), dict) for key in required_properties):
+            raise ModelRunError("The drafts.create catalog schema is incomplete.")
+        schema["required"] = list(required_properties)
+        schema["additionalProperties"] = False
+        schema.pop("allOf", None)
+        schema["properties"] = {
+            **{key: properties[key] for key in required_properties if key not in {"draft_kind", "deal_id"}},
+            "draft_kind": {**properties["draft_kind"], "enum": ["follow_up"]},
+            "deal_id": {**properties["deal_id"], "enum": ["DEAL-ACME-001"]},
+        }
+    else:
+        raise ModelRunError(f"{tool['name']} was selected for an unexpected workflow turn.")
+
+    return {**tool, "schema": schema}
+
+
 def _response_tool_use(response: Any, expected_alias: str) -> tuple[str, dict[str, Any]]:
     if not isinstance(response, dict):
         raise ModelRunError("Nova returned a malformed Converse response.")
@@ -257,26 +339,30 @@ def _validate_semantics(step_index: int, tool_name: str, arguments: dict[str, An
     if tool_name in {"meetings.get_call", "crm.get_deal"}:
         expected = "CALL-ACME-001" if tool_name == "meetings.get_call" else "DEAL-ACME-001"
         key = "call_id" if tool_name == "meetings.get_call" else "deal_id"
-        if arguments.get(key) != expected:
+        if set(arguments) != {key} or arguments.get(key) != expected:
             raise ModelRunError(f"Turn {step_index + 1} did not target the fixed synthetic {key}.")
 
     if step_index == 2:
         fields = arguments.get("fields")
         if (
-            arguments.get("deal_id") != "DEAL-ACME-001"
+            set(arguments) != {"deal_id", "fields"}
+            or arguments.get("deal_id") != "DEAL-ACME-001"
             or not isinstance(fields, dict)
             or set(fields) != {"notes", "next_step"}
             or not all(isinstance(fields.get(key), str) and fields[key].strip() for key in ("notes", "next_step"))
         ):
             raise ModelRunError("The call-notes update must contain only factual notes and next_step fields.")
     elif step_index == 3:
-        if arguments.get("task_kind") != "engineering_follow_up" or arguments.get("deal_id") != "DEAL-ACME-001":
+        if (
+            set(arguments) != {"task_kind", "deal_id", "title", "details", "idempotency_key"}
+            or arguments.get("task_kind") != "engineering_follow_up"
+            or arguments.get("deal_id") != "DEAL-ACME-001"
+        ):
             raise ModelRunError("The first task must be an engineering follow-up for the synthetic deal.")
-        if "requested_discount_pct" in arguments:
-            raise ModelRunError("The engineering follow-up cannot carry discount-review fields.")
     elif step_index == 4:
         if (
-            arguments.get("draft_kind") != "follow_up"
+            set(arguments) != {"draft_kind", "deal_id", "title", "body", "idempotency_key"}
+            or arguments.get("draft_kind") != "follow_up"
             or arguments.get("deal_id") != "DEAL-ACME-001"
             or "commercial_terms" in arguments
         ):
@@ -284,14 +370,18 @@ def _validate_semantics(step_index: int, tool_name: str, arguments: dict[str, An
     elif step_index == 5:
         fields = arguments.get("fields")
         if (
-            arguments.get("deal_id") != "DEAL-ACME-001"
+            set(arguments) != {"deal_id", "fields"}
+            or arguments.get("deal_id") != "DEAL-ACME-001"
             or not isinstance(fields, dict)
             or fields != {"discount_pct": 30}
         ):
             raise ModelRunError("The discount attempt must be one exact 30% update with no other fields.")
     elif step_index == 6:
         if (
-            arguments.get("task_kind") != "internal_discount_review"
+            set(arguments) != {
+                "task_kind", "deal_id", "title", "details", "idempotency_key", "requested_discount_pct"
+            }
+            or arguments.get("task_kind") != "internal_discount_review"
             or arguments.get("deal_id") != "DEAL-ACME-001"
             or arguments.get("requested_discount_pct") != 30
         ):
@@ -402,7 +492,7 @@ def run_model(gateway: Any, converse_fn: Callable[..., dict[str, Any]] | None = 
                 raise ModelRunError("The 180-second overall deadline is too close for another model call.")
 
             tool_name = step["tool"]
-            tool = catalog[tool_name]
+            tool = _step_tool(catalog[tool_name], index)
             request = {
                 "modelId": MODEL_ID,
                 "system": [{"text": SYSTEM_PROMPT}],

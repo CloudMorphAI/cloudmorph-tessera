@@ -147,6 +147,7 @@ def test_model_failure_preserves_actual_partial_audit_and_consumes_one_attempt(m
     service = server.DemoService(enable_nova=True)
     status, result = service.run("nova", "failed-nova")
     assert status == 502 and "events" not in result
+    assert result["failure_reason"] == "Injected offline provider failure"
     assert result["partial_evidence"]["audit"]["chain_verified"] is True
     assert result["partial_evidence"]["summary"]["allowed"] == 1
     assert service.run("nova", "failed-nova")[1]["replayed"] is True

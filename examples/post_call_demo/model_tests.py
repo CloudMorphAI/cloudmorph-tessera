@@ -25,14 +25,60 @@ ARGUMENTS = [
 
 
 def _catalog() -> list[dict[str, Any]]:
-    names = sorted({step["tool"] for step in model_runner.STEPS})
+    string = {"type": "string"}
+    deal_id = {"type": "string", "enum": [DEAL_ID]}
+    schemas = {
+        "meetings.get_call": {
+            "type": "object", "additionalProperties": False, "required": ["call_id"],
+            "properties": {"call_id": {"type": "string", "enum": [CALL_ID]}},
+        },
+        "crm.get_deal": {
+            "type": "object", "additionalProperties": False, "required": ["deal_id"],
+            "properties": {"deal_id": deal_id},
+        },
+        "crm.update_deal": {
+            "type": "object", "additionalProperties": False, "required": ["deal_id", "fields"],
+            "properties": {
+                "deal_id": deal_id,
+                "fields": {
+                    "type": "object", "additionalProperties": False,
+                    "properties": {
+                        "notes": string, "next_step": string,
+                        "discount_pct": {"type": "number", "minimum": 0, "maximum": 100},
+                    },
+                },
+            },
+        },
+        "tasks.create": {
+            "type": "object", "additionalProperties": False,
+            "required": ["task_kind", "deal_id", "title", "details", "idempotency_key"],
+            "properties": {
+                "task_kind": {"type": "string", "enum": ["engineering_follow_up", "internal_discount_review"]},
+                "deal_id": deal_id, "title": string, "details": string, "idempotency_key": string,
+                "requested_discount_pct": {"type": "number", "minimum": 0, "maximum": 100},
+            },
+            "allOf": [{"if": {"properties": {"task_kind": {"const": "internal_discount_review"}}},
+                       "then": {"required": ["requested_discount_pct"]}}],
+        },
+        "drafts.create": {
+            "type": "object", "additionalProperties": False,
+            "required": ["draft_kind", "deal_id", "title", "body", "idempotency_key"],
+            "properties": {
+                "draft_kind": {"type": "string", "enum": ["follow_up", "proposal"]},
+                "deal_id": deal_id, "title": string, "body": string, "idempotency_key": string,
+                "commercial_terms": {"type": "object", "additionalProperties": False},
+            },
+            "allOf": [{"if": {"properties": {"draft_kind": {"const": "proposal"}}},
+                       "then": {"required": ["commercial_terms"]}}],
+        },
+    }
     return [
         {
             "name": name,
             "description": f"Synthetic {name} fixture tool.",
-            "inputSchema": {"type": "object", "additionalProperties": False},
+            "inputSchema": schemas[name],
         }
-        for name in names
+        for name in sorted({step["tool"] for step in model_runner.STEPS})
     ]
 
 
@@ -97,10 +143,17 @@ class FakeGateway:
 
 
 class OfflineModel:
-    def __init__(self, *, duplicate_tool_use_id: bool = False, empty_task_key: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        duplicate_tool_use_id: bool = False,
+        empty_task_key: bool = False,
+        unexpected_commercial_terms: bool = False,
+    ) -> None:
         self.requests: list[dict[str, Any]] = []
         self.duplicate_tool_use_id = duplicate_tool_use_id
         self.empty_task_key = empty_task_key
+        self.unexpected_commercial_terms = unexpected_commercial_terms
 
     def __call__(self, **request: Any) -> dict[str, Any]:
         index = len(self.requests)
@@ -111,6 +164,8 @@ class OfflineModel:
         arguments = copy.deepcopy(ARGUMENTS[index])
         if self.empty_task_key and index == 3:
             arguments["idempotency_key"] = "  "
+        if self.unexpected_commercial_terms and index == 4:
+            arguments["commercial_terms"] = {}
         if index == 6:
             prior_results = [
                 block["toolResult"]["content"][0]["json"]
@@ -177,6 +232,21 @@ class ModelRunnerTests(unittest.TestCase):
         self.assertEqual(gateway.calls[6][3], f"{gateway.run_id}-review")
         self.assertTrue(all(request["inferenceConfig"]["maxTokens"] == 256 for request in model.requests))
         self.assertTrue(all(len(request["toolConfig"]["tools"]) == 1 for request in model.requests))
+        request_schemas = [request["toolConfig"]["tools"][0]["toolSpec"]["inputSchema"]["json"] for request in model.requests]
+        notes_fields = request_schemas[2]["properties"]["fields"]
+        self.assertEqual(notes_fields["required"], ["notes", "next_step"])
+        self.assertEqual(set(notes_fields["properties"]), {"notes", "next_step"})
+        engineering_schema = request_schemas[3]
+        self.assertEqual(engineering_schema["properties"]["task_kind"]["enum"], ["engineering_follow_up"])
+        self.assertNotIn("requested_discount_pct", engineering_schema["properties"])
+        draft_schema = request_schemas[4]
+        self.assertEqual(draft_schema["properties"]["draft_kind"]["enum"], ["follow_up"])
+        self.assertNotIn("commercial_terms", draft_schema["properties"])
+        discount_field = request_schemas[5]["properties"]["fields"]["properties"]["discount_pct"]
+        self.assertEqual(discount_field, {"type": "integer", "enum": [30]})
+        review_schema = request_schemas[6]
+        self.assertEqual(review_schema["properties"]["task_kind"]["enum"], ["internal_discount_review"])
+        self.assertEqual(review_schema["properties"]["requested_discount_pct"], {"type": "integer", "enum": [30]})
 
     def test_no_review_or_readback_if_exact_discount_is_not_blocked(self) -> None:
         gateway = FakeGateway(block_discount=False)
@@ -209,6 +279,19 @@ class ModelRunnerTests(unittest.TestCase):
 
         self.assertEqual(len(gateway.calls), 3)
         self.assertEqual(len(model.requests), 4)
+
+    def test_unauthorized_commercial_terms_are_rejected_without_adapter_call(self) -> None:
+        gateway = FakeGateway()
+        model = OfflineModel(unexpected_commercial_terms=True)
+
+        with self.assertRaisesRegex(model_runner.ModelRunError, "plain, unsent follow_up draft"):
+            model_runner.run_model(gateway, converse_fn=model)
+
+        offered_schema = model.requests[4]["toolConfig"]["tools"][0]["toolSpec"]["inputSchema"]["json"]
+        self.assertNotIn("commercial_terms", offered_schema["properties"])
+        self.assertEqual(offered_schema["properties"]["draft_kind"]["enum"], ["follow_up"])
+        self.assertEqual(len(gateway.calls), 4)
+        self.assertEqual(len(model.requests), 5)
 
     def test_default_live_transport_requires_startup_opt_in(self) -> None:
         gateway = FakeGateway()
