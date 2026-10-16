@@ -157,4 +157,3 @@ def test_draft_schema_cannot_lower_or_change_the_invoice_amount() -> None:
     })
     assert _validate_tool("create_payment_draft", {"invoice_id": "INV-DEMO-025"})
     assert _validate_tool("get_invoice", {"invoice_id": "INV-OTHER"})
-
