@@ -1216,7 +1216,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
 
         # Step 8 — Mode branch
         mode = cfg.policies.mode
-        engine: PolicyEngine = policy_engine
+        try:
+            engine: PolicyEngine = _policy_engine_for_scope(app.state, auth_ctx.scope)
+        except Exception as exc:  # noqa: BLE001
+            return _policy_engine_unavailable(auth_ctx.scope, exc)
 
         if mode == PoliciesMode.observation:
             # Skip engine — always forward
@@ -1980,7 +1983,10 @@ async def _run_proxy_pipeline(
 
     # Mode branch
     mode = cfg.policies.mode
-    engine: PolicyEngine = policy_engine
+    try:
+        engine: PolicyEngine = _policy_engine_for_scope(state, auth_ctx.scope)
+    except Exception as exc:  # noqa: BLE001
+        return _policy_engine_unavailable(auth_ctx.scope, exc, jsonrpc_id=jsonrpc_id)
 
     if mode == PoliciesMode.observation:
         upstream_response = await _forward_upstream(state, upstream_name, body, jsonrpc_id, session_scope=_upstream_session_scope(auth_ctx), modern_request=modern_request)
