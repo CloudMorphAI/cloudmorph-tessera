@@ -21,8 +21,11 @@ detects.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sqlite3
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -126,6 +129,104 @@ class AuditCloudUploader:
             uploaded += sent
         return uploaded
 
+    async def upload_sqlite_once(
+        self, path: str | Path, *, tenant_id: str, stream_id: str,
+        run_evidence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Upload actual canonical sink records; advance only exact cloud acknowledgements.
+
+        Call after proxy shutdown/drain for a final complete run. No token is
+        persisted. The cursor is nonsecret and endpoint/tenant/stream bound.
+        A failed/unknown HTTP outcome leaves the cursor unchanged for dedup retry.
+        """
+        import hashlib
+
+        from tessera.audit.canonical_json import canonical_json
+        from tessera.audit.chain import HashChain
+
+        if not self._oauth_token or not tenant_id or not stream_id:
+            raise ValueError("canonical upload requires session identity and token")
+        if run_evidence is not None and (
+                not isinstance(run_evidence, dict) or len(canonical_json(run_evidence)) > 128_000):
+            raise ValueError("run evidence exceeds the bounded projection contract")
+        async with self._lock:
+            with sqlite3.connect(path) as conn:
+                rows = conn.execute(
+                    "SELECT seq,payload_json FROM audit_events WHERE scope=? ORDER BY seq", (tenant_id,),
+                ).fetchall()
+                events = [(int(seq), json.loads(raw)) for seq, raw in rows]
+                if [seq for seq, _event in events] != list(range(1, len(events) + 1)):
+                    raise ValueError("SQLite canonical stream must start at sequence one without gaps")
+                previous, ids = "", set()
+                for _seq, event in events:
+                    eid = event.get("eventId")
+                    if (event.get("tenantId") != tenant_id or not eid or eid in ids
+                            or not HashChain.verify_event_hash(event)
+                            or event.get("prevEventHash", "") != previous):
+                        raise ValueError("SQLite canonical audit chain is invalid")
+                    ids.add(eid)
+                    previous = event["eventHash"]
+                conn.execute("""CREATE TABLE IF NOT EXISTS cloud_upload_checkpoint (
+                    endpoint TEXT, tenant_id TEXT, stream_id TEXT, seq INTEGER NOT NULL,
+                    event_hash TEXT NOT NULL, PRIMARY KEY(endpoint,tenant_id,stream_id))""")
+                key = (self._endpoint, tenant_id, stream_id)
+                cursor = conn.execute(
+                    "SELECT seq,event_hash FROM cloud_upload_checkpoint WHERE endpoint=? AND tenant_id=? AND stream_id=?", key,
+                ).fetchone()
+                start = int(cursor[0]) if cursor else 0
+                if cursor and {seq: event["eventHash"] for seq, event in events}.get(start) != cursor[1]:
+                    raise ValueError("SQLite upload checkpoint no longer matches its source")
+                pending = [(seq, event) for seq, event in events if seq > start]
+                # Re-send the last acknowledged batch when attaching final evidence;
+                # canonical cloud dedup prevents duplicate event writes.
+                if not pending and run_evidence and events:
+                    pending = events[-self._batch_size:]
+                if not pending:
+                    return {"written": 0, "duplicates": 0, "chain_head": previous,
+                            "verification": "no_new_events", "stream_id": stream_id}
+                written = duplicates = 0
+                last_ack: dict[str, Any] = {}
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    for offset in range(0, len(pending), self._batch_size):
+                        batch = pending[offset:offset + self._batch_size]
+                        head = batch[-1][1]["eventHash"]
+                        body: dict[str, Any] = {
+                            "format": "tessera.audit.canonical.v1", "stream_id": stream_id,
+                            "scope": tenant_id, "events": [{"seq": seq, "event": event} for seq, event in batch],
+                            "chain_head": head,
+                        }
+                        if run_evidence and offset + self._batch_size >= len(pending):
+                            body["run_evidence"] = run_evidence
+                        response = await client.post(
+                            f"{self._endpoint}{self.REMOTE_PATH}", json=body,
+                            headers={"Authorization": f"Bearer {self._oauth_token}"},
+                        )
+                        response.raise_for_status()
+                        ack = response.json()
+                        submitted = [event["eventId"] for _, event in batch]
+                        accepted = ack.get("accepted_event_ids") if isinstance(ack, dict) else None
+                        if (not isinstance(accepted, list) or len(accepted) != len(submitted)
+                                or set(accepted) != set(submitted) or ack.get("skipped", 0) != 0
+                                or ack.get("tenant_id") != tenant_id or ack.get("stream_id") != stream_id
+                                or ack.get("chain_head") != head or ack.get("verification") != "canonical_verified"
+                                or type(ack.get("written")) is not int or type(ack.get("duplicates")) is not int
+                                or ack["written"] < 0 or ack["duplicates"] < 0
+                                or ack["written"] + ack["duplicates"] != len(batch)):
+                            raise ValueError("cloud did not acknowledge the exact canonical audit batch")
+                        if "run_evidence" in body and (
+                                ack.get("run_evidence_stored") is not True
+                                or ack.get("run_evidence_digest") != hashlib.sha256(canonical_json(run_evidence)).hexdigest()):
+                            raise ValueError("cloud did not acknowledge the exact run evidence projection")
+                        new_seq = max(start, batch[-1][0])
+                        new_head = {seq: event["eventHash"] for seq, event in events}[new_seq]
+                        conn.execute("INSERT OR REPLACE INTO cloud_upload_checkpoint VALUES (?,?,?,?,?)", (*key, new_seq, new_head))
+                        conn.commit()
+                        start = new_seq
+                        written += ack["written"]
+                        duplicates += ack["duplicates"]
+                        last_ack = ack
+                return {**last_ack, "written": written, "duplicates": duplicates}
+
     # ── Flush + retry ───────────────────────────────────────────────────────
 
     async def _flush_once_safe(self) -> None:
@@ -179,6 +280,9 @@ class AuditCloudUploader:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(url, headers=headers, json=body)
                     resp.raise_for_status()
+                    ack = resp.json()
+                    if not isinstance(ack, dict) or ack.get("written") != len(batch) or ack.get("skipped", 0):
+                        raise ValueError("cloud skipped or did not acknowledge legacy audit events")
             except Exception:
                 # Restore order: put batch back at the FRONT of the deque
                 for evt in reversed(batch):

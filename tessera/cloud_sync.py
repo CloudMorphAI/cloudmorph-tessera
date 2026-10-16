@@ -20,12 +20,14 @@ entries when a policy version bumps.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import httpx
 
@@ -40,6 +42,16 @@ _DEFAULT_CACHE_PATH = Path.home() / ".tessera" / "policy-cache.db"
 _DEFAULT_ENDPOINT = "https://auth.tessera.cloudmorph.ai"
 _DEFAULT_REFRESH_TTL = 300  # 5 min
 _FETCH_TIMEOUT = 10.0
+
+
+def snapshot_digest(items: list[dict[str, Any]]) -> str:
+    """Digest exact policy bytes and enabled state using the cloud contract."""
+    records = [
+        {"policy_id": item["policy_id"], "enabled": bool(item["enabled"]),
+         "yaml_sha256": hashlib.sha256(item["yaml_text"].encode("utf-8")).hexdigest()}
+        for item in sorted(items, key=lambda row: row["policy_id"])
+    ]
+    return hashlib.sha256(json.dumps(records, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 class CloudPolicySync:
@@ -60,12 +72,17 @@ class CloudPolicySync:
         refresh_ttl: int = _DEFAULT_REFRESH_TTL,
         cache_path: Path | str | None = None,
         on_refresh: Callable[[list[dict[str, Any]]], None] | None = None,
+        strict: bool = False,
+        expected_tenant_id: str | None = None,
     ) -> None:
         self._endpoint = (endpoint or _DEFAULT_ENDPOINT).rstrip("/")
         self._oauth_token = oauth_token or ""
         self._refresh_ttl = max(30, int(refresh_ttl))
         self._cache_path = Path(cache_path) if cache_path else _DEFAULT_CACHE_PATH
         self._on_refresh = on_refresh
+        self._strict = strict
+        self._expected_tenant_id = expected_tenant_id
+        self.snapshot: dict[str, Any] | None = None
         self._last_fetched_at: float | None = None
         self._init_db()
 
@@ -119,6 +136,8 @@ class CloudPolicySync:
 
         # The cloud endpoint returns {"items": [...]} (mirrors browser shape);
         # some test fixtures use {"policies": [...]}. Accept either.
+        if self._strict:
+            return self._cache_verified_snapshot(payload)
         raw_items = payload.get("items") or payload.get("policies") or []
         items: list[dict[str, Any]] = [
             self._normalize(item) for item in raw_items if isinstance(item, dict)
@@ -139,6 +158,60 @@ class CloudPolicySync:
                     "event=cloud_policy_sync_on_refresh_failed reason=%s",
                     type(exc).__name__,
                 )
+        return items
+
+    def _cache_verified_snapshot(self, payload: Any) -> list[dict[str, Any]]:
+        """Opt-in session path: never assign an unbound/partial snapshot to a tenant."""
+        from tessera.auth.base import SCOPE_RE
+        from tessera.policy.cloud_loader import _parse_policy_yaml
+
+        if not isinstance(payload, dict) or payload.get("complete") is not True:
+            raise ValueError("cloud policy snapshot is incomplete")
+        tenant = payload.get("tenant_id")
+        if not isinstance(tenant, str) or not SCOPE_RE.fullmatch(tenant):
+            raise ValueError("cloud policy snapshot has no valid verified tenant")
+        if self._expected_tenant_id and tenant != self._expected_tenant_id:
+            raise ValueError("cloud policy snapshot tenant mismatch")
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list):
+            raise ValueError("cloud policy snapshot items must be a list")
+        items, seen = [], set()
+        for row in raw_items:
+            if not isinstance(row, dict) or not isinstance(row.get("enabled"), bool):
+                raise ValueError("cloud policy row has invalid enabled state")
+            pid, body = row.get("policy_id"), row.get("yaml_text")
+            if not isinstance(pid, str) or not pid or pid in seen or not isinstance(body, str):
+                raise ValueError("cloud policy snapshot has invalid or duplicate identity")
+            parsed = _parse_policy_yaml(body, source="cloud snapshot")
+            if parsed.id != pid:
+                raise ValueError("cloud policy YAML identity mismatch")
+            seen.add(pid)
+            items.append(self._normalize(row))
+        digest = snapshot_digest(items)
+        if payload.get("snapshot_digest") != digest:
+            raise ValueError("cloud policy snapshot digest mismatch")
+        metadata = {"tenant_id": tenant, "endpoint": self._endpoint,
+                    "snapshot_digest": digest, "fetched_at": time.time()}
+        with sqlite3.connect(self._cache_path) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS cloud_snapshot (singleton INTEGER PRIMARY KEY, metadata_json TEXT NOT NULL)")
+            previous = conn.execute("SELECT metadata_json FROM cloud_snapshot WHERE singleton=1").fetchone()
+            if previous:
+                old = json.loads(previous[0])
+                if old.get("tenant_id") != tenant or old.get("endpoint") != self._endpoint:
+                    raise ValueError("policy cache belongs to another tenant or endpoint")
+            elif conn.execute("SELECT COUNT(*) FROM policies").fetchone()[0]:
+                raise ValueError("legacy unbound cache cannot become a verified snapshot")
+            conn.execute("DELETE FROM policies")
+            for item in items:
+                conn.execute("INSERT INTO policies VALUES (?,?,?,?,?,?,?,?)", (
+                    item["policy_id"], item["pack_id"], int(item["enabled"]), item["priority"],
+                    item["action_summary"], item["match_summary"], item["yaml_text"], int(metadata["fetched_at"]),
+                ))
+            conn.execute("INSERT OR REPLACE INTO cloud_snapshot VALUES (1,?)", (json.dumps(metadata),))
+        self.snapshot = metadata
+        self._last_fetched_at = metadata["fetched_at"]
+        if self._on_refresh:
+            self._on_refresh(items)
         return items
 
     def load_from_cache(self) -> list[dict[str, Any]]:

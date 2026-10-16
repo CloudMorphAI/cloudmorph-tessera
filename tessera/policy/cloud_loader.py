@@ -25,13 +25,15 @@ is isolated (logged + surfaced in ``state()``) and never blocks startup — a br
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -97,6 +99,8 @@ class CloudBackedPolicyLoader:
         sync_factory: Callable[..., Any] | None = None,
     ) -> None:
         self._fs = FilesystemPolicyLoader(policy_dir, reload_mode=reload_mode)
+        self._strict = os.environ.get("TESSERA_CLOUD_STRICT") == "1"
+        self._activation: dict[str, Any] = {}
         self._reload_mode = reload_mode
         # Precedence: explicit arg > TESSERA_POLICY_CACHE env (Docker mounts) > default.
         self._cache_path = Path(
@@ -104,7 +108,7 @@ class CloudBackedPolicyLoader:
         )
         # token/endpoint drive the optional background refresh only; reading the
         # cache works offline with no token.
-        self._tokens = oauth_tokens if oauth_tokens is not None else _read_oauth_tokens()
+        self._tokens = oauth_tokens if oauth_tokens is not None else ({} if self._strict else _read_oauth_tokens())
         self._endpoint = endpoint
         self._refresh_ttl = max(30, int(refresh_ttl))
         self._sync_factory = sync_factory  # injectable for tests
@@ -125,6 +129,8 @@ class CloudBackedPolicyLoader:
         local = self._fs.load_all(scope)
         cloud = self._load_cloud_policies()
         merged = self._merge(local, cloud)
+        if self._strict:
+            self._verify_activation(cloud)
         logger.info(
             "event=cloud_loader_loaded local=%d cloud=%d merged=%d cache=%s",
             len(local), self._cloud_count, len(merged), self._cache_path,
@@ -153,7 +159,41 @@ class CloudBackedPolicyLoader:
         st["cloud_errored"] = [
             {"policy_id": k, "error": v} for k, v in self._cloud_errors.items()
         ]
+        if self._strict:
+            st["activation"] = dict(self._activation)
         return st
+
+    def _verify_activation(self, cloud: list[Policy]) -> None:
+        """Startup-only acknowledgement; strict sessions freeze reload mode."""
+        import time
+
+        from tessera.cloud_sync import snapshot_digest
+
+        if self._reload_mode != "none" or self._cloud_errors:
+            raise PolicyError("strict cloud session requires a valid frozen snapshot")
+        with sqlite3.connect(self._cache_path) as conn:
+            row = conn.execute("SELECT metadata_json FROM cloud_snapshot WHERE singleton=1").fetchone()
+            rows = conn.execute("SELECT policy_id, enabled, yaml_text FROM policies").fetchall()
+        if not row:
+            raise PolicyError("strict cloud session has no verified snapshot")
+        meta = json.loads(row[0])
+        items = [{"policy_id": r[0], "enabled": bool(r[1]), "yaml_text": r[2]} for r in rows]
+        digest = snapshot_digest(items)
+        if (meta.get("tenant_id") != os.environ.get("TESSERA_CLOUD_TENANT")
+                or meta.get("endpoint") != os.environ.get("TESSERA_CLOUD_ENDPOINT")
+                or digest != meta.get("snapshot_digest")
+                or digest != os.environ.get("TESSERA_EXPECTED_SNAPSHOT")
+                or time.time() - float(meta.get("fetched_at", 0)) > 300):
+            raise PolicyError("strict cloud session snapshot identity or freshness mismatch")
+        expected_id = os.environ.get("TESSERA_EXPECTED_POLICY_ID")
+        hashes = {r["policy_id"]: hashlib.sha256(r["yaml_text"].encode()).hexdigest()
+                  for r in items if r["enabled"]}
+        if not expected_id or hashes.get(expected_id) != os.environ.get("TESSERA_EXPECTED_POLICY_SHA256"):
+            raise PolicyError("strict cloud session exact policy is not activated")
+        if {p.id for p in cloud} != set(hashes):
+            raise PolicyError("strict cloud session policy set mismatch")
+        self._activation = {"tenant_id": meta["tenant_id"], "snapshot_digest": digest,
+                            "policy_hashes": hashes, "verified": True, "mode": "frozen_startup"}
 
     # ── Internals ────────────────────────────────────────────────────────────────
 
