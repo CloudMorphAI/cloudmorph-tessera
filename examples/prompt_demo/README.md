@@ -69,3 +69,16 @@ The runner selects amazon.nova-micro-v1:0, uses a 256-token output limit, a 12,0
 The flow is three model-driven runs: the small approved invoice gets a fresh lookup and exact INR 25,000 fake-ledger payment; the exception invoice gets a fresh lookup and one full INR 500,000 proposal, whose Tessera block ends that conversation with no retry/split turn; only after observing that block does a new request expose the draft and readback tools. Each turn forces one fixed synthetic tool schema, and a pre-gate scenario guard stops any unexpected tool name or arguments before they reach Tessera. The draft request includes the prior block's actual policy ID/reason for context, but its draft/readback actions are new Tessera evaluations with their own request-local audit chain.
 
 All accepted model proposals pass through the actual local /mcp/demo Tessera policy gate and an httpx.MockTransport fake adapter. This runner does not call handler.py, the live HTTP/DynamoDB admission path, any payment service, or any other cloud action. Receipts are written under examples/prompt_demo/live_nova_receipts/ with mode live_model_synthetic_tools, the actual model ID, tool-use/audit receipt correlations, checked decisions, measured mock-adapter contacts, token usage and price estimate. They contain only synthetic prompt/fixture content. This is a live model result with local fake tools; it is not a customer, payment or production acceptance.
+
+### Mocked live-harness regression checks
+
+Run the offline fixture tests and the live-harness regression tests from the repository root with:
+
+~~~sh
+python -m pytest examples/prompt_demo/tests/test_ap_scenario.py examples/prompt_demo/tests/test_live_nova_ap.py
+ruff check examples/prompt_demo/live_nova_ap.py examples/prompt_demo/tests/test_live_nova_ap.py
+~~~
+
+`test_live_nova_ap.py` stubs the Converse response path; it makes no Bedrock request and never launches the AWS CLI. It labels these responses `injected_provider_synthetic_tools` with `model: null`. Coverage includes exact tool proposal and response validation, unknown actions, per-run and global turn caps, request/output token limits, and a full Tessera block path with zero synthetic payment-adapter calls. That path uses the in-process `httpx.MockTransport` fixture and SQLite audit sink; it does not import or call `handler.py` or DynamoDB. These tests exercise the new harness without asserting or implying another live model run.
+
+The actual 16 October model receipt also has a receipt-derived [trace replay](live_nova_receipts/ap-nova-b4aa2fb56e484c9ca981924dfe45736a.trace-replay.md). It lists the observed provider tool-use responses and correlated Tessera/system events; it is not a new model run, audiovisual capture, or assistant conversation.

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -22,8 +22,7 @@ for import_root in (ROOT, DEMO_DIR):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
-from runtime import _SPECS, run_prompt  # noqa: E402
-
+from runtime import _SPECS, _validate_tool, run_prompt  # noqa: E402
 
 AWS_CLI = Path("/mnt/c/Program Files/Amazon/AWSCLIV2/aws.exe")
 AWS_PROFILE = "Karn"
@@ -79,13 +78,14 @@ def _aws_json(*args: str, timeout: int = CLI_TIMEOUT_SECONDS) -> Any:
         "json",
     ]
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - fixed executable/arguments and shell is explicitly disabled.
             command,
             check=False,
             capture_output=True,
             text=True,
             timeout=timeout,
             env=env,
+            shell=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise DemoError(f"AWS CLI {args[0]} timed out after {timeout}s; no retry was attempted.") from exc
@@ -233,6 +233,15 @@ class CallBudget:
         self.calls: list[dict[str, Any]] = []
 
     def for_run(self, run_name: str, expected: list[dict[str, Any]]):
+        if not isinstance(expected, list) or not 1 <= len(expected) <= MAX_TURNS_PER_RUN:
+            raise DemoError(f"A scenario may contain at most {MAX_TURNS_PER_RUN} model turn(s).")
+        for action in expected:
+            if not isinstance(action, dict) or set(action) != {"name", "input"}:
+                raise DemoError("A scenario action must contain only a fixed name and input object.")
+            name, arguments = action.get("name"), action.get("input")
+            _tool_config(name)  # Reject unknown fixture actions before the provider call.
+            if _validate_tool(name, arguments):
+                raise DemoError("A scenario action did not match the synthetic fixture schema.")
         call_index = 0
 
         def converse(**kwargs: Any) -> dict[str, Any]:
@@ -246,7 +255,7 @@ class CallBudget:
             if kwargs.get("modelId") != MODEL_ID:
                 raise DemoError("The Converse request did not use the preverified Nova Micro model ID.")
             inference = kwargs.get("inferenceConfig", {})
-            if inference.get("maxTokens") != MAX_OUTPUT_TOKENS_PER_CALL:
+            if not isinstance(inference, dict) or inference.get("maxTokens") != MAX_OUTPUT_TOKENS_PER_CALL:
                 raise DemoError("The Converse request exceeded the configured output-token limit.")
 
             request = {
@@ -286,25 +295,59 @@ class CallBudget:
                 entry["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
                 raise
 
-            usage = response.get("usage", {})
+            if not isinstance(response, dict):
+                entry["status"] = "invalid_response"
+                raise DemoError("Nova returned a non-object Converse response.")
+            usage = response.get("usage")
+            if not isinstance(usage, dict):
+                entry["status"] = "invalid_usage"
+                raise DemoError("Nova response usage was missing or outside the configured token bounds.")
             input_tokens, output_tokens = usage.get("inputTokens"), usage.get("outputTokens")
             if (
                 type(input_tokens) is not int
                 or input_tokens < 0
+                or input_tokens > request_bytes * 2
                 or type(output_tokens) is not int
                 or not 0 <= output_tokens <= MAX_OUTPUT_TOKENS_PER_CALL
             ):
                 entry["status"] = "invalid_usage"
                 raise DemoError("Nova response usage was missing or outside the configured token bounds.")
 
-            assistant = response.get("output", {}).get("message", {})
-            content = assistant.get("content", [])
-            proposals = [item["toolUse"] for item in content if isinstance(item, dict) and "toolUse" in item]
+            output = response.get("output")
+            assistant = output.get("message") if isinstance(output, dict) else None
+            content = assistant.get("content") if isinstance(assistant, dict) else None
+            if (
+                not isinstance(assistant, dict)
+                or assistant.get("role") != "assistant"
+                or not isinstance(content, list)
+                or len(content) > 16
+                or response.get("stopReason") != "tool_use"
+                or any(not isinstance(item, dict) for item in content)
+            ):
+                entry["status"] = "invalid_response"
+                raise DemoError("Nova returned an invalid or non-tool Converse response.")
+
+            proposals = []
+            for item in content:
+                if "toolUse" not in item:
+                    continue
+                proposal = item["toolUse"]
+                if (
+                    not isinstance(proposal, dict)
+                    or not isinstance(proposal.get("toolUseId"), str)
+                    or not 1 <= len(proposal["toolUseId"]) <= 128
+                    or not isinstance(proposal.get("name"), str)
+                    or not isinstance(proposal.get("input"), dict)
+                ):
+                    entry["status"] = "invalid_response"
+                    raise DemoError("Nova returned a malformed tool proposal.")
+                proposals.append(proposal)
+            if len(proposals) != 1:
+                entry["status"] = "invalid_response"
+                raise DemoError("Nova must return exactly one fixed tool proposal for this turn.")
             expected_action = expected[call_index]
             matched = (
-                assistant.get("role") == "assistant"
-                and len(proposals) == 1
-                and proposals[0].get("name") == expected_action["name"]
+                proposals[0].get("name") == expected_action["name"]
                 and proposals[0].get("input") == expected_action["input"]
             )
             entry.update(
@@ -313,6 +356,7 @@ class CallBudget:
                 output_tokens=output_tokens,
                 stop_reason=response.get("stopReason"),
                 proposal_names=[proposal.get("name") for proposal in proposals],
+                proposal_tool_use_ids=[proposal["toolUseId"] for proposal in proposals],
                 expected_tool=expected_action["name"],
                 expected_proposal_matched=matched,
             )
@@ -334,21 +378,28 @@ def _run_live(
     actions: list[dict[str, Any]],
     budget: CallBudget,
     deadline: float,
+    execution_mode: str = "live_model_synthetic_tools",
 ) -> dict[str, Any]:
+    if execution_mode not in ("live_model_synthetic_tools", "injected_provider_synthetic_tools"):
+        raise DemoError("Unsupported execution mode for the bounded provider harness.")
     result = run_prompt(
         message,
         converse_fn=budget.for_run(name, actions),
         request_id=request_id,
         deadline=deadline,
-        execution_mode="live_model_synthetic_tools",
+        execution_mode=execution_mode,
         model_id=MODEL_ID,
         tool_configs=[_tool_config(action["name"]) for action in actions],
         max_turns=MAX_TURNS_PER_RUN,
         max_tokens=MAX_OUTPUT_TOKENS_PER_CALL,
         temperature=0.0,
     )
-    if result.get("mode") != "live_model_synthetic_tools" or result.get("model") != MODEL_ID:
-        raise DemoError(f"{name} was not recorded as a live Nova model run.")
+    if result.get("mode") != execution_mode:
+        raise DemoError(f"{name} was not recorded with the configured provider execution mode.")
+    if execution_mode == "live_model_synthetic_tools" and result.get("model") != MODEL_ID:
+        raise DemoError(f"{name} was not recorded with the live Nova model ID.")
+    if execution_mode == "injected_provider_synthetic_tools" and result.get("model") is not None:
+        raise DemoError(f"{name} did not retain the injected-provider model-null label.")
     if not result.get("audit", {}).get("chain_verified"):
         raise DemoError(f"{name} did not produce a verified local Tessera audit chain.")
     return result
@@ -433,7 +484,7 @@ def _write_receipt(receipt: dict[str, Any]) -> Path:
 
 def main() -> int:
     scenario_id = "ap-nova-" + uuid.uuid4().hex
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     deadline = time.monotonic() + RUN_TIMEOUT_SECONDS
     budget = CallBudget(deadline)
     receipt: dict[str, Any] = {
@@ -592,7 +643,7 @@ def main() -> int:
         receipt["usage"]["estimated_model_cost_usd"] = str(actual_estimate.quantize(Decimal("0.00000001")))
     else:
         receipt["usage"]["estimated_model_cost_usd"] = None
-    receipt["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
+    receipt["finished_at_utc"] = datetime.now(UTC).isoformat()
     _write_receipt(receipt)
     print(json.dumps(receipt, indent=2, ensure_ascii=False))
     return 0 if receipt.get("status") == "verified" else 1
