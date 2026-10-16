@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { CALL_ID, DEAL_ID, createPostCallFixture } from "./index.mjs";
 
 const runId = "post-call-scripted-demo-001";
-const demo = createPostCallFixture({ run_id: runId });
+const demo = createPostCallFixture({ run_id: runId, starting_discount_pct: 0 });
 const evaluations = [];
 
 function evaluateAndDispatch(tool_use_id, tool_name, arguments_, request_id = runId) {
@@ -70,11 +70,12 @@ const proposalRead = evaluateAndDispatch("read-pending-proposal", "drafts.read",
 
 assert.equal(call.status, "ok");
 assert.equal(deal.status, "ok");
+assert.equal(deal.result.discount_pct, 0);
 assert.equal(note.status, "ok");
 assert.equal(review.status, "ok");
 assert.equal(review.result.requested_discount_pct, 30);
 assert.equal(review.result.approval_status, "pending");
-assert.equal(dealAfterBlock.result.discount_pct, 10);
+assert.equal(dealAfterBlock.result.discount_pct, 0);
 assert.equal(proposalRead.result.commercial_terms.status, "pending");
 assert.equal(proposalRead.result.delivery_status, "not_sent");
 

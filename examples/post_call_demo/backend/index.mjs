@@ -304,7 +304,7 @@ function fingerprint(value) {
   return JSON.stringify(value);
 }
 
-function newSeed() {
+function newSeed(startingDiscountPct) {
   return {
     calls: {
       [CALL_ID]: {
@@ -322,7 +322,7 @@ function newSeed() {
         stage: "evaluation",
         notes: "",
         next_step: "",
-        discount_pct: 10,
+        discount_pct: startingDiscountPct,
       },
     },
     tasks: {},
@@ -352,8 +352,9 @@ export function getPostCallToolCatalog() {
  * dispatch() is a policy-agnostic adapter surface: a caller must evaluate each
  * proposed call through its policy gateway before invoking it.
  */
-export function createPostCallFixture({ run_id = "post-call-demo-001" } = {}) {
+export function createPostCallFixture({ run_id = "post-call-demo-001", starting_discount_pct = 10 } = {}) {
   const runId = identifier(run_id, "run_id");
+  const startingDiscountPct = percentage(starting_discount_pct, "starting_discount_pct");
   let state;
   let counters;
   let taskKeys;
@@ -361,7 +362,7 @@ export function createPostCallFixture({ run_id = "post-call-demo-001" } = {}) {
   let invocationKeys;
 
   function reset() {
-    state = newSeed();
+    state = newSeed(startingDiscountPct);
     counters = newCounters();
     taskKeys = new Map();
     draftKeys = new Map();

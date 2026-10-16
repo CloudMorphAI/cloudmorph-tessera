@@ -111,6 +111,14 @@ test("a caller-side denial skips dispatch; a fresh review task preserves 30% and
   assert.deepEqual(demo.snapshot().counters.crm, { entries: before.entries + 1, writes: before.writes });
 });
 
+test("hero fixture starts and resets at zero while the separate policy-boundary fixture starts at ten", () => {
+  const hero = createPostCallFixture({ run_id: "zero-discount-hero", starting_discount_pct: 0 });
+  assert.equal(hero.snapshot().state.deals[DEAL_ID].discount_pct, 0);
+  call(hero, "crm.update_deal", { deal_id: DEAL_ID, fields: { notes: "Hero run note only." } }, "hero-note");
+  assert.equal(hero.reset().state.deals[DEAL_ID].discount_pct, 0);
+  assert.equal(fixture().snapshot().state.deals[DEAL_ID].discount_pct, 10);
+});
+
 test("strict validation rejects unknown and mixed fields without partial mutation or adapter entry", () => {
   const demo = fixture();
   const initial = demo.snapshot().state.deals[DEAL_ID];
