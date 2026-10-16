@@ -6,7 +6,7 @@ profile. Only synthetic Converse JSON crosses the WSL/Windows boundary.
 from __future__ import annotations
 
 import json
-import os
+import re
 import subprocess
 import sys
 import time
@@ -49,8 +49,20 @@ def _safe_error(stderr: str) -> str:
     if not lines:
         return "no error details returned"
     chosen = next((line for line in lines if "An error occurred" in line), lines[-1])
-    lower = chosen.lower()
-    if any(key in lower for key in ("secret_access_key", "session_token", "authorization", "access_key_id")):
+    normalized = re.sub(r"[^a-z0-9]", "", chosen.lower())
+    if any(
+        key in normalized
+        for key in (
+            "secretaccesskey",
+            "accesskeyid",
+            "sessiontoken",
+            "securitytoken",
+            "authorization",
+            "credential",
+            "password",
+            "clientsecret",
+        )
+    ):
         return "AWS CLI returned an error containing a credential field; details suppressed"
     return chosen[:500]
 
@@ -58,10 +70,15 @@ def _safe_error(stderr: str) -> str:
 def _aws_json(*args: str, timeout: int = CLI_TIMEOUT_SECONDS) -> Any:
     if not AWS_CLI.is_file():
         raise DemoError(f"Windows AWS CLI is missing at the configured path: {AWS_CLI}")
-    env = os.environ.copy()
-    env["AWS_MAX_ATTEMPTS"] = "1"
-    env["AWS_RETRY_MODE"] = "standard"
-    env["AWS_PAGER"] = ""
+    # This is deliberately a child-environment allowlist, not a copy of WSL's
+    # environment. Windows interop keeps the Windows user's normal home/profile
+    # resolution; AWS credentials, profile/config overrides, and endpoint
+    # variables are selected neither from WSL nor copied into the child.
+    env = {
+        "AWS_MAX_ATTEMPTS": "1",
+        "AWS_RETRY_MODE": "standard",
+        "AWS_PAGER": "",
+    }
     command = [
         str(AWS_CLI),
         *args,
@@ -444,6 +461,7 @@ def _accept_exception(result: dict[str, Any]) -> dict[str, Any]:
         lookup.get("decision") == "allow"
         and _system_for(result, "get_invoice").get("call_count") == 1
         and payment.get("decision") == "block"
+        and payment.get("policy_id") == "demo-vendor-payment-cap"
         and payment_system.get("call_count") == 0
         and result["summary"].get("blocked_system_contacts") == 0
         and len([event for event in result["events"] if event.get("type") == "checker"]) == 2

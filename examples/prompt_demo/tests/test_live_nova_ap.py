@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -70,6 +71,107 @@ def _mock_bedrock(monkeypatch: pytest.MonkeyPatch, responses: list[Any]) -> list
 
 def _future_deadline() -> float:
     return time.monotonic() + harness.RUN_TIMEOUT_SECONDS + 30
+
+
+def test_aws_cli_uses_allowlisted_environment_and_explicit_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attacker_markers = {
+        "AWS_ACCESS_KEY_ID": "DUMMY_ACCESS_ID_MARKER",
+        "AWS_SECRET_ACCESS_KEY": "DUMMY_SECRET_KEY_MARKER",
+        "AWS_SESSION_TOKEN": "DUMMY_SESSION_TOKEN_MARKER",
+        "AWS_SECURITY_TOKEN": "DUMMY_SECURITY_TOKEN_MARKER",
+        "AWS_PROFILE": "attacker-profile-marker",
+        "AWS_DEFAULT_PROFILE": "attacker-default-profile-marker",
+        "AWS_CONFIG_FILE": "DUMMY_CONFIG_PATH_MARKER",
+        "AWS_SHARED_CREDENTIALS_FILE": "DUMMY_CREDENTIAL_PATH_MARKER",
+        "AWS_WEB_IDENTITY_TOKEN_FILE": "DUMMY_WEB_IDENTITY_PATH_MARKER",
+        "AWS_ROLE_ARN": "dummy-role-arn-marker",
+        "AWS_ROLE_SESSION_NAME": "dummy-role-session-marker",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/dummy-container-relative-marker",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI": "http://127.0.0.1/dummy-container-uri-marker",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN": "DUMMY_CONTAINER_TOKEN_MARKER",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE": "DUMMY_CONTAINER_TOKEN_PATH_MARKER",
+        "AWS_ENDPOINT_URL": "http://127.0.0.1/dummy-endpoint-marker",
+        "AWS_ENDPOINT_URL_STS": "http://127.0.0.1/dummy-sts-endpoint-marker",
+        "AWS_ENDPOINT_URL_BEDROCK_RUNTIME": "http://127.0.0.1/dummy-bedrock-endpoint-marker",
+        "AWS_CA_BUNDLE": "DUMMY_CA_PATH_MARKER",
+        "HOME": "DUMMY_HOME_PATH_MARKER",
+        "UNRELATED_MARKER": "DUMMY_UNRELATED_ENV_MARKER",
+    }
+    for key, value in attacker_markers.items():
+        monkeypatch.setenv(key, value)
+
+    class FakeAwsCli:
+        def is_file(self) -> bool:
+            return True
+
+        def __str__(self) -> str:
+            return "/mock/windows/aws.exe"
+
+    monkeypatch.setattr(harness, "AWS_CLI", FakeAwsCli())
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout='{"Account":"237509402889"}', stderr="")
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    shell_like_argument = "Account; echo DUMMY_SHELL_MARKER"
+    result = harness._aws_json("sts", "get-caller-identity", "--query", shell_like_argument)
+
+    assert result == {"Account": "237509402889"}
+    assert len(calls) == 1
+    command, options = calls[0]
+    assert command == [
+        "/mock/windows/aws.exe",
+        "sts",
+        "get-caller-identity",
+        "--query",
+        shell_like_argument,
+        "--profile",
+        "Karn",
+        "--region",
+        "us-east-1",
+        "--cli-connect-timeout",
+        "5",
+        "--cli-read-timeout",
+        "15",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ]
+    assert options["shell"] is False
+    assert options["timeout"] == harness.CLI_TIMEOUT_SECONDS
+    assert options["env"] == {
+        "AWS_MAX_ATTEMPTS": "1",
+        "AWS_RETRY_MODE": "standard",
+        "AWS_PAGER": "",
+    }
+    assert not set(attacker_markers).intersection(options["env"])
+    assert "DUMMY_SHELL_MARKER" in command[4]
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        '{"SecretAccessKey":"DUMMY_SECRET_MARKER","SessionToken":"DUMMY_TOKEN_MARKER"}',
+        '{"accessKeyId":"DUMMY_ACCESS_ID_MARKER","AWS_SESSION_TOKEN":"DUMMY_SESSION_MARKER"}',
+        '{"secret_access_key":"DUMMY_SNAKE_CASE_SECRET_MARKER","authorization":"DUMMY_AUTH_MARKER"}',
+    ],
+)
+def test_cli_error_redacts_snake_and_camel_case_credentials(stderr: str) -> None:
+    rendered = harness._safe_error(stderr)
+    assert rendered == "AWS CLI returned an error containing a credential field; details suppressed"
+    for marker in (
+        "DUMMY_SECRET_MARKER",
+        "DUMMY_TOKEN_MARKER",
+        "DUMMY_ACCESS_ID_MARKER",
+        "DUMMY_SESSION_MARKER",
+        "DUMMY_SNAKE_CASE_SECRET_MARKER",
+        "DUMMY_AUTH_MARKER",
+    ):
+        assert marker not in rendered
 
 
 def test_mocked_nova_tool_proposal_must_match_the_fixed_action(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,6 +263,21 @@ def test_unknown_action_is_rejected_before_any_model_call(monkeypatch: pytest.Mo
     with pytest.raises(harness.DemoError, match="Unknown fixed synthetic tool"):
         harness.CallBudget(_future_deadline()).for_run("unknown", [_action("delete_real_payment", {})])
     assert requests == []
+
+
+def test_exception_acceptance_requires_the_payment_cap_policy_id() -> None:
+    result = {
+        "events": [
+            {"type": "checker", "tool": "get_invoice", "decision": "allow"},
+            {"type": "system", "tool": "get_invoice", "call_count": 1},
+            {"type": "checker", "tool": "pay_vendor", "decision": "block", "policy_id": "unrelated-policy"},
+            {"type": "system", "tool": "pay_vendor", "call_count": 0},
+        ],
+        "summary": {"blocked_system_contacts": 0},
+    }
+
+    with pytest.raises(harness.DemoError, match="oversized payment"):
+        harness._accept_exception(result)
 
 
 def test_turn_and_global_model_call_limits_are_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
