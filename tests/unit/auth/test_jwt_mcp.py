@@ -4,6 +4,10 @@ JWKS endpoint is mocked with respx against Entra/Okta/Cognito-style JWKS samples
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import time
 from unittest.mock import MagicMock
 
@@ -66,6 +70,26 @@ def _sign(private_pem: bytes, claims: dict, kid: str = _KID) -> str:
     return jwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": kid})
 
 
+def _b64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _compact_token(header: dict, claims: dict, signature: bytes = b"") -> str:
+    header_part = _b64url(json.dumps(header, separators=(",", ":")).encode())
+    claims_part = _b64url(json.dumps(claims, separators=(",", ":")).encode())
+    return f"{header_part}.{claims_part}.{_b64url(signature)}"
+
+
+def _hmac_with_public_jwk(claims: dict, public_jwk: dict) -> str:
+    header = {"alg": "HS256", "typ": "JWT", "kid": _KID}
+    unsigned = _compact_token(header, claims).rsplit(".", 1)[0]
+    # This material is public and attacker-derivable. It models the classic
+    # RSA-public-key-as-HMAC-secret confusion attempt without real credentials.
+    hmac_key = json.dumps(public_jwk, sort_keys=True, separators=(",", ":")).encode()
+    signature = hmac.new(hmac_key, unsigned.encode("ascii"), hashlib.sha256).digest()
+    return f"{unsigned}.{_b64url(signature)}"
+
+
 def _make_authenticator(**kwargs) -> JWTAuthenticator:
     defaults = {
         "jwks_url": _JWKS_URL,
@@ -112,6 +136,225 @@ def test_valid_entra_jwt(test_jwk):
     # ([a-z0-9_-]). The OIDC validator falls back to deployment_id in that case.
     assert ctx.scope == "default"
     assert ctx.metadata["jwt_provider"] == "external"
+
+
+@respx.mock
+def test_valid_rs256_jwk_without_optional_alg_metadata(test_jwk):
+    """A valid RSA JWK may omit its optional alg member."""
+    private_pem, public_jwk = test_jwk
+    public_jwk = {key: value for key, value in public_jwk.items() if key != "alg"}
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _sign(private_pem, claims)
+
+    ctx = _make_authenticator().authenticate(_req(token))
+
+    assert ctx.principal_id == "synthetic-user"
+    assert jwks_route.call_count == 1
+
+
+@respx.mock
+def test_tampered_rs256_signature_is_rejected(test_jwk):
+    """An allowed algorithm does not make a modified signature acceptable."""
+    private_pem, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    parts = _sign(private_pem, claims).split(".")
+    parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+    token = ".".join(parts)
+
+    with pytest.raises(UnauthorizedError, match="JWT validation failed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"typ": "JWT", "kid": _KID},
+        {"alg": [], "typ": "JWT", "kid": _KID},
+    ],
+    ids=["missing-alg", "malformed-alg"],
+)
+@respx.mock
+def test_missing_or_malformed_alg_is_rejected_before_jwks_fetch(test_jwk, header):
+    """A missing or non-string alg is rejected before any JWKS request."""
+    _, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _compact_token(header, claims)
+
+    with pytest.raises(UnauthorizedError, match="JWT algorithm is not allowed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 0
+
+
+@respx.mock
+def test_jwk_algorithm_mismatch_is_rejected(test_jwk):
+    """A key's trusted alg metadata must agree with the signed JWT header."""
+    private_pem, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = jwt.encode(claims, private_pem, algorithm="RS512", headers={"kid": _KID})
+
+    with pytest.raises(UnauthorizedError, match="does not match JWKS key"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 1
+
+
+@pytest.mark.parametrize("algorithm", ["RS256", "RS384", "RS512"])
+@respx.mock
+def test_rsa_algorithm_authenticates_when_jwk_allows_it(test_jwk, algorithm):
+    """All allowed RSA algorithms work when trusted JWK metadata agrees."""
+    private_pem, public_jwk = test_jwk
+    public_jwk = {**public_jwk, "alg": algorithm}
+    respx.get(_JWKS_URL).mock(return_value=Response(200, json={"keys": [public_jwk]}))
+    claims = {
+        "sub": "synthetic-rsa-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = jwt.encode(claims, private_pem, algorithm=algorithm, headers={"kid": _KID})
+
+    ctx = _make_authenticator().authenticate(_req(token))
+
+    assert ctx.principal_id == "synthetic-rsa-user"
+
+
+@pytest.mark.parametrize("algorithm", ["ES256", "ES384", "ES512"])
+@respx.mock
+def test_allowed_ecdsa_jwt_authenticates(algorithm):
+    """All allowed ECDSA algorithms work with their matching curve and JWK."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from jose import jwk as jose_jwk
+
+    curve_for_algorithm = {
+        "ES256": ec.SECP256R1,
+        "ES384": ec.SECP384R1,
+        "ES512": ec.SECP521R1,
+    }
+    private_key = ec.generate_private_key(curve_for_algorithm[algorithm]())
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_pem = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    public_jwk = jose_jwk.construct(public_pem, algorithm=algorithm).to_dict()
+    public_jwk.update({"kid": _KID, "alg": algorithm, "use": "sig"})
+    respx.get(_JWKS_URL).mock(return_value=Response(200, json={"keys": [public_jwk]}))
+    claims = {
+        "sub": "synthetic-ec-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = jwt.encode(claims, private_pem, algorithm=algorithm, headers={"kid": _KID})
+
+    ctx = _make_authenticator().authenticate(_req(token))
+
+    assert ctx.principal_id == "synthetic-ec-user"
+
+
+@respx.mock
+def test_rsa_algorithm_rejects_ec_jwk(test_jwk):
+    """RSA JWT algorithms cannot be paired with EC keys from the JWKS."""
+    private_pem, public_jwk = test_jwk
+    mismatched_jwk = {**public_jwk, "kty": "EC"}
+    mismatched_jwk.pop("alg", None)
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [mismatched_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _sign(private_pem, claims)
+
+    with pytest.raises(UnauthorizedError, match="does not match JWKS key type"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 1
+
+
+@respx.mock
+def test_none_algorithm_is_rejected_before_jwks_fetch(test_jwk):
+    """An unsecured JWT cannot select its own accepted algorithm."""
+    _, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _compact_token({"alg": "none", "typ": "JWT", "kid": _KID}, claims)
+
+    with pytest.raises(UnauthorizedError, match="algorithm is not allowed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 0
+
+
+@respx.mock
+def test_hmac_algorithm_cannot_be_selected_for_rsa_jwk(test_jwk):
+    """An HMAC token using only public RSA JWK material is rejected up front."""
+    _, public_jwk = test_jwk
+    jwks_route = respx.get(_JWKS_URL).mock(
+        return_value=Response(200, json={"keys": [public_jwk]})
+    )
+    claims = {
+        "sub": "synthetic-user",
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "exp": int(time.time()) + 3600,
+    }
+    token = _hmac_with_public_jwk(claims, public_jwk)
+
+    with pytest.raises(UnauthorizedError, match="algorithm is not allowed"):
+        _make_authenticator().authenticate(_req(token))
+
+    assert jwks_route.call_count == 0
 
 
 @respx.mock

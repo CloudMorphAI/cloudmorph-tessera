@@ -344,6 +344,14 @@ This is useful in CI to start the proxy without a real policies directory.
 
 ## 9. Management-plane SSO
 
+The shared JWKS validator accepts the fixed asymmetric JWS set `RS256`, `RS384`,
+`RS512`, `ES256`, `ES384`, and `ES512`. It does not use the JWT's unverified
+`alg` header to expand that set. The selected JWK must match the algorithm's key
+family, and any `alg` value present in the JWK must match the JWT header. This
+applies to both `auth.jwt` and `auth.management_plane`; HMAC and `none` are
+rejected. There is not currently a configuration field for expanding the
+algorithm allow-list.
+
 Management-plane SSO uses OIDC/JWKS to authenticate requests to `/app/*` routes
 (license check, org management — reserved for v0.2.x; the authenticator is
 instantiated at startup but no routes consume it yet). MCP traffic at

@@ -18,6 +18,11 @@ from tessera.errors import UnauthorizedError
 
 logger = logging.getLogger(__name__)
 
+# Fixed public-key JWS algorithms supported by python-jose and the OIDC/JWKS
+# contract. Keeping RSA and ECDSA preserves asymmetric-provider compatibility;
+# symmetric algorithms and `none` are intentionally excluded.
+_ALLOWED_JWT_ALGORITHMS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
+
 
 @dataclass
 class JWKSCache:
@@ -113,17 +118,29 @@ def validate_jwt(
     except JWTError as exc:
         raise UnauthorizedError(f"malformed JWT header: {exc}") from exc
 
+    algorithm = unverified.get("alg")
+    if algorithm not in _ALLOWED_JWT_ALGORITHMS:
+        raise UnauthorizedError("JWT algorithm is not allowed")
+
     kid = unverified.get("kid")
     if not kid:
         raise UnauthorizedError("JWT header missing kid")
 
     key, cache = get_key(kid, cache, jwks_url, http_client)
 
+    jwk_algorithm = key.get("alg")
+    if jwk_algorithm is not None and jwk_algorithm != algorithm:
+        raise UnauthorizedError("JWT algorithm does not match JWKS key")
+
+    expected_key_type = "RSA" if algorithm.startswith("RS") else "EC"
+    if key.get("kty") != expected_key_type:
+        raise UnauthorizedError("JWT algorithm does not match JWKS key type")
+
     try:
         claims = jwt.decode(
             token,
             key,
-            algorithms=[unverified.get("alg", "RS256")],
+            algorithms=list(_ALLOWED_JWT_ALGORITHMS),
             issuer=issuer,
             audience=audience,
             options={
