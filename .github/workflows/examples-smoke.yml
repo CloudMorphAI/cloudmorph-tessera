@@ -5,6 +5,33 @@ on:
   pull_request:
 
 jobs:
+  post-call:
+    name: Post-call synthetic checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install local runtime and focused check dependencies
+        run: pip install -e '.[runtime,intelligence]' pytest==9.0.3 jsonschema==4.23.0 ruff==0.15.12
+      - name: Check actual policy gate and mocked model workflow
+        run: |
+          python -m pytest -q examples/post_call_demo/policy_tests.py
+          python -m unittest -v examples.post_call_demo.model_tests
+          node --test examples/post_call_demo/backend/tests/fixture.test.mjs
+          python examples/post_call_demo/verification/verify_http.py
+      - name: Lint and parse local demo sources
+        run: |
+          ruff check examples/post_call_demo
+          node --check examples/post_call_demo/web/app.js
+          node --check examples/post_call_demo/verification/capture_ui.mjs
+
   validate:
     name: Validate ${{ matrix.example }}
     runs-on: ubuntu-latest
