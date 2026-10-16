@@ -134,7 +134,7 @@ def tool_catalog() -> list[dict[str, Any]]:
         ),
         (
             "tasks.create",
-            "Persist an engineering follow-up or a pending internal discount-review task. A review never applies a discount.",
+            "Create an engineering follow-up or a pending internal discount-review task. When task_kind is internal_discount_review, requested_discount_pct is required and must preserve the requested percentage. A review never applies a discount.",
             _schema(
                 ["task_kind", "deal_id", "title", "details", "idempotency_key"],
                 {
