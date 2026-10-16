@@ -7,9 +7,11 @@ the model.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -171,20 +173,96 @@ def disable_live_transport() -> None:
     _LIVE_PREFLIGHT = None
 
 
+def _decode_cli_json(raw: bytes) -> tuple[Any, str]:
+    try:
+        decoded = raw.decode("utf-8-sig")
+        encoding = "utf-8-sig"
+    except UnicodeDecodeError:
+        decoded = raw.decode("cp1252")
+        encoding = "cp1252"
+    try:
+        return json.loads(decoded), encoding
+    except json.JSONDecodeError as exc:
+        raise ModelRunError("AWS CLI bedrock-runtime returned non-JSON output.") from exc
+
+
+def _decode_cli_stderr(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252")
+
+
+def _aws_cli_json_bytes(*args: str, timeout: int = CLI_TIMEOUT_SECONDS) -> tuple[Any, dict[str, str]]:
+    """Call the reviewed fixed AWS CLI using bytes capture to avoid locale decoding."""
+    helper = _load_live_helper()
+    if not helper.AWS_CLI.is_file():
+        raise ModelRunError("The configured Windows AWS CLI executable is unavailable.")
+    env = {
+        "AWS_MAX_ATTEMPTS": "1",
+        "AWS_RETRY_MODE": "standard",
+        "AWS_PAGER": "",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    command = [
+        str(helper.AWS_CLI),
+        *args,
+        "--profile",
+        helper.AWS_PROFILE,
+        "--region",
+        helper.AWS_REGION,
+        "--cli-connect-timeout",
+        "5",
+        "--cli-read-timeout",
+        "15",
+        "--no-cli-pager",
+        "--output",
+        "json",
+    ]
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed executable/arguments; shell is disabled.
+            command,
+            check=False,
+            capture_output=True,
+            text=False,
+            timeout=timeout,
+            env=env,
+            shell=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ModelRunError(f"AWS CLI {args[0]} timed out after {timeout}s; no retry was attempted.") from exc
+    except OSError as exc:
+        raise ModelRunError(f"AWS CLI {args[0]} could not be started; no retry was attempted.") from exc
+    if completed.returncode:
+        safe_stderr = helper._safe_error(_decode_cli_stderr(completed.stderr or b""))
+        raise ModelRunError(
+            f"AWS CLI {args[0]} failed with exit code {completed.returncode}: {safe_stderr}"
+        )
+    payload, encoding = _decode_cli_json(completed.stdout or b"")
+    return payload, {
+        "stdout_encoding": encoding,
+        "stdout_sha256": hashlib.sha256(completed.stdout or b"").hexdigest(),
+    }
+
+
 def _live_converse(**request: Any) -> dict[str, Any]:
     if _LIVE_PREFLIGHT is None:
         raise ModelRunError("Nova transport was not enabled by server startup opt-in and preflight.")
-    helper = _load_live_helper()
     request_json = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
     try:
-        return helper._aws_json(
+        response, transport = _aws_cli_json_bytes(
             "bedrock-runtime",
             "converse",
             "--cli-input-json",
             request_json,
             timeout=CLI_TIMEOUT_SECONDS,
         )
+        if not isinstance(response, dict):
+            raise ModelRunError("AWS CLI bedrock-runtime returned a non-object Converse response.")
+        response["_postcall_local_transport"] = transport
+        return response
     except Exception as exc:  # noqa: BLE001 - helper suppresses credential-bearing errors.
+        helper = _load_live_helper()
         safe = helper._safe_error(str(exc))
         raise ModelRunError(f"Nova Converse failed: {safe}") from exc
 
@@ -427,6 +505,14 @@ def _actual_block_text(gate_result: Any) -> str:
     return block_text
 
 
+def _actual_block_reason(block_text: str) -> str:
+    """Extract the policy's reason field, excluding protocol instructions."""
+    reason_lines = [line.partition(":")[2].strip() for line in block_text.splitlines() if line.startswith("reason:")]
+    if len(reason_lines) != 1 or not reason_lines[0]:
+        raise ModelRunError("The actual POLICY_BLOCK response did not include exactly one nonempty reason line.")
+    return reason_lines[0]
+
+
 def _partial(run_id: str, is_live: bool, calls: list[dict[str, Any]], tool_events: list[dict[str, Any]]) -> dict[str, Any]:
     usage_complete = bool(calls) and all(
         isinstance(call.get("input_tokens"), int) and isinstance(call.get("output_tokens"), int)
@@ -532,6 +618,9 @@ def run_model(gateway: Any, converse_fn: Callable[..., dict[str, Any]] | None = 
                 if isinstance(output_tokens, int) and not isinstance(output_tokens, bool) and output_tokens >= 0:
                     call["output_tokens"] = output_tokens
             if is_live and isinstance(response, dict):
+                local_transport = response.get("_postcall_local_transport")
+                if isinstance(local_transport, dict):
+                    call["local_transport"] = local_transport
                 output = response.get("output")
                 message = output.get("message") if isinstance(output, dict) else None
                 call["provider_trace"] = {
@@ -588,7 +677,8 @@ def run_model(gateway: Any, converse_fn: Callable[..., dict[str, Any]] | None = 
                 audit_id = event_for_model.get("audit_id")
                 if not isinstance(audit_id, str) or not audit_id.strip():
                     raise ModelRunError("The actual policy block did not include its correlated audit ID.")
-                context["block_reason"] = _actual_block_text(event_for_model.get("gate_result"))
+                block_text = _actual_block_text(event_for_model.get("gate_result"))
+                context["block_reason"] = _actual_block_reason(block_text)
             elif contacts != 1:
                 raise ModelRunError(f"Allowed {tool_name} did not make exactly one fixture adapter contact.")
 

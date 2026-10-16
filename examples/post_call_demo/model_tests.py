@@ -2,16 +2,25 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import shutil
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from examples.post_call_demo import model_runner
 
 DEAL_ID = "DEAL-ACME-001"
 CALL_ID = "CALL-ACME-001"
-REASON = "POLICY_BLOCK: requested discount exceeds the synthetic 10% policy cap."
+REASON = "Requested discount exceeds the locally configured 10 percent cap"
+BLOCK_TEXT = (
+    "POLICY_BLOCK\npolicy_id: post-call-discount-cap\nreason: "
+    + REASON
+    + "\n\nThis is a final decision from the Tessera policy gate. Do NOT retry with different parameters."
+)
 ARGUMENTS = [
     {"call_id": CALL_ID},
     {"deal_id": DEAL_ID},
@@ -134,7 +143,7 @@ class FakeGateway:
             "decision": decision,
             "reason": reason,
             "audit_id": f"audit-{index + 1}",
-            "gate_result": {"content": [{"type": "text", "text": REASON if decision == "block" else reason}]},
+            "gate_result": {"content": [{"type": "text", "text": BLOCK_TEXT if decision == "block" else reason}]},
             "result": result,
             "adapter_contacts": contacts,
         }
@@ -149,11 +158,13 @@ class OfflineModel:
         duplicate_tool_use_id: bool = False,
         empty_task_key: bool = False,
         unexpected_commercial_terms: bool = False,
+        invented_review_reason: bool = False,
     ) -> None:
         self.requests: list[dict[str, Any]] = []
         self.duplicate_tool_use_id = duplicate_tool_use_id
         self.empty_task_key = empty_task_key
         self.unexpected_commercial_terms = unexpected_commercial_terms
+        self.invented_review_reason = invented_review_reason
 
     def __call__(self, **request: Any) -> dict[str, Any]:
         index = len(self.requests)
@@ -181,7 +192,10 @@ class OfflineModel:
             ):
                 raise AssertionError("The separate review turn did not receive the actual policy-block result.")
             actual_block_text = prior_results[-1]["gate_result"]["content"][0]["text"]
-            arguments["details"] = f"30% request is pending review. Policy block: {actual_block_text}"
+            actual_reason = model_runner._actual_block_reason(actual_block_text)
+            arguments["details"] = f"30% request is pending review. Policy reason: {actual_reason}"
+            if self.invented_review_reason:
+                arguments["details"] = "30% request is pending review. Policy reason: a guessed reason"
         tool_use_id = "use-1" if self.duplicate_tool_use_id and index == 1 else f"use-{index + 1}"
         return {
             "stopReason": "tool_use",
@@ -209,6 +223,71 @@ class OfflineModel:
 
 
 class ModelRunnerTests(unittest.TestCase):
+    def _cli_helper(self) -> SimpleNamespace:
+        loaded_helper = model_runner._load_live_helper()
+        return SimpleNamespace(
+            AWS_CLI=Path(__file__),
+            AWS_PROFILE="Karn",
+            AWS_REGION="us-east-1",
+            _safe_error=loaded_helper._safe_error,
+        )
+
+    def test_cli_json_decodes_utf8_and_windows_1252_without_losing_unicode(self) -> None:
+        cases = (
+            ("utf-8-sig", '{"text":"Résumé — approved"}'.encode()),
+            ("cp1252", '{"text":"Résumé — approved"}'.encode("cp1252")),
+        )
+        for expected_encoding, stdout in cases:
+            with self.subTest(encoding=expected_encoding):
+                completed = model_runner.subprocess.CompletedProcess([], 0, stdout=stdout, stderr=b"")
+                with (
+                    patch.object(model_runner, "_load_live_helper", return_value=self._cli_helper()),
+                    patch.object(model_runner.subprocess, "run", return_value=completed) as run_mock,
+                ):
+                    response, metadata = model_runner._aws_cli_json_bytes(
+                        "bedrock-runtime", "converse", "--cli-input-json", "{}"
+                    )
+
+                self.assertEqual(response["text"], "Résumé — approved")
+                self.assertEqual(metadata["stdout_encoding"], expected_encoding)
+                self.assertEqual(metadata["stdout_sha256"], hashlib.sha256(stdout).hexdigest())
+                command = run_mock.call_args.args[0]
+                options = run_mock.call_args.kwargs
+                self.assertEqual(command[-9:], [
+                    "--profile", "Karn", "--region", "us-east-1", "--cli-connect-timeout", "5",
+                    "--cli-read-timeout", "15", "--no-cli-pager", "--output", "json",
+                ][-9:])
+                self.assertFalse(options["text"])
+                self.assertFalse(options["shell"])
+                self.assertEqual(options["env"], {
+                    "AWS_MAX_ATTEMPTS": "1",
+                    "AWS_RETRY_MODE": "standard",
+                    "AWS_PAGER": "",
+                    "PYTHONIOENCODING": "utf-8",
+                })
+
+    def test_cli_invalid_json_and_credential_error_are_safely_rejected(self) -> None:
+        helper = self._cli_helper()
+        invalid_json = model_runner.subprocess.CompletedProcess([], 0, stdout=b"not json", stderr=b"")
+        with (
+            patch.object(model_runner, "_load_live_helper", return_value=helper),
+            patch.object(model_runner.subprocess, "run", return_value=invalid_json),
+            self.assertRaisesRegex(model_runner.ModelRunError, "non-JSON output"),
+        ):
+            model_runner._aws_cli_json_bytes("bedrock-runtime", "converse")
+
+        credential_error = model_runner.subprocess.CompletedProcess(
+            [], 1, stdout=b"", stderr=b"An error occurred: SecretAccessKey=do-not-print"
+        )
+        with (
+            patch.object(model_runner, "_load_live_helper", return_value=helper),
+            patch.object(model_runner.subprocess, "run", return_value=credential_error),
+            self.assertRaises(model_runner.ModelRunError) as raised,
+        ):
+            model_runner._aws_cli_json_bytes("bedrock-runtime", "converse")
+        self.assertNotIn("do-not-print", str(raised.exception))
+        self.assertIn("details suppressed", str(raised.exception))
+
     def test_full_eight_turn_flow_uses_actual_gateway_block_and_readback(self) -> None:
         gateway = FakeGateway()
         model = OfflineModel()
@@ -226,6 +305,7 @@ class ModelRunnerTests(unittest.TestCase):
         self.assertEqual([event["decision"] for event in gateway.events], ["allow"] * 5 + ["block", "allow", "allow"])
         self.assertEqual(gateway.events[5]["adapter_contacts"], 0)
         self.assertIn(REASON, gateway.calls[6][1]["details"])
+        self.assertNotIn("Do NOT retry", gateway.calls[6][1]["details"])
         self.assertEqual(gateway.events[7]["result"]["discount_pct"], 0)
         self.assertEqual(len({call[2] for call in gateway.calls}), 8)
         self.assertEqual(len({call[3] for call in gateway.calls}), 8)
@@ -259,6 +339,23 @@ class ModelRunnerTests(unittest.TestCase):
         self.assertEqual(len(gateway.calls), 6)
         self.assertEqual(len(model.requests), 6)
         self.assertNotIn("internal_discount_review", [call[1].get("task_kind") for call in gateway.calls])
+
+    def test_review_reason_must_match_actual_policy_reason_line(self) -> None:
+        gateway = FakeGateway()
+        model = OfflineModel(invented_review_reason=True)
+
+        with self.assertRaisesRegex(model_runner.ModelRunError, "quote the actual policy block reason"):
+            model_runner.run_model(gateway, converse_fn=model)
+
+        self.assertEqual(len(gateway.calls), 6)
+        self.assertEqual(gateway.events[5]["decision"], "block")
+        self.assertEqual(gateway.events[5]["adapter_contacts"], 0)
+
+    def test_ambiguous_policy_reason_lines_fail_closed(self) -> None:
+        ambiguous = BLOCK_TEXT + "\nreason: a second reason"
+
+        with self.assertRaisesRegex(model_runner.ModelRunError, "exactly one nonempty reason line"):
+            model_runner._actual_block_reason(ambiguous)
 
     def test_duplicate_model_tool_use_id_stops_before_second_gateway_call(self) -> None:
         gateway = FakeGateway()

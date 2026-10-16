@@ -163,21 +163,64 @@ async function main() {
       throw new Error('The browser reported a page error while rendering the actual response.');
     }
 
-    // Keep each real result section visible long enough for the continuous raw
-    // recording to be readable; this does not add or animate any result data.
-    for (const [name, selector] of [
-      ['readback', '#task-list'],
-      ['drafts', '#draft-list'],
-      ['events', '#event-list'],
-      ['audit', '#audit-list']
-    ]) {
-      const target = page.locator(selector);
-      await target.scrollIntoViewIfNeeded();
+    // Center each specific returned item so the raw capture visibly includes
+    // the third allow, the actual blocked discount, and the separate review task.
+    report.walkthrough_targets = [];
+    async function showTarget(name, target, filename, expectedCount = 1) {
+      const count = await target.count();
+      if (count !== expectedCount) throw new Error(`${name}: expected ${expectedCount} DOM target(s), received ${count}.`);
+      const rect = await target.evaluate((element) => {
+        element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        const bounds = element.getBoundingClientRect();
+        return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right,
+          width: bounds.width, height: bounds.height, viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight };
+      });
+      const visible = rect.top >= 0 && rect.left >= 0
+        && rect.bottom <= rect.viewportHeight && rect.right <= rect.viewportWidth;
+      report.walkthrough_targets.push({ name, selector: await target.evaluate((element) =>
+        element.id ? `#${element.id}` : `${element.tagName.toLowerCase()}.${element.className}`),
+        count, centered_rect: rect, fully_visible: visible });
+      if (!visible) throw new Error(`${name}: selected DOM target was not fully visible after centered scroll.`);
       await page.waitForTimeout(5_000);
-      const filename = `after-run-${name}.png`;
       await page.screenshot({ path: path.join(outputDir, filename) });
       report.screenshots.push(filename);
     }
+
+    const cards = page.locator('#event-list .event-card');
+    if (await cards.count() !== 8) throw new Error('Expected eight actual rendered event cards before walkthrough.');
+    const notesCard = cards.nth(2);
+    if (await notesCard.getAttribute('data-decision') !== 'allow'
+        || !(await notesCard.innerText()).includes('crm.update_deal')) {
+      throw new Error('The third rendered event is not the expected notes/next-step allow.');
+    }
+    await showTarget('notes-allow', notesCard, 'after-run-notes-allow.png');
+    await showTarget('draft-readback', page.locator('#draft-list'), 'after-run-drafts.png');
+
+    const blockCard = page.locator('#event-list .event-card[data-decision="block"]');
+    if (await blockCard.count() !== 1) throw new Error('Expected exactly one actual blocked event card.');
+    const blockText = await blockCard.innerText();
+    if (!blockText.includes('discount_pct') || !/\b30\b/.test(blockText)
+        || !blockText.includes('Policy') || !blockText.includes('Audit')
+        || !blockText.includes('Adapter contacts')
+        || (await page.locator('#blocked-adapter-count').innerText()).trim() !== '0') {
+      throw new Error('The actual blocked card does not show the 30% request, policy/audit context, and zero blocked contacts.');
+    }
+    await showTarget('blocked-discount-30pct', blockCard, 'after-run-blocked-30pct.png');
+
+    const reviewCard = page.locator('#event-list .event-card').filter({ hasText: 'internal_discount_review' });
+    if (await reviewCard.count() !== 1 || !/requested_discount_pct[\s\S]*?30/.test(await reviewCard.innerText())) {
+      throw new Error('The separate review event does not show the actual pending 30% request.');
+    }
+    await showTarget('separate-review-task-30pct', reviewCard, 'after-run-review-task.png');
+
+    if ((await page.locator('#deal-discount').innerText()).trim() !== '0%') {
+      throw new Error('The actual final readback does not show the unchanged 0% discount.');
+    }
+    await showTarget('final-deal-readback', page.locator('#deal-discount'), 'after-run-final-deal.png');
+    await showTarget('audit-chain', page.locator('#audit-chain'), 'after-run-audit-chain.png');
+    await showTarget('audit-records', page.locator('#audit-list'), 'after-run-audit-records.png');
+
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.waitForTimeout(2_000);
     const finalPath = path.join(outputDir, 'end.png');
