@@ -53,3 +53,19 @@ For a compact machine-readable scenario receipt, use `runtime.py --ap-scenario`.
 Both model and budget callables can be injected into `handler.handle` for offline request validation/failure checks without importing boto3. The fake invoice/payment/draft state is reset for each request. No approval fulfillment, automatic retry or payment integration exists in this example.
 
 Deployment, IAM, API throttling and live dev-host verification are owned separately. Source implementation and offline smoke do not establish deployment or live model availability. The recorded standalone demo remains available as an explicitly recorded fallback.
+
+## Bounded live Nova AP scenario
+
+For an actual model-driven run against the same local-only Tessera and fake AP fixtures, run this command from WSL in the prepared Python 3.12 environment:
+
+~~~sh
+python examples/prompt_demo/live_nova_ap.py
+~~~
+
+The runner invokes the Windows AWS CLI at /mnt/c/Program Files/Amazon/AWSCLIV2/aws.exe with profile Karn and region us-east-1; it passes only synthetic Converse JSON and receives model output over stdout. It never reads or copies credentials into WSL. Before inference, it rechecks the exact STS identity, the Nova Micro v1 on-demand catalog ID, model authorization/entitlement/region availability, and current on-demand input/output rates from the AWS Price List API. It stops if the conservative six-call estimate exceeds USD 0.01.
+
+The runner selects amazon.nova-micro-v1:0, uses a 256-token output limit, a 12,000-byte maximum serialized request, a two-turn limit per run, one CLI attempt per call, a 20-second call timeout and a 150-second overall deadline. With the preflight-verified us-east-1 prices, the conservative bound is under USD 0.006; each receipt records the actual returned input/output token usage and price-derived estimate. AWS documents client-side function calling for Nova models through Converse in its [Nova tool-use guide](https://docs.aws.amazon.com/nova/latest/userguide/tool-use.html).
+
+The flow is three model-driven runs: the small approved invoice gets a fresh lookup and exact INR 25,000 fake-ledger payment; the exception invoice gets a fresh lookup and one full INR 500,000 proposal, whose Tessera block ends that conversation with no retry/split turn; only after observing that block does a new request expose the draft and readback tools. Each turn forces one fixed synthetic tool schema, and a pre-gate scenario guard stops any unexpected tool name or arguments before they reach Tessera. The draft request includes the prior block's actual policy ID/reason for context, but its draft/readback actions are new Tessera evaluations with their own request-local audit chain.
+
+All accepted model proposals pass through the actual local /mcp/demo Tessera policy gate and an httpx.MockTransport fake adapter. This runner does not call handler.py, the live HTTP/DynamoDB admission path, any payment service, or any other cloud action. Receipts are written under examples/prompt_demo/live_nova_receipts/ with mode live_model_synthetic_tools, the actual model ID, tool-use/audit receipt correlations, checked decisions, measured mock-adapter contacts, token usage and price estimate. They contain only synthetic prompt/fixture content. This is a live model result with local fake tools; it is not a customer, payment or production acceptance.

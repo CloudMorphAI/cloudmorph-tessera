@@ -162,7 +162,12 @@ def _synthetic_result(name: str, args: dict[str, Any], state: dict[str, Any]) ->
 
 def run_prompt(message: str, *, converse_fn: Callable[..., dict[str, Any]],
                request_id: str | None = None, deadline: float | None = None,
-               execution_mode: str = "injected_provider_synthetic_tools") -> dict[str, Any]:
+               execution_mode: str = "injected_provider_synthetic_tools",
+               model_id: str | None = None,
+               tool_configs: list[dict[str, Any]] | None = None,
+               max_turns: int = MAX_TURNS,
+               max_tokens: int = 512,
+               temperature: float = 0.2) -> dict[str, Any]:
     """One independent conversation; callable locally with an injected provider.
 
     Lambda invokes one handler at a time per worker. The lock additionally
@@ -174,16 +179,49 @@ def run_prompt(message: str, *, converse_fn: Callable[..., dict[str, Any]],
     if execution_mode not in ("live_model_synthetic_tools", "injected_provider_synthetic_tools",
                               "scripted_connector_tool_flow_offline"):
         raise ValueError("Unsupported demo execution mode.")
+    if type(max_turns) is not int or not 1 <= max_turns <= MAX_TURNS:
+        raise ValueError(f"max_turns must be from 1 to {MAX_TURNS}.")
+    if type(max_tokens) is not int or not 1 <= max_tokens <= 512:
+        raise ValueError("max_tokens must be from 1 to 512.")
+    if type(temperature) not in (int, float) or not 0 <= temperature <= 1:
+        raise ValueError("temperature must be from 0 to 1.")
+    selected_model = model_id or MODEL_ID
+    if not isinstance(selected_model, str) or not selected_model.strip() or len(selected_model) > 256:
+        raise ValueError("Invalid model ID.")
+    if tool_configs is None:
+        selected_tools = [TOOL_CONFIG] * max_turns
+    else:
+        if not isinstance(tool_configs, list) or len(tool_configs) != max_turns:
+            raise ValueError("tool_configs must contain one config per model turn.")
+        known_tools = {spec[0] for spec in _SPECS}
+        selected_tools = []
+        for tool_config in tool_configs:
+            if not isinstance(tool_config, dict) or not isinstance(tool_config.get("tools"), list):
+                raise ValueError("Each tool config must contain a tools list.")
+            configured_names = [item.get("toolSpec", {}).get("name")
+                                for item in tool_config["tools"] if isinstance(item, dict)]
+            if (not configured_names or any(name not in known_tools for name in configured_names)
+                    or len(configured_names) != len(tool_config["tools"])):
+                raise ValueError("tool_configs may expose only the fixed synthetic tools.")
+            choice = tool_config.get("toolChoice", {})
+            if not isinstance(choice, dict):
+                raise ValueError("toolChoice must be an object.")
+            if "tool" in choice and choice["tool"].get("name") not in configured_names:
+                raise ValueError("toolChoice must name a tool in the same config.")
+            selected_tools.append(tool_config)
     if not _RUN_LOCK.acquire(blocking=False):
         raise DemoRuntimeError("Demo worker is busy")
     try:
-        return _run(message, converse_fn, request_id or str(uuid.uuid4()), deadline, execution_mode)
+        return _run(message, converse_fn, request_id or str(uuid.uuid4()), deadline, execution_mode,
+                    selected_model, selected_tools, max_turns, max_tokens, float(temperature))
     finally:
         _RUN_LOCK.release()
 
 
 def _run(message: str, converse_fn: Callable[..., dict[str, Any]], request_id: str,
-         deadline: float | None, execution_mode: str) -> dict[str, Any]:
+         deadline: float | None, execution_mode: str, model_id: str,
+         tool_configs: list[dict[str, Any]], max_turns: int, max_tokens: int,
+         temperature: float) -> dict[str, Any]:
     import httpx
     from fastapi.testclient import TestClient
     from tessera.audit.sinks.sqlite import SqliteSink
@@ -244,15 +282,16 @@ def _run(message: str, converse_fn: Callable[..., dict[str, Any]], request_id: s
                 client.portal.call(original_client.aclose)
                 app.state.http_clients["demo"] = httpx.AsyncClient(
                     transport=httpx.MockTransport(transport), base_url="http://synthetic.invalid", timeout=2)
-                for turn in range(MAX_TURNS):
+                for turn in range(max_turns):
                     if deadline is not None and deadline - time.monotonic() < 10.5:
                         if turn == 0:
                             raise MakerError("Insufficient time for model inference")
                         texts.append("Demo limit: no further model turn was requested because the run time limit was reached. The checker and system cards show the actual tool outcomes.")
                         break
                     try:
-                        response = converse_fn(modelId=MODEL_ID, system=[{"text": SYSTEM_PROMPT}], messages=messages,
-                                               toolConfig=TOOL_CONFIG, inferenceConfig={"maxTokens": 512, "temperature": 0.2})
+                        response = converse_fn(modelId=model_id, system=[{"text": SYSTEM_PROMPT}], messages=messages,
+                                               toolConfig=tool_configs[turn],
+                                               inferenceConfig={"maxTokens": max_tokens, "temperature": temperature})
                         assistant = response["output"]["message"]
                         content = assistant["content"]
                         if assistant.get("role") != "assistant" or not isinstance(content, list) or len(content) > 16:
@@ -281,12 +320,15 @@ def _run(message: str, converse_fn: Callable[..., dict[str, Any]], request_id: s
                     # A provider/proposal error is an HTTP failure, never an
                     # invented Tessera block or successful partial transcript.
                     batch_ids: set[str] = set()
+                    configured_names = {item["toolSpec"]["name"] for item in tool_configs[turn]["tools"]}
                     for tool_use in tool_uses:
                         if not isinstance(tool_use, dict):
                             raise MakerError("Invalid tool proposal")
                         tool_id = tool_use.get("toolUseId")
                         if not isinstance(tool_id, str) or not 1 <= len(tool_id) <= 128 or tool_id in seen_ids or tool_id in batch_ids:
                             raise MakerError("Invalid or repeated tool proposal ID")
+                        if tool_use.get("name") not in configured_names:
+                            raise MakerError("Model proposed a tool not configured for this turn")
                         if _validate_tool(tool_use.get("name"), tool_use.get("input")):
                             raise MakerError("Invalid synthetic tool or arguments")
                         batch_ids.add(tool_id)
@@ -324,9 +366,9 @@ def _run(message: str, converse_fn: Callable[..., dict[str, Any]], request_id: s
                         except Exception as exc:
                             raise DemoRuntimeError("Checker did not produce a valid receipt") from exc
                     messages.append({"role": "user", "content": tool_results})
-                    if turn == MAX_TURNS - 1:
+                    if turn == max_turns - 1:
                         turn_label = "model" if execution_mode == "live_model_synthetic_tools" else "scripted provider"
-                        texts.append(f"Demo limit: two {turn_label} turns completed, so no further explanation was requested. The checker and system cards show the actual tool outcomes.")
+                        texts.append(f"Demo limit: {max_turns} {turn_label} turn(s) completed, so no further explanation was requested. The checker and system cards show the actual tool outcomes.")
             # Lifespan exit has drained the real async audit sink.
             sink = SqliteSink(path=str(audit_db))
             try:
@@ -350,7 +392,7 @@ def _run(message: str, converse_fn: Callable[..., dict[str, Any]], request_id: s
                 sink.close()
     checkers = [event for event in events if event["type"] == "checker"]
     return {"request_id": request_id,
-            "model": MODEL_ID if execution_mode == "live_model_synthetic_tools" else None,
+            "model": model_id if execution_mode == "live_model_synthetic_tools" else None,
             "mode": execution_mode,
             "assistant_text": "\n\n".join(texts), "events": events, "usage": usage,
             "summary": {"proposed": proposed, "blocked": sum(e["decision"] == "block" for e in checkers),
