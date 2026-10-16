@@ -134,7 +134,9 @@ def handle(event: dict[str, Any], context: Any = None, *,
         return error(503, "budget_unavailable", "The demo admission budget is temporarily unavailable.")
     try:
         provider = converse_fn if converse_fn is not None else _client("bedrock-runtime").converse
-        result = run_prompt(message, converse_fn=provider, request_id=request_id, deadline=deadline)
+        execution_mode = "injected_provider_synthetic_tools" if converse_fn is not None else "live_model_synthetic_tools"
+        result = run_prompt(message, converse_fn=provider, request_id=request_id, deadline=deadline,
+                            execution_mode=execution_mode)
         return _response(200, result)
     except MakerError:
         return error(502, "model_unavailable", "The model could not complete this run. No successful result is being substituted.")

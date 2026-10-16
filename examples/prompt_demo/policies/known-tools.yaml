@@ -11,6 +11,9 @@ when:
       - mcp__github__force_push
       - query
       - pay_vendor
+      - get_invoice
+      - create_payment_draft
+      - get_payment_draft
 action: allow
 reason: "Validated synthetic tool permitted by the demo allowlist"
 priority: 0
