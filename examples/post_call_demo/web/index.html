@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Post-call workflow · local demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Tessera local demo home">
+        <span class="brand-mark" aria-hidden="true">T</span>
+        <span>Tessera <span class="brand-sub">LOCAL DEMO</span></span>
+      </a>
+      <div class="topbar-right">
+        <span class="synthetic-badge"><span class="badge-dot"></span> Fictional data · loopback only</span>
+        <span id="service-status" class="service-status" role="status">Checking local service…</span>
+      </div>
+    </header>
+
+    <main id="top" class="page-shell">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">POST-SALES · SYNTHETIC SCENARIO</p>
+          <h1 id="page-title">Useful work, under a clear policy boundary.</h1>
+          <p class="intro-copy">Review the fictional Acme call, update the deal, prepare follow-up work, then see Tessera block a discount above the configured cap before any adapter contact.</p>
+        </div>
+        <div class="scenario-pill"><span class="scenario-number">8</span><span>backend tool calls<br />across 7 stages</span></div>
+      </section>
+
+      <section class="notice" aria-label="Demo limitations">
+        <span class="notice-icon" aria-hidden="true">i</span>
+        <p><strong>Local fixture only.</strong> No vendor CRM, email, payment, or customer data is connected. Drafts are not sent. This example does not demonstrate human approval or an authenticated operator role.</p>
+      </section>
+
+      <section class="control-bar" aria-label="Run controls">
+        <div class="mode-copy">
+          <span class="eyebrow">RUN MODE</span>
+          <span id="mode-description">Scripted mode runs the deterministic fixture; it makes no model request.</span>
+        </div>
+        <div class="run-actions">
+          <button id="run-scripted" class="button button-primary" type="button" disabled>
+            <span class="button-icon" aria-hidden="true">▶</span> Run scripted scenario
+          </button>
+          <button id="run-nova" class="button button-secondary" type="button" disabled>
+            Run with Nova <span class="button-arrow" aria-hidden="true">↗</span>
+          </button>
+        </div>
+      </section>
+      <p id="run-status" class="run-status" role="status" aria-live="polite">Waiting for the local demo service.</p>
+      <div id="run-error" class="error-banner" role="alert" hidden></div>
+
+      <div class="workspace-grid">
+        <section class="panel journey-panel" aria-labelledby="journey-title">
+          <div class="panel-heading">
+            <div><p class="eyebrow">WORKFLOW</p><h2 id="journey-title">Post-call sequence</h2></div>
+            <span id="run-label" class="run-label">NOT RUN</span>
+          </div>
+          <ol id="journey-list" class="journey-list"></ol>
+          <div class="panel-footnote">Every result below is rendered from the local backend response. A missing event stays unverified.</div>
+        </section>
+
+        <div class="results-column">
+          <section class="panel deal-panel" aria-labelledby="deal-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">SYNTHETIC DEAL</p><h2 id="deal-title">Acme &middot; <span class="mono">DEAL-ACME-001</span></h2></div>
+              <span class="seed-tag">Fixture seed</span>
+            </div>
+            <div class="deal-summary">
+              <div class="deal-stat"><span>Discount</span><strong id="deal-discount">0%</strong></div>
+              <div class="deal-stat"><span>Next step</span><strong id="deal-next-step">Unscheduled</strong></div>
+              <div class="deal-stat"><span>Notes</span><strong id="deal-notes">Demo call received</strong></div>
+            </div>
+            <div class="readback-divider"><span>FINAL READBACK</span><span id="readback-state" class="subtle-label">Waiting for a run</span></div>
+            <div class="related-grid">
+              <div><h3>Engineering tasks</h3><ul id="task-list" class="compact-list"><li class="muted">No readback yet</li></ul></div>
+              <div><h3>Follow-up drafts</h3><ul id="draft-list" class="compact-list"><li class="muted">No readback yet</li></ul></div>
+            </div>
+          </section>
+
+          <section class="panel evidence-panel" aria-labelledby="evidence-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">DECISIONS & RECEIPTS</p><h2 id="evidence-title">Run evidence</h2></div>
+              <span id="event-count" class="count-pill">0 events</span>
+            </div>
+            <div id="event-list" class="event-list"><p class="empty-state">Run the fixture to see actual tool arguments, policy decisions, reasons, receipts, and adapter contacts.</p></div>
+          </section>
+        </div>
+
+        <aside class="side-column">
+          <section class="panel policy-panel" aria-labelledby="policy-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">OPERATOR POLICY</p><h2 id="policy-title">Local policy boundary</h2></div>
+              <span class="lock-mark" aria-label="Read only">⌑</span>
+            </div>
+            <p class="policy-explainer">The local fixture's policy is shown separately from the tool catalog offered to the agent. This page displays the backend policy; it does not edit it or claim role-based authorization.</p>
+            <div id="policy-content" class="policy-content"><p class="muted">Loading policy from local service…</p></div>
+            <div id="policy-tools" class="tool-catalog"><span class="subtle-label">AGENT TOOL CATALOG</span><p class="muted">Tools are supplied by the local fixture.</p></div>
+          </section>
+
+          <section class="panel audit-panel" aria-labelledby="audit-title">
+            <div class="panel-heading">
+              <div><p class="eyebrow">TRACEABILITY</p><h2 id="audit-title">Audit & usage</h2></div>
+            </div>
+            <div class="audit-stats">
+              <div><span>Audit receipts</span><strong id="audit-count">—</strong></div>
+              <div><span>Adapter contacts</span><strong id="adapter-count">—</strong></div>
+              <div><span>Blocked-call contacts</span><strong id="blocked-adapter-count">—</strong></div>
+            </div>
+            <div id="audit-chain" class="audit-chain" role="status">Audit chain status not returned.</div>
+            <div id="audit-list" class="audit-list"><p class="muted">No run receipts yet.</p></div>
+            <div class="usage-box"><span class="subtle-label">MODEL USAGE</span><p id="usage-detail" class="muted">No model request in scripted mode.</p></div>
+          </section>
+        </aside>
+      </div>
+      <footer class="page-footer">Synthetic workflow · local execution · no production integrations</footer>
+    </main>
+  </body>
+</html>

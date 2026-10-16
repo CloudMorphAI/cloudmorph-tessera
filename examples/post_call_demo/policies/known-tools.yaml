@@ -1,0 +1,18 @@
+id: post-call-known-tools
+name: Allow validated local synthetic tools
+match:
+  upstream: post_call
+  tool: '*'
+when:
+  - condition: tool_name_in
+    values:
+      - meetings.get_call
+      - crm.get_deal
+      - crm.update_deal
+      - tasks.create
+      - tasks.read
+      - drafts.create
+      - drafts.read
+action: allow
+reason: Validated local synthetic tool permitted by operator allowlist
+priority: 0

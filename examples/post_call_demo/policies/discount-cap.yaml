@@ -1,0 +1,13 @@
+id: post-call-discount-cap
+name: Synthetic Acme discount cap
+description: Local operator configuration, outside the agent tool catalog. Integer percentages only.
+match:
+  upstream: post_call
+  tool: crm.update_deal
+when:
+  - condition: arg_path_matches_regex
+    arg_path: fields.discount_pct
+    pattern: '^(?:1[1-9]|[2-9][0-9]|100)$'
+action: block
+reason: Requested discount exceeds the locally configured 10 percent cap
+priority: 100

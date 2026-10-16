@@ -1,14 +1,87 @@
-# Synthetic post-call CRM workflow fixture
+# Synthetic post-call workflow: real Tessera gate, local adapters
 
-**Synthetic local fixture only.** Every Acme name, call, deal, request, task and draft in this example is fictional. This backend never contacts a CRM, meeting service, customer, vendor or email provider. It does not send drafts, process payments, call a model provider, or connect to cloud services.
+**Synthetic local data only.** Every Acme call, deal, task and draft is fictional.
+No CRM, meeting, task vendor, email or payment service is connected. Drafts remain
+unsent. The actual Tessera proxy checks each proposed call before the isolated
+Node fixture can execute it. Operator policy comes from local read-only YAML;
+this example does not establish authenticated policy administration or tenant isolation.
 
-This CM-096 slice supplies a resettable in-memory fixture and a policy-agnostic adapter contract for the YC post-call workflow: read the fictional Acme call/deal, update call notes and next step, create/read an engineering task, create/read an unsent follow-up/proposal draft, and preserve a requested 30% discount in a separate internal review task when a caller-side policy denial prevents dispatch. The scripted hero run starts with discount 0 and leaves it at 0 after the denial; separate policy-boundary tests use the fixture's 10% seed.
+## Run the integrated local UI
+
+Use WSL Ubuntu, Python3.12+ and Linux Node20+ on PATH. From this repository root,
+create an isolated virtual environment and install the checked-out runtime with
+its `runtime`, `intelligence` and `dev` extras (the latter supplies jsonschema and
+checks):
+
+```bash
+python3 -m venv .venv-post-call
+. .venv-post-call/bin/activate
+python -m pip install '.[runtime,intelligence,dev]'
+python examples/post_call_demo/server.py
+```
+
+Open `http://127.0.0.1:8795`. The default **scripted** mode makes zero provider calls.
+The UI runs a fixed synthetic Acme sequence: read call/deal, save notes and next
+step, create engineering follow-up, draft unsent follow-up, propose a30% discount
+through the same `crm.update_deal` tool, create a separate pending30% review task
+after the block, and read the unchanged0% discount. Every call has its own actual
+Tessera audit receipt. Local SQLite audit records are drained, correlated and
+hash-chain verified before a completed run is returned. A full valid mixed
+notes+30% update blocks atomically; exhaustive integer0..100 checks prove the cap.
+The gateway deliberately accepts only integer percentages; malformed input is a
+contract rejection, never a fabricated policy block.
+
+The actual HTTP interface is GET `/api/health`, GET `/api/policy` and POST
+`/api/run` with exactly `{ "mode": "scripted", "idempotency_key": "unique-key" }`
+and matching `Idempotency-Key`. POST requires the exact loopback Host and Origin.
+There is no public arbitrary-tool or policy-write endpoint. These loopback checks
+are not authentication. A ten-run process limit and cached idempotency receipts
+prevent accidental repeated execution; changed mode under the same key conflicts.
+
+### Explicit real-model mode
+
+Only after offline checks and independent review, the operator may start the
+server with `--enable-nova --output-dir <new-evidence-directory>`. This opts into
+**one** bounded Amazon Bedrock Nova Micro attempt using the existing Karn provider,
+verified STS identity, current model availability and AWS Price List rates.
+Startup fails closed if the eight-call conservative estimate exceeds USD0.01.
+The UI requires a separate explicit Nova click. No automatic retries, model
+fallback, provider setup or cloud resource changes occur. A failed attempt is
+consumed and its incomplete evidence cannot be presented as a completed run.
+
+This is a constrained eight-turn model workflow: one selected tool is offered
+per turn. The real model supplies arguments and generated notes/task/draft text;
+actual gate and fixture results return to that same session. It does not prove
+general autonomous planning, a vendor integration, human approval or customer
+acceptance. Model/provider labels are returned only after actual provider calls.
+Historical AP or Hermes transcripts are separate evidence.
+
+```bash
+python -m pytest -q examples/post_call_demo/policy_tests.py
+python -m unittest -v examples.post_call_demo.model_tests
+node --test examples/post_call_demo/backend/tests/fixture.test.mjs
+python examples/post_call_demo/verification/verify_http.py
+```
+
+`verification/README.md` describes raw actual browser capture. Preserve the
+unmodified master and JSON traces; Krish's CM100 storyboard determines editorial
+cuts. A saved customer-policy segment must be omitted unless its authentication
+is independently verified. No deployed or published demo is implied by this source.
+
+## Standalone fixture contract (CM096)
+
+The remainder documents the policy-agnostic Node module. Its separate
+`backend/run-demo.mjs` uses an explicitly labeled scripted gate stub; it is not
+Tessera or model evidence. The integrated server above replaces that stub with
+`policy_integration.py` and an actual Tessera MCP proxy, keeping raw adapters private.
+The hero explicitly seeds0%; the fixture constructor's default10% remains only
+for separate adapter boundary tests.
 
 ## Integration boundary
 
-The module exports `FIXTURE_VERSION`, `FIXTURE_LABEL`, `CALL_ID`, `DEAL_ID`, `getPostCallToolCatalog()`, and `createPostCallFixture()`. The fixture's `dispatch(invocation)` is policy-agnostic. Its constructor accepts `{ run_id?: string, starting_discount_pct?: number }`; the default seed is 10% for the separate boundary tests, while `run-demo.mjs` explicitly seeds 0%. Reset restores that selected seed. It does **not** implement or claim Tessera policy enforcement. Arjun's CM-098 gateway integration must evaluate each proposed action before it calls dispatch; a denied `crm.update_deal` call must never enter the CRM adapter. The scripted demo and test suite use clearly labeled caller-side stubs only to demonstrate the boundary; they are not Tessera results or model execution. The actual adapter contract for CM-098 is the in-process fixture API and strict tool catalog described below. The raw adapter must not be exposed directly to a browser or bypassed by UI code. There is no policy-administration tool or action in the catalog.
+The module exports `FIXTURE_VERSION`, `FIXTURE_LABEL`, `CALL_ID`, `DEAL_ID`, `getPostCallToolCatalog()`, and `createPostCallFixture()`. The fixture's `dispatch(invocation)` is policy-agnostic. Its constructor accepts `{ run_id?: string, starting_discount_pct?: number }`; the default seed is 10% for the separate boundary tests, while `run-demo.mjs` explicitly seeds 0%. Reset restores that selected seed. It does **not** implement or claim Tessera policy enforcement. The CM-098 gateway evaluates each proposed action before it calls dispatch; a denied `crm.update_deal` call must never enter the CRM adapter. The scripted demo and test suite use clearly labeled caller-side stubs only to demonstrate the boundary; they are not Tessera results or model execution. The actual adapter contract for CM-098 is the in-process fixture API and strict tool catalog described below. The raw adapter must not be exposed directly to a browser or bypassed by UI code. There is no policy-administration tool or action in the catalog.
 
-The proposed local transport for the frontend/policy integration is one call per request:
+The earlier fixture-only transport proposal below is **not exposed** by the integrated server; it illustrates the internal invocation shape only:
 
     POST /api/post-call/tools/{tool_name}
 
