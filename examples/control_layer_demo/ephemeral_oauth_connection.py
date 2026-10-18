@@ -271,16 +271,7 @@ class _Operator:
         _require(self.run_validated and self.run_label is not None, "RUN_INPUTS_REQUIRED")
         return (f"connection-flow-{self.run_label}.started.json", f"connection-exchange-{self.run_label}.started.json")
 
-    def preflight(self):
-        self.validate_run_inputs()
-        _require(sys.platform == "linux" and not os.environ.get("TESSERA_DEBUG"), "PREFLIGHT_FAILED")
-        for name in self.claim_names():
-            try:
-                (_AUDIT / name).lstat()
-            except FileNotFoundError:
-                pass
-            else:
-                raise _OperatorError("EXCHANGE_CLAIM_EXISTS")
+    def _reviewed_helpers(self):
         self.plan = _json(_read_pinned(_AUDIT / "oauth-one-test-revocation-plan-v2.json", _PLAN_SHA))
         for relative, expected in _SOURCE_PINS.items():
             _read_pinned(_SOURCE / relative, expected)
@@ -302,6 +293,19 @@ class _Operator:
             _read_pinned(Path(actual), expected)
         _require(callable(getattr(consumer, "run_connection_use", None))
                  and getattr(consumer, "SCHEMA", None) == "tessera.scripted_connection_test.v2", "HELPER_NOT_REVIEWED")
+        return receiver, consumer
+
+    def preflight(self):
+        self.validate_run_inputs()
+        _require(sys.platform == "linux" and not os.environ.get("TESSERA_DEBUG"), "PREFLIGHT_FAILED")
+        for name in self.claim_names():
+            try:
+                (_AUDIT / name).lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                raise _OperatorError("EXCHANGE_CLAIM_EXISTS")
+        receiver, consumer = self._reviewed_helpers()
         seed = _json(_read_pinned(_SEED, _SEED_SHA, 65536))
         _require(seed.get("format") == "tessera.identity.migration.v1" and type(seed.get("bindings")) is list
                  and len(seed["bindings"]) == 1, "BINDING_MISMATCH")

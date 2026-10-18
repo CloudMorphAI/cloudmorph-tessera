@@ -41,6 +41,20 @@ Source hashes and review are in `oauth-diagnostic-run-v3-preparation.json` and
 Run from `/mnt/c/Users/found/Desktop/CloudMorph/cloudmorph-tessera` in WSL Ubuntu:
 
 ```sh
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_prepared_flow.py
+```
+
+This one-command source check runs nine maintained offline verifiers, stopping
+on the first failure. Its JSON binds each verifier's actual SHA256 and separates
+synthetic checks from live acceptance. It includes startup, Nova feedback, exact
+workload policy, the new session operator and watchdog. Each child has a45second
+limit and owns its temporary fixtures. No dependency installation, approval,
+OAuth/model call or live run is performed. The separate Hermes connector needs
+its own admitted source and isolated environment; it is not covered by this check.
+
+The three original diagnostic commands remain available individually:
+
+```sh
 /home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_ephemeral_oauth_diagnostics.py
 /home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_ephemeral_oauth_operator.py
 /home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_ephemeral_oauth_runner.py
@@ -86,8 +100,8 @@ No such receipt or attempt2 claim exists at preparation completion.
 
 After that decision, the same launcher takes `--approved-single-connection`
 instead of `--check` and the actual `--approval-sha256`. The flag itself is not
-permission. All source/input hashes must still match. Native Chrome profile
-`sainath@cloudmorph.ai` and built-in autofill are used through normal browser UI;
+permission. All source/input hashes must still match. The operator's selected
+Chrome profile and built-in autofill are used through normal browser UI;
 never extract credentials/cookies/token storage. Hand off unlock/MFA when needed.
 Browser and loopback receiver must be on the same verified device.
 
