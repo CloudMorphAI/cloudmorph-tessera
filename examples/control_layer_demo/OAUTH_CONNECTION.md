@@ -38,6 +38,33 @@ Source hashes and review are in `oauth-diagnostic-run-v3-preparation.json` and
 
 ## Repeatable offline commands
 
+The separately reviewed Nova-only workflow now has maintained fresh-read and
+packet preparation commands. Run in WSL using the existing demo environment:
+
+```sh
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/prepare_workload_preflight.py --output /mnt/c/Users/found/Desktop/CloudMorph/workspace-support/audit/2026-10-18-cm095-resume/NEW-readonly-preflight.json
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/prepare_workload_packet.py --preflight /mnt/c/Users/found/Desktop/CloudMorph/workspace-support/audit/2026-10-18-cm095-resume/NEW-readonly-preflight.json
+```
+
+Choose a new preflight receipt name. The first command reads only the fixed AWS
+account, UI84/Labs60 deployment metadata, Nova Micro metadata and matching complete
+on-demand prices. It performs no model/OAuth/cloud write; its worker has a75second
+watchdog and bounded terminate/kill waits. Failures produce finite receipts.
+
+The second command admits exact reviewed runtime main `29af3519`, operator and
+watchdog bytes, a PASS preflight no older than one hour, actual source/dependency
+hashes and the fixed model budget. It preserves prior read-only evidence and
+creates exclusive nonsecret manifest/input/budget/pending-request files. Existing
+workload inputs, approval or claims stop preparation. It creates no approval,
+claim, listener or SDK operation. A preparation failure may leave partial files;
+preserve and inspect them rather than rerunning or deleting markers.
+
+The actual native human decision must separately bind that packet before the
+reviewed launcher can run. The request covers only the exact hosted workload
+policy, one grant, one bounded Nova session and exact generated-row cleanup;
+Hermes is excluded. Previous connection approvals do not authorize it. These
+helpers do not renew consumed permission or publish/deploy the runtime.
+
 Run from `/mnt/c/Users/found/Desktop/CloudMorph/cloudmorph-tessera` in WSL Ubuntu:
 
 ```sh
