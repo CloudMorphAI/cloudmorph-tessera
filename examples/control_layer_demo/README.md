@@ -1,5 +1,7 @@
 # Independent client through Tessera
 
+See [the reviewed local OAuth connection workflow](OAUTH_CONNECTION.md) for receiver, strict snapshot/test-audit use, exact cleanup, replay boundaries and the actual partial result. It is separate from independent-agent acceptance below.
+
 ## CloudMorph AWS readiness mode
 
 The optional `--scenario aws-readiness` mode demonstrates the same independent
