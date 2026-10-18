@@ -1,6 +1,17 @@
 # Independent client through Tessera
 
-See [the reviewed local OAuth connection workflow](OAUTH_CONNECTION.md) for receiver, strict snapshot/test-audit use, exact cleanup, replay boundaries and the actual partial result. It is separate from independent-agent acceptance below.
+See [the reviewed local OAuth connection workflow](OAUTH_CONNECTION.md) for receiver, strict snapshot/test-audit use, exact cleanup, replay boundaries and the actual scoped connection result. It is separate from independent-agent acceptance below.
+
+Check strict frozen startup without OAuth, AWS, a model or a listener in WSL:
+
+```sh
+/home/sainath/tessera-test-venv/bin/python examples/control_layer_demo/verify_readiness_activation.py
+```
+
+The finite JSON checks a synthetic private RAM cache, exact policy activation,
+cloud-only readiness, merged collision counts and canonical startup audit after
+drain. It does not establish current hosted tenant activation. The check blocks
+network, OAuth-cache, provider and upload calls and removes its RAM fixtures.
 
 ## CloudMorph AWS readiness mode
 
@@ -8,7 +19,10 @@ The optional `--scenario aws-readiness` mode demonstrates the same independent
 agent and canonical Tessera proxy against a bounded AWS MCP adapter. Its real
 execution is restricted to pinned deployment-job metadata for the named
 CloudMorph backend (job 178) and Tessera UI (job 83), regional availability,
-and region discovery.
+and region discovery. These two job targets are historical Amplify metadata.
+The later direct backend deployment and UI84 served version are verified in
+separate release receipts; this pinned job query does not establish their current
+served version.
 The adapter exposes the discovered native names `aws___run_script`,
 `aws___get_regional_availability`, and `aws___list_regions`. The script tool
 accepts one exact read-only script; all other code is rejected independently of

@@ -115,6 +115,7 @@ class CloudBackedPolicyLoader:
         self._callbacks: list[Callable[[list[Policy]], None]] = []
         self._cloud_errors: dict[str, str] = {}
         self._cloud_count = 0
+        self._merged_count = 0
         self._stop_evt: threading.Event | None = None
         self._refresh_thread: threading.Thread | None = None
 
@@ -131,6 +132,7 @@ class CloudBackedPolicyLoader:
         merged = self._merge(local, cloud)
         if self._strict:
             self._verify_activation(cloud)
+        self._merged_count = len(merged)
         logger.info(
             "event=cloud_loader_loaded local=%d cloud=%d merged=%d cache=%s",
             len(local), self._cloud_count, len(merged), self._cache_path,
@@ -155,6 +157,7 @@ class CloudBackedPolicyLoader:
 
     def state(self) -> dict[str, Any]:
         st = self._fs.state()
+        st["loaded"] = self._merged_count
         st["cloud_loaded"] = self._cloud_count
         st["cloud_errored"] = [
             {"policy_id": k, "error": v} for k, v in self._cloud_errors.items()
