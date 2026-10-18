@@ -1,0 +1,21 @@
+id: workload-tessera-read
+name: Read the pinned Tessera UI deployment only
+priority: 100
+match:
+  upstream: control
+  tool: read_workload_status
+when:
+  - condition: arg_equals
+    arg: operation
+    value: amplify.GetJob
+  - condition: arg_equals
+    arg: app_id
+    value: d2nxbpvv53qeqc
+  - condition: arg_equals
+    arg: branch
+    value: main
+  - condition: arg_equals
+    arg: job_id
+    value: '84'
+action: allow
+reason: Permit the pinned read-only Tessera UI deployment query; other workloads remain blocked.

@@ -28,6 +28,7 @@ AWS_OPERATION_TIMEOUT, AWS_INITIAL_READ_TIMEOUT, AWS_POLL_READ_TIMEOUT = 30, 20,
 BACKEND_APP_ID, TESSERA_UI_APP_ID = "d3agonv0r2imi7", "d2nxbpvv53qeqc"
 APP_IDS = (BACKEND_APP_ID, TESSERA_UI_APP_ID)
 PINNED_JOBS = {BACKEND_APP_ID: "178", TESSERA_UI_APP_ID: "83"}
+WORKLOAD_JOBS = {"tessera-ui": {TESSERA_UI_APP_ID: "84"}, "labs-ui": {"d3s9n6ffim4722": "60"}}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26")
 MAX_BODY, MAX_REPLY, MAX_CALLS = 65536, 262144, 100
 TOKEN_ENV = "CM_READINESS_UPSTREAM_TOKEN"  # noqa: S105 - env var name, never a token value
@@ -63,6 +64,20 @@ for target, response in zip(targets, responses):
 result = {"jobs": rows}
 result
 '''
+WORKLOAD_SCRIPTS = {
+    workload: '''response = await call_boto3(
+    service_name="amplify",
+    operation_name="GetJob",
+    region_name="us-east-1",
+    params={"appId": "APP_ID", "branchName": "main", "jobId": "JOB_ID"},
+)
+job = response.get("job", {}).get("summary", {}) if isinstance(response, dict) else {}
+result = {"jobs": [{"appId": "APP_ID", "jobId": job.get("jobId", ""),
+                    "status": job.get("status", ""), "commitId": job.get("commitId", "")}]}
+result
+'''.replace("APP_ID", next(iter(jobs))).replace("JOB_ID", next(iter(jobs.values())))
+    for workload, jobs in WORKLOAD_JOBS.items()
+}
 REGION_ARGS = {"regions": [AWS_REGION], "resource_type": "cfn",
                "filters": ["AWS::Lambda::Function", "AWS::DynamoDB::Table"]}
 REGION_LABEL = "INERT LOCAL FIXTURE - NO AWS ACTION PERFORMED"
@@ -91,7 +106,7 @@ def _schema_allows(schema: Any, expected_type: str) -> bool:
                for option in schema.get(union, []) if isinstance(schema.get(union), list))
 
 
-def _remote_tools(tools: list[Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+def _remote_tools(tools: list[Any], workload_mode: bool = False) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Validate the actual catalog and derive an exact, narrow local catalog."""
     found: dict[str, dict[str, Any]] = {}
     for tool in tools:
@@ -155,7 +170,16 @@ def _remote_tools(tools: list[Any]) -> tuple[list[dict[str, Any]], dict[str, dic
              "filters": {"type": "array", "items": {"type": "string"}, "const": REGION_ARGS["filters"]}},
              "required": ["regions", "resource_type", "filters"], "additionalProperties": False}},
     ]
-    return local + _fixture_tools(), found
+    if workload_mode:
+        local = [{"name": "read_workload_status",
+                  "description": "Read pinned deployment metadata for tessera-ui (main job 84) or labs-ui (main job 60). This does not prove application health or current release.",
+                  "inputSchema": {"type": "object", "properties": {
+                      "operation": {"type": "string", "enum": ["amplify.GetJob"]},
+                      "app_id": {"type": "string", "enum": [TESSERA_UI_APP_ID, "d3s9n6ffim4722"]},
+                      "branch": {"type": "string", "enum": ["main"]},
+                      "job_id": {"type": "string", "enum": ["84", "60"]}},
+                      "required": ["operation", "app_id", "branch", "job_id"], "additionalProperties": False}}]
+    return (local if workload_mode else local + _fixture_tools()), found
 
 
 def _fixture_tools() -> list[dict[str, Any]]:
@@ -176,7 +200,8 @@ def _accepts(schema: dict[str, Any], args: Any) -> bool:
     props = schema.get("properties", {})
     if set(args) - set(props):
         return False
-    return all(isinstance(args[key], str) and args[key] == spec.get("const")
+    return all(isinstance(args[key], str)
+               and (args[key] == spec["const"] if "const" in spec else args[key] in spec.get("enum", []))
                for key, spec in props.items() if key in args and spec.get("type") == "string") and all(
         args.get(key) == spec.get("const") for key, spec in props.items()
         if key in args and spec.get("type") == "array")
@@ -204,8 +229,41 @@ class Ledger:
         os.close(self.fd)
 
 
+def _workload_arguments(workload: str) -> dict[str, str]:
+    jobs = WORKLOAD_JOBS[workload]
+    return {"operation": "amplify.GetJob", "app_id": next(iter(jobs)),
+            "branch": "main", "job_id": next(iter(jobs.values()))}
+
+
+def _workload_for(args: Any) -> str | None:
+    if not isinstance(args, dict) or any(not isinstance(value, str) for value in args.values()):
+        return None
+    return next((label for label in WORKLOAD_JOBS if args == _workload_arguments(label)), None)
+
+
+def _read_plan(name: str, args: Any, workload_mode: bool = False) -> tuple[str, dict[str, Any], str | None]:
+    """Reject outside the fixed plan before creating any native MCP transport."""
+    if workload_mode:
+        workload = _workload_for(args)
+        if name != "read_workload_status" or workload is None:
+            raise ValueError("Only a fixed workload deployment read may be dispatched")
+        return "aws___run_script", {"code": WORKLOAD_SCRIPTS[workload]}, workload
+    plan = {"aws___run_script": {"code": READONLY_SCRIPT}, "aws___list_regions": {},
+            "aws___get_regional_availability": REGION_ARGS}.get(name)
+    if plan is None or args != plan:
+        raise ValueError("Tool arguments do not match the fixed read-only plan")
+    return name, plan, None
+
+
 class AWSReadOnly:
+    def __init__(self, workload_mode: bool = False) -> None:
+        if type(workload_mode) is not bool:
+            raise ValueError("Invalid workload mode")
+        self.workload_mode = workload_mode
+
     async def _invoke(self, name: str | None = None, args: dict[str, Any] | None = None) -> Any:
+        if name is not None:
+            name, args, _workload = _read_plan(name, args, self.workload_mode)
         from mcp import ClientSession
         from mcp_proxy_for_aws.client import aws_iam_streamablehttp_client
 
@@ -218,16 +276,9 @@ class AWSReadOnly:
                     if initialized.protocolVersion not in PROTOCOLS:
                         raise RuntimeError("Unsupported AWS MCP protocol")
                     response = await session.list_tools()
-                    catalog, schemas = _remote_tools(list(response.tools))
+                    catalog, schemas = _remote_tools(list(response.tools), self.workload_mode)
                     if name is None:
                         return catalog
-                    plan = {"aws___run_script": {"code": READONLY_SCRIPT},
-                            "aws___list_regions": {},
-                            "aws___get_regional_availability": REGION_ARGS}.get(name)
-                    if plan is None or args != plan:
-                        raise ValueError("Tool arguments do not match the fixed read-only plan")
-                    if name == "aws___run_script" and args != {"code": READONLY_SCRIPT}:
-                        raise ValueError("Only the exact fixed script may be dispatched")
                     result = await session.call_tool(name, args,
                                 read_timeout_seconds=timedelta(seconds=(
                                     AWS_INITIAL_READ_TIMEOUT if name == "aws___run_script"
@@ -482,33 +533,35 @@ def _task_result(value: Any, expected_id: str | None) -> Any:
     return None
 
 
-def _valid_jobs(value: Any) -> list[dict[str, str]] | None:
-    if not isinstance(value, list) or len(value) != len(APP_IDS):
+def _valid_jobs(value: Any, workload: str | None = None) -> list[dict[str, str]] | None:
+    expected = PINNED_JOBS if workload is None else WORKLOAD_JOBS.get(workload)
+    if expected is None or not isinstance(value, list) or len(value) != len(expected):
         return None
     result_rows = {}
     for item in value:
         if not isinstance(item, dict) or set(item) != {"appId", "jobId", "status", "commitId"}:
             return None
         app_id = item.get("appId")
-        if (app_id not in APP_IDS or item.get("jobId") != PINNED_JOBS[app_id]
+        if (not isinstance(app_id, str) or app_id not in expected or app_id in result_rows
+                or item.get("jobId") != expected[app_id]
                 or not isinstance(item.get("status"), str) or not item["status"]
                 or not isinstance(item.get("commitId"), str)
                 or any(len(item[key]) > 256 for key in ("jobId", "status", "commitId"))):
             return None
         result_rows[app_id] = {key: item[key] for key in ("appId", "jobId", "status", "commitId")}
-    if set(result_rows) != set(APP_IDS):
+    if set(result_rows) != set(expected):
         return None
-    return [result_rows[app_id] for app_id in APP_IDS]
+    return [result_rows[app_id] for app_id in expected]
 
 
-def _jobs(result: Any, expected_task_id: str | None = None) -> list[dict[str, str]] | None:
+def _jobs(result: Any, expected_task_id: str | None = None, workload: str | None = None) -> list[dict[str, str]] | None:
     if (expected_task_id is not None and isinstance(result, dict)
             and _task_id_fields(result) == {expected_task_id}):
-        return _valid_jobs(_task_result(result, expected_task_id))
+        return _valid_jobs(_task_result(result, expected_task_id), workload)
     candidates = _candidate_values(result)
     if len(candidates) != 1:
         return None
-    return _valid_jobs(_task_result(candidates[0], expected_task_id))
+    return _valid_jobs(_task_result(candidates[0], expected_task_id), workload)
 
 
 def _api_call_lists(value: Any, expected_task_id: str | None,
@@ -548,7 +601,10 @@ def _api_call_lists(value: Any, expected_task_id: str | None,
     return found
 
 
-def _verified_api_calls(result: Any, expected_task_id: str | None) -> bool:
+def _verified_api_calls(result: Any, expected_task_id: str | None, workload: str | None = None) -> bool:
+    expected = PINNED_JOBS if workload is None else WORKLOAD_JOBS.get(workload)
+    if expected is None:
+        return False
     if (expected_task_id is not None and isinstance(result, dict)
             and _task_id_fields(result) == {expected_task_id}):
         call_lists = _api_call_lists(result, expected_task_id, task_scope=True)
@@ -561,7 +617,7 @@ def _verified_api_calls(result: Any, expected_task_id: str | None) -> bool:
     if not call_lists:
         return False
     for calls in call_lists:
-        if len(calls) != 2:
+        if len(calls) != len(expected):
             return False
         for call in calls:
             if (not isinstance(call, dict) or set(call) != {"service", "operation", "status"}
@@ -601,7 +657,10 @@ def _metadata_diagnostic(result: Any) -> dict[str, Any]:
             "recognized_paths": sorted(paths)[:64]}
 
 
-def _safe_result(name: str, result: Any) -> dict[str, Any]:
+def _safe_result(name: str, result: Any, workload: str | None = None) -> dict[str, Any]:
+    if ((name == "read_workload_status" and workload not in WORKLOAD_JOBS)
+            or (name != "read_workload_status" and workload is not None)):
+        raise ValueError("Invalid fixed workload result binding")
     expected_task_id = None
     task_marker_invalid = False
     if isinstance(result, dict) and "_cm_readiness_result" in result:
@@ -611,7 +670,7 @@ def _safe_result(name: str, result: Any) -> dict[str, Any]:
     plain = _plain(result)
     if getattr(result, "isError", False) or isinstance(plain, dict) and plain.get("isError"):
         return {"source": "AWS_MCP", "execution": "read_only_error", "error": "The read-only AWS MCP request failed."}
-    if name == "aws___run_script":
+    if name in {"aws___run_script", "read_workload_status"}:
         if task_marker_invalid:
             return {"source": "AWS_MCP", "execution": "read_only_incomplete",
                     "error": "The result contained ambiguous task metadata; raw output was withheld.",
@@ -625,8 +684,8 @@ def _safe_result(name: str, result: Any) -> dict[str, Any]:
                 return {"source": "AWS_MCP", "execution": "read_only_incomplete",
                         "error": "The returned task identity/status was missing or ambiguous.",
                         "diagnostic": _metadata_diagnostic(result)}
-            jobs = _jobs(task_record, expected_task_id)
-            receipts_valid = _verified_api_calls(task_record, expected_task_id)
+            jobs = _jobs(task_record, expected_task_id, workload)
+            receipts_valid = _verified_api_calls(task_record, expected_task_id, workload)
         else:
             candidates = _candidate_values(result)
             if len(candidates) != 1 or not isinstance(candidates[0], dict) \
@@ -639,19 +698,25 @@ def _safe_result(name: str, result: Any) -> dict[str, Any]:
                 return {"source": "AWS_MCP", "execution": "read_only_incomplete",
                         "error": "Task metadata was present without a uniquely bound task identity; raw output was withheld.",
                         "diagnostic": _metadata_diagnostic(result)}
-            jobs = _jobs(result)
-            receipts_valid = _verified_api_calls(result, None)
+            jobs = _jobs(result, workload=workload)
+            receipts_valid = _verified_api_calls(result, None, workload)
         if jobs is None or not receipts_valid:
             return {"source": "AWS_MCP", "execution": "read_only_incomplete",
-                    "error": "The fixed script result or its two GetJob API-call receipts were incomplete; raw output was withheld.",
+                    "error": ("The fixed script result or its two GetJob API-call receipts were incomplete; raw output was withheld."
+                              if workload is None else
+                              "The fixed workload result or its one GetJob API-call receipt was incomplete; raw output was withheld."),
                     "diagnostic": _metadata_diagnostic(result)}
-        return {"source": "AWS_MCP", "execution": "read_only_complete", "cloudmorph_jobs": jobs}
+        safe = {"source": "AWS_MCP", "execution": "read_only_complete", "cloudmorph_jobs": jobs}
+        if workload is not None:
+            safe.update({"workload": workload, "label": "PINNED DEPLOYMENT METADATA; NOT APPLICATION HEALTH OR CURRENT RELEASE PROOF"})
+        return safe
     return {"source": "AWS_MCP", "execution": "read_only_complete",
             "result": "\n".join(_plain_text(result))[:65536]}
 
 
 def make_server(*, run_id: str, ledger_path: str | Path, token: str | None = None,
-                port: int = 8767, max_requests: int = MAX_CALLS) -> ThreadingHTTPServer:
+                port: int = 8767, max_requests: int = MAX_CALLS,
+                workload_mode: bool = False) -> ThreadingHTTPServer:
     secret = token if token is not None else os.environ.get(TOKEN_ENV, "")
     if (not isinstance(secret, str) or not 32 <= len(secret) <= 512 or not secret.isascii()
             or any(ch.isspace() for ch in secret)):
@@ -662,14 +727,15 @@ def make_server(*, run_id: str, ledger_path: str | Path, token: str | None = Non
         raise ValueError("Invalid loopback port")
     if isinstance(max_requests, bool) or not isinstance(max_requests, int) or not 1 <= max_requests <= MAX_CALLS:
         raise ValueError("max-requests must be from 1 through 100")
-    ledger, aws = Ledger(ledger_path), AWSReadOnly()
+    aws = AWSReadOnly(workload_mode)
+    ledger = Ledger(ledger_path)
     try:
         catalog = aws.discover()
     except Exception:
         ledger.close()
         raise RuntimeError("AWS MCP read-only tools/list discovery failed; server was not started") from None
     state = {"lock": threading.Lock(), "semaphore": threading.BoundedSemaphore(4),
-             "calls": 0, "jobs": [], "fixture_noop_count": 0}
+             "calls": 0, "jobs": [], "workload_jobs": {}, "fixture_noop_count": 0}
     tools = catalog
 
     class Handler(BaseHTTPRequestHandler):
@@ -716,10 +782,14 @@ def make_server(*, run_id: str, ledger_path: str | Path, token: str | None = Non
                 return
             with state["lock"]:
                 jobs, noops = [dict(job) for job in state["jobs"]], state["fixture_noop_count"]
+                workload_jobs = {name: dict(row) for name, row in state["workload_jobs"].items()}
             contacts = ledger.snapshot()
             self.reply(200, {"run_id": run_id,
-                "label": "Real read-only AWS MCP results plus inert local proposals; no deployment or access change",
+                "label": ("Pinned deployment metadata via read-only AWS MCP; not application health or current release proof"
+                          if workload_mode else
+                          "Real read-only AWS MCP results plus inert local proposals; no deployment or access change"),
                 "contacts": contacts, "cloudmorph_jobs": jobs, "fixture_noop_count": noops,
+                **({"workload_jobs": workload_jobs} if workload_mode else {}),
                 "successful_aws_reads": sum(c["source"] == "aws_mcp_readonly" and c["outcome_type"] == "read_only_complete" for c in contacts),
                 "inert_fixture_proposals": sum(c["source"] == "inert_fixture" for c in contacts)})
 
@@ -820,17 +890,19 @@ def make_server(*, run_id: str, ledger_path: str | Path, token: str | None = Non
                     self.record(request_id, use_id, name, args, "no_action_performed", "inert_fixture")
                     return {"status": "no_action_performed", "label": REGION_LABEL,
                             "message": "Synthetic proposal recorded locally. No AWS or diagnostics call was made."}, False
-                expected = {"aws___run_script": {"code": READONLY_SCRIPT}, "aws___list_regions": {},
-                            "aws___get_regional_availability": REGION_ARGS}.get(name)
-                if expected is None or args != expected:
+                try:
+                    _native_name, _native_args, workload = _read_plan(name, args, workload_mode)
+                except ValueError:
                     self.record(request_id, use_id, name, args, "read_rejected", "local_guard")
                     return {"error": "Only the exact fixed read-only arguments may be dispatched."}, True
                 try:
-                    result = _safe_result(name, aws.call(name, args))
+                    result = _safe_result(name, aws.call(name, args), workload)
                     outcome = result["execution"]
-                    if name == "aws___run_script" and outcome == "read_only_complete":
+                    if name in {"aws___run_script", "read_workload_status"} and outcome == "read_only_complete":
                         with state["lock"]:
                             state["jobs"] = result["cloudmorph_jobs"]
+                            if workload is not None:
+                                state["workload_jobs"][workload] = dict(result["cloudmorph_jobs"][0])
                     self.record(request_id, use_id, name, args, outcome, "aws_mcp_readonly")
                     return result, outcome != "read_only_complete"
                 except Exception:
@@ -841,7 +913,11 @@ def make_server(*, run_id: str, ledger_path: str | Path, token: str | None = Non
                 state["semaphore"].release()
 
         def record(self, request_id: str, use_id: str, name: str, args: dict[str, Any], outcome: str, source: str) -> None:
+            workload = _workload_for(args) if name == "read_workload_status" else None
+            normalized = _workload_arguments(workload) if workload is not None else dict.fromkeys(
+                ("operation", "app_id", "branch", "job_id"))
             ledger.add({"request_id": request_id, "tool_use_id": use_id, "tool_name": name,
+                        **({"workload": workload, **normalized} if workload_mode else {}),
                         "argument_digest": hashlib.sha256(json.dumps(args, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                         "time": datetime.now(UTC).isoformat(timespec="milliseconds"),
                         "outcome_type": outcome, "source": source})
@@ -871,9 +947,11 @@ def main() -> None:
     parser.add_argument("--ledger", "--db", dest="ledger", required=True,
                         help="New metadata-only JSONL path outside the checkout; mode 0600")
     parser.add_argument("--max-requests", type=int, default=MAX_CALLS)
+    parser.add_argument("--workload-mode", action="store_true",
+                        help="Expose only the two fixed workload deployment-metadata reads")
     args = parser.parse_args()
     server = make_server(run_id=args.run_id, ledger_path=args.ledger, port=args.port,
-                         max_requests=args.max_requests)
+                         max_requests=args.max_requests, workload_mode=args.workload_mode)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:

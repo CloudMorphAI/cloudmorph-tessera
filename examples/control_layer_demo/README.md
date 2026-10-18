@@ -15,6 +15,32 @@ network, OAuth-cache, provider and upload calls and removes its RAM fixtures.
 
 ## CloudMorph AWS readiness mode
 
+### Two deployment scopes (source preparation)
+
+The optional `workload-triage` scenario narrows the existing adapter to one
+`read_workload_status` tool. Tessera sees `operation`, `app_id`, `branch` and
+`job_id`; both fixed targets are valid tool inputs. The exact hosted
+`workload-read-allow.yaml` permits only `amplify.GetJob` for Tessera UI
+`d2nxbpvv53qeqc/main/84`. Labs `d3s9n6ffim4722/main/60` is the staged denied
+target. The adapter maps each valid pair to one fixed native AWS MCP read; no
+direct AWS fallback or arbitrary script is exposed. These are existing pinned
+deployment records, not application-health checks or general IAM enforcement.
+
+Keep unrelated hosted policies. This scenario uses its own policy ID and a local
+default-block rule, with no broad local allow for the read tool. The original
+AWS readiness and fictional post-call scenarios retain their behavior.
+
+The new mode requires a reviewed operator to supply a RAM-only OAuth token and
+own exact refresh cleanup. Direct CLI invocation cannot use the legacy login in
+this mode. Neither consumed connection approval nor the earlier model reservation
+authorizes it. Source preparation and synthetic checks are not live acceptance.
+
+Offline adapter verification (no listener or network):
+
+```sh
+/home/sainath/tessera-test-venv/bin/python examples/control_layer_demo/verify_workload_read_boundary.py
+```
+
 The optional `--scenario aws-readiness` mode demonstrates the same independent
 agent and canonical Tessera proxy against a bounded AWS MCP adapter. Its real
 execution is restricted to pinned deployment-job metadata for the named
