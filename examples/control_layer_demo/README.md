@@ -1,5 +1,92 @@
 # Independent client through Tessera
 
+See [the reviewed local OAuth connection workflow](OAUTH_CONNECTION.md) for receiver, strict snapshot/test-audit use, exact cleanup, replay boundaries and the actual scoped connection result. It is separate from independent-agent acceptance below.
+
+Check strict frozen startup without OAuth, AWS, a model or a listener in WSL:
+
+```sh
+/home/sainath/tessera-test-venv/bin/python examples/control_layer_demo/verify_readiness_activation.py
+```
+
+The finite JSON checks a synthetic private RAM cache, exact policy activation,
+cloud-only readiness, merged collision counts and canonical startup audit after
+drain. It does not establish current hosted tenant activation. The check blocks
+network, OAuth-cache, provider and upload calls and removes its RAM fixtures.
+
+## CloudMorph AWS readiness mode
+
+### Two deployment scopes (source preparation)
+
+The optional `workload-triage` scenario narrows the existing adapter to one
+`read_workload_status` tool. Tessera sees `operation`, `app_id`, `branch` and
+`job_id`; both fixed targets are valid tool inputs. The exact hosted
+`workload-read-allow.yaml` permits only `amplify.GetJob` for Tessera UI
+`d2nxbpvv53qeqc/main/84`. Labs `d3s9n6ffim4722/main/60` is the staged denied
+target. The adapter maps each valid pair to one fixed native AWS MCP read; no
+direct AWS fallback or arbitrary script is exposed. These are existing pinned
+deployment records, not application-health checks or general IAM enforcement.
+
+Keep unrelated hosted policies. This scenario uses its own policy ID and a local
+default-block rule, with no broad local allow for the read tool. The original
+AWS readiness and fictional post-call scenarios retain their behavior.
+
+The new mode requires a reviewed operator to supply a RAM-only OAuth token and
+own exact refresh cleanup. Direct CLI invocation cannot use the legacy login in
+this mode. Neither consumed connection approval nor the earlier model reservation
+authorizes it. Source preparation and synthetic checks are not live acceptance.
+
+Offline adapter verification (no listener or network):
+
+```sh
+/home/sainath/tessera-test-venv/bin/python examples/control_layer_demo/verify_workload_read_boundary.py
+```
+
+The optional `--scenario aws-readiness` mode demonstrates the same independent
+agent and canonical Tessera proxy against a bounded AWS MCP adapter. Its real
+execution is restricted to pinned deployment-job metadata for the named
+CloudMorph backend (job 178) and Tessera UI (job 83), regional availability,
+and region discovery. These two job targets are historical Amplify metadata.
+The later direct backend deployment and UI84 served version are verified in
+separate release receipts; this pinned job query does not establish their current
+served version.
+The adapter exposes the discovered native names `aws___run_script`,
+`aws___get_regional_availability`, and `aws___list_regions`. The script tool
+accepts one exact read-only script; all other code is rejected independently of
+Tessera policy. The script uses the native `call_boto3` contract for exactly two
+`amplify.GetJob` calls in `us-east-1`. It verifies the returned API receipts and
+job rows together; ambiguous or incomplete async results fail closed. There is
+no IAM, credential, deployment or arbitrary diagnostic operation available
+behind this adapter. This guard does not establish granular AWS action/resource
+enforcement in Tessera or least-privilege permissions for the underlying identity.
+Native receipts report operation and success only; the fixed source and returned
+job rows bind the two targets. The receipts do not independently attest resource
+targets or IAM permissions.
+
+Two separate tools, `fixture__request_access_change` and
+`fixture__request_diagnostics_review`, are explicitly inert control probes. Their
+downstream executor can only record a no-op contact. A policy regression therefore
+cannot change AWS access or run diagnostics. Successful acceptance requires both
+to stop before that executor: the first by default block, the second by the
+operator's saved `readiness-review.yaml` policy. Approval is an audited stop with
+no automatic resume.
+
+The operator must inspect, save, enable and reload that exact LF YAML in their
+own tenant before running. The runtime verifies the complete cloud snapshot,
+policy digest and startup activation; the agent receives no policy-admin tool.
+The local baseline allows only the three physically constrained read tools.
+The service's contact ledger distinguishes actual AWS reads from inert probes;
+model results and uploaded run evidence remain client-reported, without a claim
+of independent AWS attestation. Discovery alone does not prove execution.
+
+Use the same explicitly approved budget and session procedure below, adding
+`--scenario aws-readiness` and selecting `readiness-review.yaml`. A suitable
+objective asks the agent to report the two pinned CloudMorph backend/UI jobs, check
+regional availability, then exercise both clearly labeled inert control probes
+and explain the observed allow/block/review outcomes. Tool order and arguments
+remain model-selected. No additional model retry or provider fallback is added.
+
+The following historical scenario is separate from AWS readiness:
+
 This opt-in example runs an ordinary Nova Micro tool client, a separate canonical
 Tessera HTTP proxy, and a separate durable HTTP tool service. The tool service uses
 fictional Acme records; it is not connected to a vendor CRM, task service or mail

@@ -200,6 +200,8 @@ class StreamableHttpUpstream:
     Idle records expire locally after session_timeout_s. Calls are never replayed.
     """
 
+    _max_notification_body_bytes = 0
+
     def __init__(
         self, name: str, url: str, auth_header: str | None = None,
         session_timeout_s: int = 300, request_timeout_s: int = 10,
@@ -232,8 +234,19 @@ class StreamableHttpUpstream:
         }
         if self.auth_header:
             headers["Authorization"] = self.auth_header
-        self._client = httpx.AsyncClient(headers=headers, timeout=self.request_timeout_s, follow_redirects=False)
+        self._client = httpx.AsyncClient(headers=headers, auth=self._http_auth(), timeout=self.request_timeout_s, follow_redirects=False)
         return self
+
+    def _http_auth(self) -> httpx.Auth | None:
+        """Optional provider authentication, retaining this bounded transport."""
+        return None
+
+    def _enrich_response(self, body: dict[str, Any], response: httpx.Response) -> dict[str, Any]:
+        """Provider metadata hook after bounded JSON-RPC validation."""
+        return body
+
+    def _accept_notification_body(self, body: bytes, response: httpx.Response) -> bool:
+        return not body
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         client = self._client
@@ -320,20 +333,24 @@ class StreamableHttpUpstream:
                 if total > _MAX_BYTES:
                     raise _TransportError("Upstream response byte limit exceeded")
                 if not expects_response:
-                    if chunk:
+                    data.extend(chunk)
+                    if len(data) > self._max_notification_body_bytes:
                         raise _TransportError("Upstream HTTP 202 must have an empty body")
                 elif parser is not None:
                     parsed = parser.feed(chunk)
                     if parsed is not None:
-                        return parsed, session_id
+                        return self._enrich_response(parsed, response), session_id
                 else:
                     data.extend(chunk)
             if not expects_response:
+                if not self._accept_notification_body(bytes(data), response):
+                    raise _TransportError("Upstream HTTP 202 returned an unsupported acknowledgment body")
                 return {}, session_id
             if parser is not None:
                 parser.feed(b"", final=True)
                 raise _TransportError("Upstream SSE ended without a matching response; reconnection/resumption is unsupported and request was not replayed")
-            return _matching_response(_decode_json(bytes(data)), body["id"]), session_id
+            parsed = _matching_response(_decode_json(bytes(data)), body["id"])
+            return self._enrich_response(parsed, response), session_id
 
     async def _initialize_session(self, state: _Session) -> None:
         body = {
