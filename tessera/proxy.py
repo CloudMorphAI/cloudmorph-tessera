@@ -2462,7 +2462,7 @@ async def _forward_upstream(
                 return _jsonrpc_error(
                     jsonrpc_id, -32001, "Upstream error", reason=f"unknown upstream: {upstream_name!r}"
                 )
-            return await aws_client.forward(forwarded_body)
+            return await aws_client.forward(forwarded_body, session_scope=session_scope)
 
         case "mcp_streamable_http":
             sh_clients: dict[str, StreamableHttpUpstream] = getattr(state, "streamable_http_clients", {})

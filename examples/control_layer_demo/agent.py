@@ -120,7 +120,7 @@ def run_agent(
                 if time.monotonic() >= deadline or len(result["tool_trace"]) >= 32:
                     raise AgentStopError("tool_or_time_budget_exhausted")
                 seen.add(tid)
-                mcp.http.timeout = httpx.Timeout(max(0.1, min(30, deadline - time.monotonic())))
+                mcp.http.timeout = httpx.Timeout(max(0.1, min(getattr(mcp, "timeout_s", 30), deadline - time.monotonic())))
                 trace = mcp.call(aliases[alias], arguments, tid)
                 result["tool_trace"].append(trace)
                 body = trace["response"]

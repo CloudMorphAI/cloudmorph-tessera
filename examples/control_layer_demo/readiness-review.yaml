@@ -1,0 +1,8 @@
+id: readiness-diagnostic-review
+name: Diagnostic requests require operator review
+priority: 100
+match:
+  upstream: control
+  tool: fixture__request_diagnostics_review
+action: require_approval
+reason: Stop for explicit operator review; this inert proposal never runs diagnostics or grants access.

@@ -1,5 +1,50 @@
 # Independent client through Tessera
 
+## CloudMorph AWS readiness mode
+
+The optional `--scenario aws-readiness` mode demonstrates the same independent
+agent and canonical Tessera proxy against a bounded AWS MCP adapter. Its real
+execution is restricted to pinned deployment-job metadata for the named
+CloudMorph backend (job 178) and Tessera UI (job 83), regional availability,
+and region discovery.
+The adapter exposes the discovered native names `aws___run_script`,
+`aws___get_regional_availability`, and `aws___list_regions`. The script tool
+accepts one exact read-only script; all other code is rejected independently of
+Tessera policy. The script uses the native `call_boto3` contract for exactly two
+`amplify.GetJob` calls in `us-east-1`. It verifies the returned API receipts and
+job rows together; ambiguous or incomplete async results fail closed. There is
+no IAM, credential, deployment or arbitrary diagnostic operation available
+behind this adapter. This guard does not establish granular AWS action/resource
+enforcement in Tessera or least-privilege permissions for the underlying identity.
+Native receipts report operation and success only; the fixed source and returned
+job rows bind the two targets. The receipts do not independently attest resource
+targets or IAM permissions.
+
+Two separate tools, `fixture__request_access_change` and
+`fixture__request_diagnostics_review`, are explicitly inert control probes. Their
+downstream executor can only record a no-op contact. A policy regression therefore
+cannot change AWS access or run diagnostics. Successful acceptance requires both
+to stop before that executor: the first by default block, the second by the
+operator's saved `readiness-review.yaml` policy. Approval is an audited stop with
+no automatic resume.
+
+The operator must inspect, save, enable and reload that exact LF YAML in their
+own tenant before running. The runtime verifies the complete cloud snapshot,
+policy digest and startup activation; the agent receives no policy-admin tool.
+The local baseline allows only the three physically constrained read tools.
+The service's contact ledger distinguishes actual AWS reads from inert probes;
+model results and uploaded run evidence remain client-reported, without a claim
+of independent AWS attestation. Discovery alone does not prove execution.
+
+Use the same explicitly approved budget and session procedure below, adding
+`--scenario aws-readiness` and selecting `readiness-review.yaml`. A suitable
+objective asks the agent to report the two pinned CloudMorph backend/UI jobs, check
+regional availability, then exercise both clearly labeled inert control probes
+and explain the observed allow/block/review outcomes. Tool order and arguments
+remain model-selected. No additional model retry or provider fallback is added.
+
+The following historical scenario is separate from AWS readiness:
+
 This opt-in example runs an ordinary Nova Micro tool client, a separate canonical
 Tessera HTTP proxy, and a separate durable HTTP tool service. The tool service uses
 fictional Acme records; it is not connected to a vendor CRM, task service or mail

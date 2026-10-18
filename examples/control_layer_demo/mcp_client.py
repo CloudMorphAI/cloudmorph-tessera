@@ -8,9 +8,12 @@ import httpx
 
 
 class MCPClient:
-    def __init__(self, url: str, token: str, run_id: str) -> None:
+    def __init__(self, url: str, token: str, run_id: str, *, timeout_s: int = 30) -> None:
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, int) or not 1 <= timeout_s <= 60:
+            raise ValueError("MCP client timeout must be between 1 and 60 seconds")
         self.url, self.run_id = url, run_id
-        self.http = httpx.Client(timeout=30, follow_redirects=False, headers={
+        self.timeout_s = timeout_s
+        self.http = httpx.Client(timeout=timeout_s, follow_redirects=False, headers={
             "Authorization": f"Bearer {token}", "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25",
         })
