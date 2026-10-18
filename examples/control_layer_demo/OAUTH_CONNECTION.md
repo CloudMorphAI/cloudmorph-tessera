@@ -65,6 +65,35 @@ policy, one grant, one bounded Nova session and exact generated-row cleanup;
 Hermes is excluded. Previous connection approvals do not authorize it. These
 helpers do not renew consumed permission or publish/deploy the runtime.
 
+The separate original-client checks use the already admitted Hermes source,
+fixed patch, authenticated setup receipts and isolated dependency environment.
+They install nothing and create no new credential or model session:
+
+```sh
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_original_flow.py
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_original_loopback.py --check
+/home/sainath/tessera-demo-venv/bin/python -B examples/control_layer_demo/verify_original_loopback.py
+```
+
+The first two commands check the maintained original-flow contracts and finite
+probe/signal/guard-receipt classification without external actions. The third
+is a bounded local fixture with actual Hermes SDK, canonical
+proxy and loopback HTTP; hosted policy/ACK and AWS read results are synthetic.
+It authenticates source before copying to a fresh private RAM tree and retains
+finite diagnostics only. Its100second operation limit has a20second cleanup
+reserve; missing or malformed guard evidence remains a failure. Capture each
+result in a new receipt and preserve prior failures; do not automatically retry.
+
+The scripted child receives private RAM `TMPDIR/TMP/TEMP` before Hermes imports.
+Hermes may choose `/tmp` for later Unix sockets when paths exceed50characters;
+outside-RAM writes remain blocked. The fixture separately identifies at most one
+exact blocked urllib3 IPv6 loopback capability probe in each of the parent and
+canonical proxy, with pinned source, role and call site; it never allows the bind.
+Adapter/proxy shutdown requires validated guard startup plus either normal EXIT
+or a recorded owned SIGTERM and observed SIGTERM exit; other incomplete receipts
+fail. These checks establish offline compatibility only, not hosted policy
+activation, real AWS/business outcomes or live-run authority.
+
 Run from `/mnt/c/Users/found/Desktop/CloudMorph/cloudmorph-tessera` in WSL Ubuntu:
 
 ```sh
