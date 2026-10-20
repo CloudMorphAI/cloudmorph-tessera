@@ -5,6 +5,23 @@ on:
   pull_request:
 
 jobs:
+  external-client:
+    name: External client credential-free boundaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install local runtime and focused check dependencies
+        run: pip install -e '.[runtime]' pytest==9.0.3 ruff==0.15.12
+      - name: Check auth, policy and forwarding boundaries without credentials
+        run: python -m pytest -q tests/test_external_client_demo.py
+      - name: Lint external client example
+        run: ruff check examples/external_client_demo tests/test_external_client_demo.py
+
   post-call:
     name: Post-call synthetic checks
     runs-on: ubuntu-latest
