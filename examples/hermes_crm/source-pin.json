@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/NousResearch/hermes-agent",
+  "commit": "51abb25ce07f384bd60f1eba151623c769db6b3e",
+  "commit_api": "https://api.github.com/repos/NousResearch/hermes-agent/commits/51abb25ce07f384bd60f1eba151623c769db6b3e",
+  "archive_url": "https://api.github.com/repos/NousResearch/hermes-agent/zipball/51abb25ce07f384bd60f1eba151623c769db6b3e",
+  "archive_sha256": "20415B5B5EE77FA79DE2C36BCD6636A480FA95E8C02CC0C64ACADD2327088F39",
+  "critical_files": {
+    "model_tools.py": "FBB40D0058E3EDD6C4E1608B8DB9E922AAF38D2C9D0438C3811C6D6B01B45340",
+    "pyproject.toml": "FF41B097147124FF2EB51A437D5F44EDDEA35104900C1C79C7EDFB8B7352D901",
+    "uv.lock": "16300CF807347B7FCFA3C19963F5FE950913FDB3E41E3C649EA724BC7DC997DA",
+    "tools/mcp_tool_discovery.py": "9BE361FF6791EF9A15CBFE9745F6B389EAC3B9D7D9BE99D42D4DDF50061495B0",
+    "tools/mcp_tool_handlers.py": "D3F99C5832DD7A99B0A39447F97981281CCCD13BA582587B97F914C726CDB5D6",
+    "tools/mcp_tool_registration.py": "523543037975B14F9C84F9181DFBE3F7A9024E4AF5E10238EAB9BA22FA86C175",
+    "tools/mcp_tool_schema.py": "21AB2EF8B122ADD133AF4EF387B32F6E8C6711F6E1B2F6F4744BCB279FA2135B"
+  }
+}
