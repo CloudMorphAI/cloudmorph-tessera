@@ -224,16 +224,20 @@ def safe_original_events(events, *, tenant, run_id):
                 if payload != {"deployment_id": tenant, "mode": "enforcement"}:
                     return None
                 continue
-            if payload.get("principal_id") not in {"opencode", "codex"} or payload.get("upstream") != "control":
+            if payload.get("principal_id") not in {"opencode", "codex"}:
                 return None
             if not re.fullmatch(r"[a-f0-9-]{32,36}", payload.get("request_id", "")):
                 return None
             if kind == "passthrough":
                 if (set(payload) != {"upstream", "method", "principal_id", "request_id"}
-                        or payload["method"] not in {"initialize", "notifications/initialized", "tools/list", "ping"}):
+                        or not (payload["upstream"] == "control" and payload["method"] in {
+                            "initialize", "notifications/initialized", "tools/list", "ping"}
+                            or payload["upstream"] == "tessera" and payload["method"] in {
+                                "initialize", "notifications/initialized", "server/discover"})):
                     return None
                 continue
-            if (kind != "decision" or set(payload) - decision_keys or payload.get("mode") != "enforcement"
+            if (payload.get("upstream") != "control" or kind != "decision"
+                    or set(payload) - decision_keys or payload.get("mode") != "enforcement"
                     or payload.get("decision") not in {"allow", "block"} or payload.get("decision_error") is not None
                     or payload.get("policy_id") not in {"default", "workload-tessera-read"}
                     or payload.get("reason") not in {None, "Permit the pinned read-only Tessera UI deployment query; other workloads remain blocked."}

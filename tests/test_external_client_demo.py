@@ -153,6 +153,31 @@ def test_default_deny_has_canonical_audit_and_zero_upstream_contacts(proxy):
     assert ledger.rows[0]["audit_event_id"] == decisions[0]["eventId"]
 
 
+def test_real_local_lifecycle_events_export_without_fabricating_agent_acceptance(proxy, modules):
+    client, forwarded, ledger, audit = proxy
+    _, attachment = modules
+    headers = {"Authorization": "Bearer " + TOKENS["opencode"], "Content-Type": "application/json"}
+    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-03-26", "capabilities": {},
+        "clientInfo": {"name": "synthetic-client", "version": "1"}}}
+    assert client.post("/mcp/control", json=initialize, headers=headers).status_code == 200
+    assert client.post("/mcp/control", json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                       headers=headers).status_code == 202
+    client.portal.call(client.app.app.state.audit_queue.drain)
+    evidence = attachment.project_evidence(audit_path=audit, tenant="synthetic_tenant",
+        ingress=ledger.rows, contacts=[], run_id="synthetic-run")
+    assert forwarded == [] and ledger.rows == []
+    assert evidence["accepted"] is False and evidence["adapter_contacts"] == []
+    assert evidence["canonical_export_status"] == "ORIGINAL_UNCHANGED_VALIDATED"
+    lifecycle = [event for event in evidence["canonical_events"] if event["eventType"] == "passthrough"]
+    assert {event["payload"]["method"] for event in lifecycle} == {"initialize", "notifications/initialized"}
+    assert all(event["payload"]["upstream"] == "tessera" for event in lifecycle)
+    for method in ("tools/list", "tools/call", "unapproved/method"):
+        changed = json.loads(json.dumps(evidence["canonical_events"]))
+        next(event for event in changed if event["eventType"] == "passthrough")["payload"]["method"] = method
+        assert attachment.safe_original_events(changed, tenant="synthetic_tenant", run_id="synthetic-run") is None
+
+
 def test_allowed_call_identity_and_two_call_limit_are_independent(proxy):
     client, forwarded, ledger, _ = proxy
     assert call(client, name="opencode").status_code == 200
