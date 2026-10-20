@@ -14,7 +14,8 @@ All containers use --network=none/read-only/nonroot/cap-drop. The actual shared
 payload bootstrap runs --check, an unknown auth override, and --serve with an
 explicit in-process synthetic STS/Amplify provider. Only private health is probed;
 SIGTERM must drain the real server and remove both owned RAM trees. No model or
-two-client acceptance is claimed. Receipt creation is exclusive; keep old files.
+two-client acceptance is claimed. The serve fixture retains the actual payload
+exit1 because no client work was accepted. Receipt creation is exclusive; keep old files.
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ FINITE_KEYS = {
     "synthetic_sts_calls", "synthetic_amplify_calls", "synthetic_provider_clients", "negative_before_provider",
     "real_sdk_calls", "SDKCalls", "networkCalls", "loopbackProbes", "externalNetworkCalls", "listeners",
     "loopback_health_probes", "loopback_cleanup_port_probes",
+    "payloadExitCode",
 }
 
 # Explicit synthetic provider, installed before executing the actual bootstrap.
@@ -153,7 +155,7 @@ class IsolatedDocker:
 
     def execute(self, command, extra=()):
         name = "tessera-startup-" + uuid.uuid4().hex
-        args = ["run", "--rm", "--name=" + name, "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
+        args = ["run", "--rm", "--init", "--name=" + name, "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
                 "--security-opt=no-new-privileges", "--user=10001:10001", "--pids-limit=64", "--memory=1024m", "--cpus=0.5",
                 "--env=PYTHONDONTWRITEBYTECODE=1", "--env=TMPDIR=/dev/shm", "--env=AWS_EC2_METADATA_DISABLED=true",
                 "--env=AWS_SHARED_CREDENTIALS_FILE=/dev/null", "--env=AWS_CONFIG_FILE=/dev/null",
@@ -200,6 +202,7 @@ def startup_command(payload):
     actual = repr(builder.bootstrap(payload, "serve"))
     return SYNTHETIC_PROVIDER + '''
 threading.Thread(target=monitor,daemon=True).start()
+code=None
 try:
     exec(compile(ACTUAL_BOOTSTRAP,'<actual-payload-bootstrap>','exec'))
 except SystemExit as error:
@@ -209,8 +212,9 @@ finally:
     for port in (8080,8786):
         with socket.socket() as s:
             s.settimeout(0.2);closed.append(s.connect_ex(('127.0.0.1',port))!=0)
-    print(json.dumps({'synthetic_final':True,**counts,**health,'loopback_cleanup_port_probes':2,'externalNetworkCalls':0,
+    print(json.dumps({'synthetic_final':True,**counts,**health,'payloadExitCode':code,'loopback_cleanup_port_probes':2,'externalNetworkCalls':0,
         'ports_closed':all(closed),'owned_ram_absent':not glob.glob('/dev/shm/cm104-two-*') and not glob.glob('/dev/shm/cm-external2-*')}),flush=True)
+raise SystemExit(code if type(code) is int else 2)
 '''.replace("ACTUAL_BOOTSTRAP", actual)
 
 
@@ -225,10 +229,12 @@ def case_passed(label, code, records):
     if label == "unknown_auth_override":
         return code == 2 and cleanup and any(row.get("status") == "BLOCKED" for row in records) and any(
             row.get("negative_before_provider") is True and row.get("synthetic_provider_clients") == 0 for row in records)
-    return code == 0 and cleanup and any(row.get("synthetic_final") and row.get("health200") and row.get("ports_closed")
+    return code == 1 and cleanup and any(row.get("synthetic_final") and type(row.get("payloadExitCode")) is int
+        and row["payloadExitCode"] == 1 and row.get("health200") and row.get("ports_closed")
         and row.get("owned_ram_absent") and row.get("synthetic_sts_calls") == 1
         and row.get("synthetic_amplify_calls") == 0 and row.get("real_sdk_calls") == 0 for row in records) and any(
             row.get("schema") == "tessera.external_client_server_receipt.v1" and "failure" in row and row["failure"] is None
+            and row.get("evidence", {}).get("accepted") is False
             and all(row.get(key) is True for key in ("serverStopped", "portsClosed", "privateRamRemoved")) for row in records)
 
 

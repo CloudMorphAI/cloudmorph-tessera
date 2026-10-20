@@ -133,7 +133,11 @@ def serve(plan):
             raise TimeoutError("SERVER_START_DEADLINE")
         server.should_exit = True
 
-    prior = signal.signal(signal.SIGALRM, stop)
+    prior_alarm = signal.signal(signal.SIGALRM, stop)
+    # Uvicorn restores and replays captured signals before returning. Keep our
+    # graceful handler installed through evidence collection and RAM cleanup,
+    # including when Python is a child of the ECS container init process.
+    prior_term = signal.signal(signal.SIGTERM, stop)
     signal.setitimer(signal.ITIMER_REAL, plan["maxSeconds"])
     try:
         config = Config(region_name="us-east-1", retries={"total_max_attempts": 1}, connect_timeout=2, read_timeout=3)
@@ -197,25 +201,28 @@ def serve(plan):
         failure = "SERVER_OR_EVIDENCE_FAILED"
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, prior)
-        os.environ.pop("TESSERA_AUTHENTICATOR", None)
-        if upstream is not None:
-            if worker is not None and worker.is_alive():
-                upstream.shutdown()
-                worker.join(timeout=5)
-            upstream.server_close()
-            upstream.ledger.close()
-            upstream.aws_client.close()
-        if ingress is not None:
-            ingress.close()
-        ports = closed(plan["listenPort"]) and closed(plan["adapterPort"])
-        stopped = (server is None or server.should_exit or not server.started) and (worker is None or not worker.is_alive())
-        stopped = stopped and request_workers["active"] == 0
-        if ports and stopped:
-            need(root.parent == Path("/dev/shm") and root.resolve() == root and not root.is_symlink()  # noqa: S108 -- exact owned bound
-                 and root.stat().st_uid == os.getuid() and stat.S_IMODE(root.stat().st_mode) == 0o700)
-            shutil.rmtree(root)
-            removed = not root.exists()
+        try:
+            os.environ.pop("TESSERA_AUTHENTICATOR", None)
+            if upstream is not None:
+                if worker is not None and worker.is_alive():
+                    upstream.shutdown()
+                    worker.join(timeout=5)
+                upstream.server_close()
+                upstream.ledger.close()
+                upstream.aws_client.close()
+            if ingress is not None:
+                ingress.close()
+            ports = closed(plan["listenPort"]) and closed(plan["adapterPort"])
+            stopped = (server is None or server.should_exit or not server.started) and (worker is None or not worker.is_alive())
+            stopped = stopped and request_workers["active"] == 0
+            if ports and stopped:
+                need(root.parent == Path("/dev/shm") and root.resolve() == root and not root.is_symlink()  # noqa: S108 -- exact owned bound
+                     and root.stat().st_uid == os.getuid() and stat.S_IMODE(root.stat().st_mode) == 0o700)
+                shutil.rmtree(root)
+                removed = not root.exists()
+        finally:
+            signal.signal(signal.SIGALRM, prior_alarm)
+            signal.signal(signal.SIGTERM, prior_term)
     result = {"schema": "tessera.external_client_server_receipt.v1", "run_id": plan["runId"],
               "elapsedSeconds": round(time.monotonic() - started, 3), "failure": failure,
               "serverStopped": stopped, "portsClosed": ports, "privateRamRemoved": removed,

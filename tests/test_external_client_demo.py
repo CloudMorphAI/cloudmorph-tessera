@@ -185,22 +185,25 @@ def test_payload_rejects_changed_local_source_and_raw_credential_key(modules):
         payload.build_payload(plan)
 
 
-@pytest.mark.parametrize("missing", ["server", "payload", "failure", "portsClosed"])
+@pytest.mark.parametrize("missing", ["server", "payload", "failure", "portsClosed", "payloadExitCode", "evidence"])
 def test_health_alone_never_passes_startup_without_real_cleanup_receipts(modules, missing):
     regression = importlib.import_module("startup_regression")
-    records = [{"synthetic_final": True, "health200": True, "ports_closed": True, "owned_ram_absent": True,
+    records = [{"synthetic_final": True, "payloadExitCode": 1, "health200": True, "ports_closed": True, "owned_ram_absent": True,
                 "synthetic_sts_calls": 1, "synthetic_amplify_calls": 0, "real_sdk_calls": 0},
                {"schema": "tessera.external_client_server_receipt.v1", "failure": None, "serverStopped": True,
-                "portsClosed": True, "privateRamRemoved": True},
+                "portsClosed": True, "privateRamRemoved": True, "evidence": {"accepted": False}},
                {"schema": "cloudmorph.two_client_payload_cleanup.v1", "ownedRootRemoved": True, "samePythonPid": True}]
-    assert regression.case_passed("synthetic_startup", 0, records)
+    assert regression.case_passed("synthetic_startup", 1, records)
+    assert not regression.case_passed("synthetic_startup", 0, records)
     if missing == "server":
         records.pop(1)
     elif missing == "payload":
         records.pop(2)
+    elif missing == "payloadExitCode":
+        records[0].pop(missing)
     else:
         records[1].pop(missing)
-    assert not regression.case_passed("synthetic_startup", 0, records)
+    assert not regression.case_passed("synthetic_startup", 1, records)
 
 
 @pytest.fixture()
