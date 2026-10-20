@@ -236,11 +236,18 @@ def safe_original_events(events, *, tenant, run_id):
                                 "initialize", "notifications/initialized", "server/discover"})):
                     return None
                 continue
+            # The engine's unmatched default is Decision(action, "default", None).
+            # Admit that exact block without inventing a policy ID or widening
+            # the accepted reasons for named policies or allowed decisions.
+            default_block = (payload.get("decision") == "block" and payload.get("policy_id") is None
+                             and payload.get("reason") == "default")
+            named_policy = (payload.get("policy_id") in {"default", "workload-tessera-read"}
+                            and payload.get("reason") in {None,
+                                "Permit the pinned read-only Tessera UI deployment query; other workloads remain blocked."})
             if (payload.get("upstream") != "control" or kind != "decision"
                     or set(payload) - decision_keys or payload.get("mode") != "enforcement"
                     or payload.get("decision") not in {"allow", "block"} or payload.get("decision_error") is not None
-                    or payload.get("policy_id") not in {"default", "workload-tessera-read"}
-                    or payload.get("reason") not in {None, "Permit the pinned read-only Tessera UI deployment query; other workloads remain blocked."}
+                    or not (default_block or named_policy)
                     or payload.get("canonical_tool_name") != "read_workload_status"
                     or payload.get("effective_tool_name") != "read_workload_status"
                     or payload.get("conversation_id") != run_id + "-" + payload["principal_id"]

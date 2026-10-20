@@ -128,7 +128,7 @@ def test_outside_two_job_contract_has_zero_forwarding(proxy, args):
     assert ledger.rows == []
 
 
-def test_default_deny_has_canonical_audit_and_zero_upstream_contacts(proxy):
+def test_default_deny_has_canonical_audit_and_zero_upstream_contacts(proxy, modules):
     client, forwarded, ledger, audit = proxy
     response = call(client, args=BLOCKED)
     assert response.status_code == 200
@@ -151,6 +151,19 @@ def test_default_deny_has_canonical_audit_and_zero_upstream_contacts(proxy):
     assert decisions[0]["payload"]["decision"] == "block"
     assert decisions[0]["payload"]["principal_id"] == "opencode"
     assert ledger.rows[0]["audit_event_id"] == decisions[0]["eventId"]
+    assert decisions[0]["payload"]["policy_id"] is None
+    assert decisions[0]["payload"]["reason"] == "default"
+    _, attachment = modules
+    evidence = attachment.project_evidence(audit_path=audit, tenant="synthetic_tenant",
+        ingress=ledger.rows, contacts=[], run_id="synthetic-run")
+    assert evidence["canonical_export_status"] == "ORIGINAL_UNCHANGED_VALIDATED"
+    assert evidence["accepted"] is False and evidence["denied_contacts"] == 0
+    assert evidence["canonical_events"] == events
+    for changes in ({"decision": "allow"}, {"reason": None}, {"reason": "private arbitrary reason"},
+                    {"policy_id": "workload-tessera-read"}, {"policy_id": "unknown"}):
+        tampered = json.loads(json.dumps(events))
+        next(event for event in tampered if event["eventType"] == "decision")["payload"].update(changes)
+        assert attachment.safe_original_events(tampered, tenant="synthetic_tenant", run_id="synthetic-run") is None
 
 
 def test_real_local_lifecycle_events_export_without_fabricating_agent_acceptance(proxy, modules):
