@@ -37,6 +37,7 @@ dependencies = [
     "fastapi==0.136.1",
     "uvicorn[standard]==0.46.0",
     "httpx==0.28.1",
+    "python-multipart==0.0.33",
     "pydantic==2.12.5",
     "typer==0.25.1",
     "regex==2026.4.4",

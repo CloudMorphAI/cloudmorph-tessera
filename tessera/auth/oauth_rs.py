@@ -40,14 +40,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import math
 import os
 import re
 import secrets
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import HTTPException, Request  # noqa: TC002 — used at runtime
@@ -114,8 +116,8 @@ class SqliteRevocationStore:
             conn.close()
 
     async def revoke(self, jti: str) -> None:
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
+        from datetime import UTC, datetime
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             conn = sqlite3.connect(self._path)
             try:
@@ -400,7 +402,9 @@ def _verify_token_signature(token: str, jwks_url: str) -> dict[str, Any] | None:
         return None
 
     kid = header.get("kid", "unknown")
-    alg = header.get("alg", "RS256")
+    algorithms = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"]
+    if header.get("alg") not in algorithms:
+        return None
 
     try:
         jwks_client = PyJWKClient(jwks_url)
@@ -408,9 +412,10 @@ def _verify_token_signature(token: str, jwks_url: str) -> dict[str, Any] | None:
         decoded: dict[str, Any] = _jwt.decode(
             token,
             signing_key.key,
-            algorithms=[alg],
+            algorithms=algorithms,
             options={
                 "verify_exp": True,
+                "require": ["exp"],
                 "verify_iss": False,  # issuer checked separately
                 "verify_aud": False,  # audience not always present on RS tokens
             },
@@ -425,38 +430,18 @@ def _verify_token_signature(token: str, jwks_url: str) -> dict[str, Any] | None:
         return None
 
 
-def _validate_token_for_introspection(
-    token: str,
-    trusted_issuers: list[str],
-) -> dict[str, Any] | None:
-    """Validate token and return claims on success, or None on any failure.
-
-    Decodes the JWT without verifying the signature (Tessera is a resource
-    server that does not hold the AS's private key).  Validation checks:
-      - Token is a well-formed JWT
-      - Issuer is in the trusted_issuers list (from TESSERA_OAUTH_AUTHORIZATION_SERVER)
-      - Token is not expired (exp claim)
-    If any check fails, returns None and the caller returns {"active": false}.
-    """
-    claims = _decode_token_claims(token)
-    if claims is None:
-        return None
-
-    # Expiry check
-    exp = claims.get("exp")
-    if exp is not None:
-        try:
-            if float(exp) < time.time():
-                return None
-        except (TypeError, ValueError):
-            return None
-
-    # Issuer check — if no trusted issuers configured, skip the check
-    iss = claims.get("iss")
-    if trusted_issuers and iss not in trusted_issuers:
-        return None
-
-    return claims
+def _token_expiration(claims: dict[str, Any]) -> float:
+    """Require a live RFC 7519 NumericDate, including on verification-cache hits."""
+    value = claims.get("exp")
+    if type(value) not in {int, float}:
+        raise UnauthorizedError("token requires a numeric expiration")
+    try:
+        expiration = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise UnauthorizedError("invalid token expiration") from exc
+    if not math.isfinite(expiration) or expiration <= time.time():
+        raise UnauthorizedError("token expired or expiration is invalid")
+    return expiration
 
 
 # ── v0.7.0 Item D §7.1 — OAuthResourceServer ────────────────────────────────
@@ -555,9 +540,15 @@ class OAuthResourceServer:
             if time.monotonic() >= expires_at:
                 self._cache.pop(token_hash, None)
                 return None
+            try:
+                _token_expiration(claims)
+            except UnauthorizedError:
+                self._cache.pop(token_hash, None)
+                return None
             return claims
 
     def _cache_store(self, token: str, claims: dict[str, Any]) -> None:
+        expiration = _token_expiration(claims)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self._cache_lock:
             if len(self._cache) >= _TOKEN_CACHE_MAX_SIZE:
@@ -566,7 +557,7 @@ class OAuthResourceServer:
                 self._cache.pop(next(iter(self._cache)), None)
             self._cache[token_hash] = (
                 claims,
-                time.monotonic() + _TOKEN_CACHE_TTL_SECONDS,
+                time.monotonic() + min(_TOKEN_CACHE_TTL_SECONDS, max(0, expiration - time.time())),
             )
 
     def validate_bearer_token(self, token: str) -> dict[str, Any]:
@@ -574,7 +565,7 @@ class OAuthResourceServer:
 
         Raises ``UnauthorizedError`` on any failure (expired, bad signature,
         wrong issuer/audience, unreachable JWKS, etc.). Cached verifications
-        skip the cryptographic check entirely for 5 minutes.
+        skip the cryptographic check for at most 5 minutes, never past expiry.
         """
         if not token or not isinstance(token, str):
             raise UnauthorizedError("missing bearer token")
@@ -590,7 +581,7 @@ class OAuthResourceServer:
             "algorithms": ["EdDSA"],
             "audience": self._audience,
             "issuer": self._issuer,
-            "options": {"verify_exp": True, "verify_iss": True, "verify_aud": True},
+            "options": {"verify_exp": True, "verify_iss": True, "verify_aud": True, "require": ["exp"]},
         }
 
         # Path 1 — local pubkey verify
@@ -674,6 +665,9 @@ def require_scope(scope: str) -> Callable[[Request], dict[str, Any]]:
             claims = get_oauth_resource_server().validate_bearer_token(token)
         except UnauthorizedError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
+        jti = claims.get("jti")
+        if jti and await get_revocation_store().is_revoked(str(jti)):
+            raise HTTPException(status_code=401, detail="token revoked")
         scopes = set((claims.get("scope") or "").split())
         if scope not in scopes:
             raise HTTPException(
@@ -827,7 +821,7 @@ def make_metadata_route(app_ref: FastAPI) -> None:
 
         Request body: application/x-www-form-urlencoded with field `token`.
 
-        Signature verification: if TESSERA_OAUTH_JWKS_URL is set, the token
+        Signature verification: TESSERA_OAUTH_JWKS_URL must be set. The token
         signature is cryptographically verified against the JWKS endpoint.
         On verification failure: returns {"active": false} and emits
         event=oauth_introspect_sigverify_failed.
@@ -888,20 +882,18 @@ def make_metadata_route(app_ref: FastAPI) -> None:
             if env_as:
                 trusted_issuers = [env_as]
 
-        # Step 4 — Signature verification (when JWKS URL is configured)
+        # Step 4 - Signature verification is mandatory. Unverified claims are
+        # never evidence that a token is active, even for a Basic-auth client.
         jwks_url = os.environ.get("TESSERA_OAUTH_JWKS_URL", "").strip()
-        claims: dict[str, Any]
-        if jwks_url:
-            sig_claims = _verify_token_signature(token_str, jwks_url)
-            if sig_claims is None:
-                return JSONResponse({"active": False})
-            claims = sig_claims
-        else:
-            # Fall back to unverified decode + expiry/issuer checks
-            unverified_claims = _validate_token_for_introspection(token_str, trusted_issuers)
-            if unverified_claims is None:
-                return JSONResponse({"active": False})
-            claims = unverified_claims
+        if not jwks_url:
+            return JSONResponse({"active": False})
+        claims = _verify_token_signature(token_str, jwks_url)
+        if claims is None or (trusted_issuers and claims.get("iss") not in trusted_issuers):
+            return JSONResponse({"active": False})
+        try:
+            _token_expiration(claims)
+        except UnauthorizedError:
+            return JSONResponse({"active": False})
 
         # Step 5 — Revocation check
         jti = claims.get("jti")

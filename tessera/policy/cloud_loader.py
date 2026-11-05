@@ -11,8 +11,8 @@ Activate it with ``tessera serve --cloud`` or
 ``TESSERA_POLICY_LOADER=tessera.policy.cloud_loader:CloudBackedPolicyLoader``. It exposes
 the same ``load_all`` / ``watch`` / ``stop`` / ``state`` surface, so
 :func:`tessera.proxy.create_app` needs no changes — it already resolves the loader
-class through that env var and already rebuilds the engine + clears the
-``DecisionCache`` on every reload callback.
+class through that env var and already rebuilds the engine on every reload
+callback. Final decisions are evaluated separately for every request.
 
 Layering: local YAML in ``policies.dir`` is the base; **enabled** cloud policies from
 the sync cache are layered on top. On an id collision the cloud (dashboard) version
@@ -295,7 +295,7 @@ class CloudBackedPolicyLoader:
             while not self._stop_evt.wait(self._refresh_ttl):
                 try:
                     asyncio.run(sync.fetch_and_cache())
-                    self._fire(scope)  # engine rebuild + DecisionCache clear
+                    self._fire(scope)  # rebuild the engine using the refreshed policies
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "event=cloud_refresh_failed reason=%s message='serving last-known-good cache'",
