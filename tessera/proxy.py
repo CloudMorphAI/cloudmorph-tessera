@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
-import threading
-import time
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -88,74 +85,6 @@ class IntentResponseMeta(BaseModel):
 
 _METRICS: dict[str, int] = defaultdict(int)
 
-
-# ── v0.7.0 Item D §7.4 — DecisionCache (LRU + TTL memoization) ──────────────
-
-
-class DecisionCache:
-    """Memoize policy decisions for identical recent calls.
-
-    Caches ``allow`` and ``observed`` (i.e. non-block) decisions only — block
-    decisions are always re-evaluated so a policy change that newly blocks a
-    previously-allowed call surfaces on the very next request. Cache key is
-    ``sha256(canonical_json({scope, tool, args}))`` so two calls that differ
-    only in arg ordering still hit the same entry.
-
-    Bounded: max 1024 entries, 60s TTL each. LRU eviction on insert when full.
-    Cleared on every policy reload via :func:`create_app` reload-watcher.
-    """
-
-    MAX_SIZE = 1024
-    TTL_SECONDS = 60
-    _NON_CACHEABLE_ACTIONS = {"block", "require_approval"}
-
-    def __init__(self) -> None:
-        self._cache: OrderedDict[str, tuple[Any, float]] = OrderedDict()
-        self._lock = threading.Lock()
-
-    @staticmethod
-    def _key(scope: str, tool_name: str, tool_call: Any) -> str:
-        try:
-            payload = json.dumps(
-                {"scope": scope, "tool": tool_name, "args": tool_call},
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            )
-        except (TypeError, ValueError):
-            # Defensive: if tool_call has unserializable fragments, salt with
-            # repr() so we don't poison the cache or crash the hot path.
-            payload = repr(("salt", scope, tool_name, str(tool_call)))
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-    def get(self, scope: str, tool_name: str, tool_call: Any) -> Any | None:
-        key = self._key(scope, tool_name, tool_call)
-        with self._lock:
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            decision, expires_at = entry
-            if time.monotonic() >= expires_at:
-                self._cache.pop(key, None)
-                return None
-            self._cache.move_to_end(key)
-            return decision
-
-    def put(self, scope: str, tool_name: str, tool_call: Any, decision: Any) -> None:
-        # Skip blocks + require_approval; only memoize allow + observed.
-        action_value = getattr(getattr(decision, "action", None), "value", "")
-        if action_value in self._NON_CACHEABLE_ACTIONS:
-            return
-        key = self._key(scope, tool_name, tool_call)
-        with self._lock:
-            self._cache[key] = (decision, time.monotonic() + self.TTL_SECONDS)
-            self._cache.move_to_end(key)
-            while len(self._cache) > self.MAX_SIZE:
-                self._cache.popitem(last=False)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._cache.clear()
 
 # MCP-AUDIT-2026-05-11: The following methods are passed-through without policy
 # evaluation, even though some are MCP "action" category and *could* leak data:
@@ -596,10 +525,6 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
         app.state.loader = loader
         app.state.base_policies = list(policies)
         app.state.engine = engine
-        # v0.7.0 Item D §7.4 — decision memoization. Empty on cold start; warms
-        # as identical calls land. Cleared on every policy reload so a fresh
-        # policy version doesn't continue serving stale allow decisions.
-        app.state.decision_cache = DecisionCache()
 
         # Watch for policy changes if configured
         if cfg.policies.reload == "watch":
@@ -1258,23 +1183,10 @@ def create_app(config: TesseraConfig | None = None) -> FastAPI:
             _METRICS["requests_total{outcome=observation}"] += 1
             return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
-        # Evaluate engine (enforcement + log_only) — with v0.7.0 §7.4 memo cache
+        # Authorize every request using its upstream and current external state.
+        # Reusing a final allow skips spend, time, cost and blast-radius checks.
         _t0_eval = perf_counter()
-        _decision_cache: DecisionCache | None = (
-            None if _has_scoped_policy_engines(app.state)
-            else getattr(app.state, "decision_cache", None)
-        )
-        _cache_key_args = context.get("tool_call") or {}
-        decision = None
-        if _decision_cache is not None:
-            decision = _decision_cache.get(auth_ctx.scope, tool_name, _cache_key_args)
-        if decision is None:
-            decision = engine.evaluate(context)
-            if _decision_cache is not None:
-                _decision_cache.put(auth_ctx.scope, tool_name, _cache_key_args, decision)
-            _METRICS["decision_cache_misses_total"] += 1
-        else:
-            _METRICS["decision_cache_hits_total"] += 1
+        decision = engine.evaluate(context)
         _obs_metrics.tessera_decision_latency_seconds.labels(
             upstream=upstream_name, mode=mode.value
         ).observe(perf_counter() - _t0_eval)
@@ -1617,11 +1529,6 @@ def _policy_engine_for_scope(state: Any, scope: str) -> PolicyEngine:
     return engine
 
 
-def _has_scoped_policy_engines(state: Any) -> bool:
-    loader = getattr(state, "loader", None)
-    return callable(getattr(loader, "engine_for_scope", None))
-
-
 def _policy_engine_unavailable(
     scope: str | None, exc: Exception, *, jsonrpc_id: Any = None
 ) -> Response:
@@ -1638,12 +1545,6 @@ def _policy_engine_unavailable(
     return JSONResponse({"error": "Tenant policy unavailable"}, status_code=503)
 
 
-def _clear_policy_decisions(state: Any) -> None:
-    cache: DecisionCache | None = getattr(state, "decision_cache", None)
-    if cache is not None:
-        cache.clear()
-
-
 def _disable_selected_protection(state: Any, reason: str) -> None:
     """Drop premium policies before exposing the local-only engine."""
     state.premium_protection_unavailable = True
@@ -1652,7 +1553,6 @@ def _disable_selected_protection(state: Any, reason: str) -> None:
         list(getattr(state, "base_policies", [])),
         default_action=Action(state.config.policies.default_action),
     )
-    _clear_policy_decisions(state)
     logger.error("event=selected_premium_protection_unavailable reason=%s", reason)
 
 
@@ -1679,7 +1579,6 @@ def _activate_selected_protection(state: Any) -> None:
     state.engine = new_engine
     state.premium_protection_tier = status.tier
     state.premium_protection_expires_at = status.expires_at
-    _clear_policy_decisions(state)
     state.premium_protection_unavailable = False
     logger.info(
         "event=selected_premium_protection_activated packs=%d policies=%d tier=%s",
@@ -1729,7 +1628,6 @@ def _commit_policy_reload(state: Any, updated_policies: list[Any]) -> None:
         updated_policies,
         default_action=Action(state.config.policies.default_action),
     )
-    _clear_policy_decisions(state)
     logger.info("event=policy_reloaded count=%d", len(updated_policies))
 
 
@@ -2017,23 +1915,9 @@ async def _run_proxy_pipeline(
         _METRICS["requests_total{outcome=observation}"] += 1
         return _audited_upstream_response(upstream_response, event_id=audit_event["eventId"])
 
-    # Evaluate engine with decision cache
+    # Final authorization must reflect this request's current context.
     _t0_eval = perf_counter()
-    _decision_cache: DecisionCache | None = (
-        None if _has_scoped_policy_engines(state)
-        else getattr(state, "decision_cache", None)
-    )
-    _cache_key_args = context.get("tool_call") or {}
-    decision = None
-    if _decision_cache is not None:
-        decision = _decision_cache.get(auth_ctx.scope, tool_name, _cache_key_args)
-    if decision is None:
-        decision = engine.evaluate(context)
-        if _decision_cache is not None:
-            _decision_cache.put(auth_ctx.scope, tool_name, _cache_key_args, decision)
-        _METRICS["decision_cache_misses_total"] += 1
-    else:
-        _METRICS["decision_cache_hits_total"] += 1
+    decision = engine.evaluate(context)
     _obs_metrics.tessera_decision_latency_seconds.labels(
         upstream=upstream_name, mode=mode.value
     ).observe(perf_counter() - _t0_eval)

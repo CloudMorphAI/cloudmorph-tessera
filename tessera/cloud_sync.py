@@ -12,9 +12,9 @@ cloud outage even if they no longer appear in the latest fetch. Hard purge
 of removed policies happens on the next successful refresh that returns the
 full set (a tombstone column is intentionally not modelled in v0.7.0).
 
-Decision-memoization invalidation: callers should subscribe to refresh events
-via ``on_refresh`` so the proxy's :class:`DecisionCache` can clear matching
-entries when a policy version bumps.
+Callers should subscribe to refresh events via ``on_refresh`` so the proxy
+rebuilds its policy engine when a policy version changes. Final authorization
+is evaluated for every request using the current context.
 """
 
 from __future__ import annotations
